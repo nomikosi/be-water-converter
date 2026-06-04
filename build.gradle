@@ -1,0 +1,103 @@
+import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
+
+plugins {
+    id 'java'
+    id 'org.jetbrains.intellij.platform' version '2.2.1'
+}
+
+group = 'com.converter'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+    intellijPlatform {
+        defaultRepositories()
+    }
+}
+
+
+dependencies {
+    intellijPlatform {
+        intellijIdeaCommunity('2024.3.5')
+        instrumentationTools()
+    }
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.21.1'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml:2.18.2'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.18.2'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-csv:2.18.2'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-toml:2.18.2'
+    implementation 'com.fifesoft:rsyntaxtextarea:3.5.4'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testImplementation 'org.assertj:assertj-core:3.27.7'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs '-Dfile.encoding=UTF-8'
+}
+
+intellijPlatform {
+    pluginConfiguration {
+        version = project.version
+        name = 'Data Format Converter'
+        ideaVersion {
+            sinceBuild = '243'
+            untilBuild = '251.*'
+        }
+    }
+}
+
+sourceSets {
+    unitTest {
+        java.srcDirs = ['src/test/java']
+        compileClasspath += main.output
+        runtimeClasspath += main.output
+    }
+}
+
+configurations {
+    unitTestImplementation.extendsFrom testImplementation
+    unitTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
+// ── Unit test task — plain JVM, no IDE sandbox ─────────────────────────────
+tasks.register('unitTest', Test) {
+    description = 'Runs pure unit tests (no IntelliJ platform required).'
+    group       = 'verification'
+
+    testClassesDirs = sourceSets.unitTest.output.classesDirs
+    classpath       = sourceSets.unitTest.runtimeClasspath
+
+    useJUnitPlatform()
+    jvmArgs '-Dfile.encoding=UTF-8'
+
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat = 'full'
+        showStandardStreams = false
+    }
+
+    failFast = false
+}
+
+// Make 'check' run unit tests automatically
+tasks.named('check') { dependsOn tasks.named('unitTest') }
+
+// ── Suppress missing emojipicker.jar (Windows bug MP-6708) ────────────────
+tasks.withType(PrepareSandboxTask).configureEach {
+    disabledPlugins.add("org.jetbrains.plugins.emojipicker")
+}
+
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+

@@ -1,0 +1,16 @@
+<idea-plugin>
+    <id>com.converter.data-format-converter</id>
+    <name>Data Format Converter</name>
+    <vendor email="dev@converter.com">DataConverter</vendor>
+    <description><![CDATA[
+        Visually pleasing data format converter with syntax highlighting.
+        Supports JSON, XML, YAML, CSV, TOML, Protobuf bidirectional conversion and Java POJO generation.
+    ]]></description>
+    <depends>com.intellij.modules.platform</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Data Converter"
+                    secondary="false"
+                    anchor="right"
+                    factoryClass="com.converter.ConverterToolWindowFactory"/>
+    </extensions>
+</idea-plugin>

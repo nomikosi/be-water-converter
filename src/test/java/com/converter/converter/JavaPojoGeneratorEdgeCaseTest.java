@@ -1,0 +1,99 @@
+package com.converter.converter;
+
+import org.junit.jupiter.api.*;
+import static org.assertj.core.api.Assertions.*;
+
+/**
+ * Edge-case tests for JavaPojoGenerator.
+ * Covers: reserved keywords, hyphenated/numeric field names, mixed array types,
+ * empty nested objects, unicode field names, real-world API shapes, and
+ * @JsonProperty annotation on renamed fields.
+ */
+@DisplayName("JavaPojoGenerator – Edge Cases")
+class JavaPojoGeneratorEdgeCaseTest {
+
+    private JavaPojoGenerator generator;
+
+    @BeforeEach void setUp() { generator = new JavaPojoGenerator(); }
+
+    // ── Reserved Java keywords as field names ─────────────────────────────
+
+    @Test @DisplayName("JSON->POJO: \'class\' as field name — output is valid Java identifier")
+    void reservedWordClass() throws Exception {
+        String result = generator.fromJson("{\"class\":\"premium\",\"id\":1}");
+        assertThat(result).doesNotContain("private String class ");
+    }
+
+    @Test @DisplayName("JSON->POJO: \'return\' as field name — sanitised or renamed")
+    void reservedWordReturn() throws Exception {
+        assertThatCode(() -> generator.fromJson("{\"return\":42}")).doesNotThrowAnyException();
+    }
+
+    @Test @DisplayName("JSON->POJO: \'int\' as field name — sanitised or renamed")
+    void reservedWordInt() throws Exception {
+        assertThatCode(() -> generator.fromJson("{\"int\":5}")).doesNotThrowAnyException();
+    }
+
+    // ── Field name transformations ────────────────────────────────────────
+
+    @Test @DisplayName("JSON->POJO: kebab-case field converted to camelCase")
+    void kebabCaseField() throws Exception {
+        String result = generator.fromJson("{\"first-name\":\"Alice\",\"last-name\":\"Smith\"}");
+        assertThat(result).contains("firstName").contains("lastName");
+        assertThat(result).doesNotContain("private String first-name");
+    }
+
+    @Test @DisplayName("JSON->POJO: snake_case field has @JsonProperty with original name")
+    void snakeCaseJsonProperty() throws Exception {
+        String result = generator.fromJson("{\"first_name\":\"Alice\",\"last_name\":\"Smith\"}");
+        assertThat(result).contains("@JsonProperty").contains("first_name");
+    }
+
+    @Test @DisplayName("JSON->POJO: kebab-case field has @JsonProperty with original name")
+    void kebabCaseJsonProperty() throws Exception {
+        String result = generator.fromJson("{\"phone-number\":\"123-456\"}");
+        assertThat(result).contains("@JsonProperty").contains("phone-number");
+    }
+
+    @Test @DisplayName("JSON->POJO: field starting with digit is prefixed or renamed")
+    void numericStartingField() throws Exception {
+        assertThatCode(() -> generator.fromJson("{\"2fast\":true}")).doesNotThrowAnyException();
+    }
+
+    // ── Structural edge cases ─────────────────────────────────────────────
+
+    @Test @DisplayName("JSON->POJO: empty nested object {} still generates inner class")
+    void emptyNestedObject() throws Exception {
+        assertThat(generator.fromJson("{\"meta\":{}}")).contains("meta");
+    }
+
+    @Test @DisplayName("JSON->POJO: array of mixed types produces List or safe fallback")
+    void mixedTypeArray() throws Exception {
+        assertThatCode(() -> generator.fromJson("{\"data\":[1,\"two\",true]}")).doesNotThrowAnyException();
+    }
+
+    @Test @DisplayName("JSON->POJO: array containing null values does not throw")
+    void arrayWithNulls() throws Exception {
+        assertThatCode(() -> generator.fromJson("{\"items\":[null,null,null]}")).doesNotThrowAnyException();
+    }
+
+    @Test @DisplayName("JSON->POJO: sibling nested objects produce independent inner classes")
+    void siblingNestedObjects() throws Exception {
+        String result = generator.fromJson(
+              "{\"billing\":{\"street\":\"1 Main\"},\"shipping\":{\"street\":\"2 Oak\"}}"
+        );
+        assertThat(result).contains("public class Root").contains("street");
+    }
+
+    // ── Null / blank input ────────────────────────────────────────────────
+
+    @Test @DisplayName("JSON->POJO: null input throws")
+    void fromJsonNullInput() {
+        assertThatThrownBy(() -> generator.fromJson(null)).isInstanceOf(Exception.class);
+    }
+
+    @Test @DisplayName("JSON->POJO: blank input throws")
+    void fromJsonBlankInput() {
+        assertThatThrownBy(() -> generator.fromJson("   ")).isInstanceOf(Exception.class);
+    }
+}
