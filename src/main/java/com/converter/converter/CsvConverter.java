@@ -4,20 +4,35 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MappingIterator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.dataformat.csv.CsvMapper;
 import com.fasterxml.jackson.dataformat.csv.CsvSchema;
 
 import java.util.*;
 
 public class CsvConverter {
+
+    public enum CsvMode {
+        /**
+         * Only the FIRST array-of-objects is expanded into rows.
+         * All other object-arrays are serialised as a JSON string in one cell.
+         */
+        FLAT_FIRST,
+        /**
+         * Full Cartesian product: every array-of-objects is cross-joined.
+         * N arrays with sizes s1, s2, …, sN produce s1 × s2 × … × sN rows.
+         */
+        CROSS_JOIN
+    }
+
     private final ObjectMapper jsonMapper;
-    private final CsvMapper    csvMapper;
+    private final CsvMapper   csvMapper;
 
     public CsvConverter() {
         jsonMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
         csvMapper  = new CsvMapper();
     }
+
+    // ── CSV → JSON ────────────────────────────────────────────────────────────
 
     public String csvToJson(String csv) throws Exception {
         CsvSchema schema = CsvSchema.emptySchema().withHeader();
@@ -26,33 +41,201 @@ public class CsvConverter {
         return jsonMapper.writeValueAsString(it.readAll());
     }
 
-    public String jsonToCsv(String json) throws Exception {
-        JsonNode root = jsonMapper.readTree(json);
-        LinkedHashSet<String> headers = new LinkedHashSet<>();
+    // ── JSON → CSV (mode-aware) ───────────────────────────────────────────────
 
+    /** Convenience overload – defaults to FLAT_FIRST for backwards compatibility. */
+    public String jsonToCsv(String json) throws Exception {
+        return jsonToCsv(json, CsvMode.FLAT_FIRST);
+    }
+
+    public String jsonToCsv(String json, CsvMode mode) throws Exception {
+        JsonNode root = jsonMapper.readTree(json);
+
+        // Normalise: wrap a bare object in a single-element array
         if (root.isObject()) {
-            ArrayNode arr = jsonMapper.createArrayNode();
+            com.fasterxml.jackson.databind.node.ArrayNode arr = jsonMapper.createArrayNode();
             arr.add(root);
             root = arr;
         }
+
         if (!root.isArray())
             throw new IllegalArgumentException(
                   "JSON must be an array of objects or a single object for CSV output");
 
-        for (JsonNode row : root) row.fieldNames().forEachRemaining(headers::add);
+        // Expand every top-level element according to the chosen mode
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (JsonNode element : root) {
+            if (!element.isObject()) continue;
+            List<Map<String, String>> expanded =
+                  (mode == CsvMode.CROSS_JOIN)
+                        ? expandCrossJoin(element, "")
+                        : expandFlatFirst(element, "");
+            rows.addAll(expanded);
+        }
+
+        if (rows.isEmpty()) return "";
+
+        // Collect ordered headers (insertion order from first row, then rest)
+        LinkedHashSet<String> headers = new LinkedHashSet<>();
+        for (Map<String, String> row : rows) headers.addAll(row.keySet());
 
         CsvSchema.Builder sb = CsvSchema.builder().setUseHeader(true);
         for (String h : headers) sb.addColumn(h);
 
-        List<Map<String, Object>> rows = new ArrayList<>();
-        for (JsonNode row : root) {
-            Map<String, Object> map = new LinkedHashMap<>();
-            for (String h : headers) {
-                JsonNode val = row.get(h);
-                map.put(h, val == null ? "" : (val.isTextual() ? val.asText() : val.toString()));
-            }
-            rows.add(map);
+        // Ensure every row has a value (possibly "") for every header
+        List<Map<String, String>> normalised = new ArrayList<>();
+        for (Map<String, String> row : rows) {
+            Map<String, String> r = new LinkedHashMap<>();
+            for (String h : headers) r.put(h, row.getOrDefault(h, ""));
+            normalised.add(r);
         }
-        return csvMapper.writer(sb.build()).writeValueAsString(rows);
+
+        return csvMapper.writer(sb.build()).writeValueAsString(normalised);
+    }
+
+    // ── FLAT_FIRST ────────────────────────────────────────────────────────────
+
+    private List<Map<String, String>> expandFlatFirst(JsonNode obj, String prefix) {
+        String firstArrayField = null;
+        for (Iterator<Map.Entry<String, JsonNode>> it = obj.fields(); it.hasNext(); ) {
+            Map.Entry<String, JsonNode> e = it.next();
+            if (e.getValue().isArray() && hasObjectElements(e.getValue())) {
+                firstArrayField = e.getKey();
+                break;
+            }
+        }
+
+        List<Map<String, String>> result = new ArrayList<>();
+        result.add(new LinkedHashMap<>());
+
+        Iterator<Map.Entry<String, JsonNode>> it = obj.fields();
+        while (it.hasNext()) {
+            Map.Entry<String, JsonNode> e   = it.next();
+            String   key = prefix.isEmpty() ? e.getKey() : prefix + "." + e.getKey();
+            JsonNode val = e.getValue();
+
+            if (val.isObject()) {
+                Map<String, String> flat = new LinkedHashMap<>();
+                flattenToCells(val, key, flat);
+                for (Map<String, String> row : result) row.putAll(flat);
+
+            } else if (val.isArray() && hasObjectElements(val)) {
+                if (e.getKey().equals(firstArrayField)) {
+                    List<Map<String, String>> candidates = new ArrayList<>();
+                    for (JsonNode item : val) {
+                        if (item.isObject()) {
+                            Map<String, String> flat = new LinkedHashMap<>();
+                            flattenToCells(item, key, flat);
+                            candidates.add(flat);
+                        }
+                    }
+                    result = crossJoin(result, candidates);
+                } else {
+                    for (Map<String, String> row : result) row.put(key, val.toString());
+                }
+
+            } else if (val.isArray()) {
+                StringBuilder cell = new StringBuilder();
+                for (int i = 0; i < val.size(); i++) {
+                    if (i > 0) cell.append(",");
+                    cell.append(val.get(i).isNull() ? "" : val.get(i).asText());
+                }
+                for (Map<String, String> row : result) row.put(key, cell.toString());
+
+            } else {
+                String text = val.isNull() ? "" : val.asText();
+                for (Map<String, String> row : result) row.put(key, text);
+            }
+        }
+        return result;
+    }
+
+    // ── CROSS_JOIN ────────────────────────────────────────────────────────────
+
+    private List<Map<String, String>> expandCrossJoin(JsonNode obj, String prefix) {
+        List<Map<String, String>> result = new ArrayList<>();
+        result.add(new LinkedHashMap<>());
+
+        Iterator<Map.Entry<String, JsonNode>> it = obj.fields();
+        while (it.hasNext()) {
+            Map.Entry<String, JsonNode> e   = it.next();
+            String   key = prefix.isEmpty() ? e.getKey() : prefix + "." + e.getKey();
+            JsonNode val = e.getValue();
+
+            if (val.isObject()) {
+                result = crossJoin(result, expandCrossJoin(val, key));
+
+            } else if (val.isArray() && hasObjectElements(val)) {
+                List<Map<String, String>> candidates = new ArrayList<>();
+                for (JsonNode item : val) {
+                    if (item.isObject())
+                        candidates.addAll(expandCrossJoin(item, key));
+                    else {
+                        Map<String, String> m = new LinkedHashMap<>();
+                        m.put(key, item.isNull() ? "" : item.asText());
+                        candidates.add(m);
+                    }
+                }
+                result = crossJoin(result, candidates);
+
+            } else if (val.isArray()) {
+                StringBuilder cell = new StringBuilder();
+                for (int i = 0; i < val.size(); i++) {
+                    if (i > 0) cell.append(",");
+                    cell.append(val.get(i).isNull() ? "" : val.get(i).asText());
+                }
+                for (Map<String, String> row : result) row.put(key, cell.toString());
+
+            } else {
+                String text = val.isNull() ? "" : val.asText();
+                for (Map<String, String> row : result) row.put(key, text);
+            }
+        }
+        return result;
+    }
+
+    // ── Shared helpers ────────────────────────────────────────────────────────
+
+    private List<Map<String, String>> crossJoin(List<Map<String, String>> left,
+          List<Map<String, String>> right) {
+        if (right.isEmpty()) return left;
+        List<Map<String, String>> product = new ArrayList<>();
+        for (Map<String, String> l : left)
+            for (Map<String, String> r : right) {
+                Map<String, String> merged = new LinkedHashMap<>(l);
+                merged.putAll(r);
+                product.add(merged);
+            }
+        return product;
+    }
+
+    private void flattenToCells(JsonNode node, String prefix, Map<String, String> out) {
+        if (node.isObject()) {
+            Iterator<Map.Entry<String, JsonNode>> it = node.fields();
+            while (it.hasNext()) {
+                Map.Entry<String, JsonNode> e = it.next();
+                flattenToCells(e.getValue(),
+                      prefix.isEmpty() ? e.getKey() : prefix + "." + e.getKey(), out);
+            }
+        } else if (node.isArray()) {
+            if (hasObjectElements(node)) {
+                out.put(prefix, node.toString());
+            } else {
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < node.size(); i++) {
+                    if (i > 0) sb.append(",");
+                    sb.append(node.get(i).isNull() ? "" : node.get(i).asText());
+                }
+                out.put(prefix, sb.toString());
+            }
+        } else {
+            out.put(prefix, node.isNull() ? "" : node.asText());
+        }
+    }
+
+    private boolean hasObjectElements(JsonNode array) {
+        for (JsonNode item : array)
+            if (item.isObject() || item.isArray()) return true;
+        return false;
     }
 }

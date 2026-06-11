@@ -1,4 +1,3 @@
-
 package com.converter;
 
 import com.converter.converter.*;
@@ -63,6 +62,7 @@ public class ConverterPanel {
     private final JLabel            outputFormatLabel;
     private final JComboBox<String> inputCombo;
     private final JComboBox<String> outputCombo;
+    private final JComboBox<CsvConverter.CsvMode> csvModeCombo;
 
     private final JsonXmlConverter  jsonXml  = new JsonXmlConverter();
     private final JsonYamlConverter jsonYaml = new JsonYamlConverter();
@@ -87,6 +87,27 @@ public class ConverterPanel {
         inputCombo  = buildCombo(ALL_INPUTS);
         outputCombo = buildCombo(VALID_OUTPUTS.get(FMT_JSON));
         outputCombo.setSelectedItem(FMT_XML);
+
+        // ── initialise csvModeCombo BEFORE buildToolbar() ────────────────
+        csvModeCombo = new JComboBox<>(CsvConverter.CsvMode.values());
+        csvModeCombo.setBackground(DROPDOWN_BG);
+        csvModeCombo.setForeground(TEXT_BRIGHT);
+        csvModeCombo.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        csvModeCombo.setBorder(BorderFactory.createLineBorder(BORDER, 1));
+        csvModeCombo.setFocusable(false);
+        csvModeCombo.setToolTipText("CSV expansion mode (only active when output is CSV)");
+        csvModeCombo.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value,
+                  int index, boolean isSelected, boolean hasFocus) {
+                super.getListCellRendererComponent(list, value, index, isSelected, hasFocus);
+                setBackground(isSelected ? ACCENT : DROPDOWN_BG);
+                setForeground(TEXT_BRIGHT);
+                setBorder(new EmptyBorder(4, 10, 4, 10));
+                return this;
+            }
+        });
+        csvModeCombo.setVisible(false); // hidden until CSV is selected as output
 
         inputCombo.addActionListener(e -> {
             String fmt = (String) inputCombo.getSelectedItem();
@@ -138,6 +159,14 @@ public class ConverterPanel {
         bar.add(toolbarLabel("To:"));
         bar.add(outputCombo);
 
+        bar.add(csvModeCombo); // appears right after the "To:" combo
+
+        // Show/hide whenever the output format changes
+        outputCombo.addActionListener(e -> {
+            boolean isCsv = FMT_CSV.equals(outputCombo.getSelectedItem());
+            csvModeCombo.setVisible(isCsv);
+        });
+
         JButton convertBtn = buildButton("Convert", ACCENT, ACCENT_HOVER);
         convertBtn.setFont(new Font("SansSerif", Font.BOLD, 13));
         convertBtn.addActionListener(e -> doConvert());
@@ -175,6 +204,8 @@ public class ConverterPanel {
             if (o.equals(current)) { outputCombo.setSelectedItem(o); found = true; break; }
         }
         if (!found && options.length > 0) outputCombo.setSelectedIndex(0);
+
+        csvModeCombo.setVisible(FMT_CSV.equals(outputCombo.getSelectedItem()));
     }
 
     // ── Convert ───────────────────────────────────────────────────────────
@@ -187,7 +218,9 @@ public class ConverterPanel {
         if (inFmt == null || outFmt == null) return;
 
         try {
-            String result = dispatch(input, inFmt, outFmt);
+            CsvConverter.CsvMode csvMode =
+                  (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
+            String result = dispatch(input, inFmt, outFmt, csvMode);
             outputArea.setSyntaxEditingStyle(syntaxFor(outFmt));
             outputArea.setText(result);
             outputArea.setCaretPosition(0);
@@ -209,7 +242,8 @@ public class ConverterPanel {
      * always receives structurally complete text regardless of format.
      * Converters themselves no longer need to call autoClose.
      */
-    private String dispatch(String rawInput, String inFmt, String outFmt) throws Exception {
+    private String dispatch(String rawInput, String inFmt, String outFmt,
+          CsvConverter.CsvMode csvMode) throws Exception {
         // ── Step 0: repair truncated input (works for JSON; harmless for others) ──
         String input = (inFmt.equals(FMT_JSON)) ? autoClose(rawInput) : rawInput;
 
@@ -229,7 +263,7 @@ public class ConverterPanel {
             case FMT_JSON  -> prettyJson(asJson);
             case FMT_XML   -> jsonXml.jsonToXml(asJson);
             case FMT_YAML  -> jsonYaml.jsonToYaml(asJson);
-            case FMT_CSV   -> csv.jsonToCsv(asJson);
+            case FMT_CSV   -> csv.jsonToCsv(asJson, csvMode);
             case FMT_TOML  -> toml.jsonToToml(asJson);
             case FMT_PROTO -> proto.jsonToProto(asJson);
             case FMT_JAVA  -> pojo.fromJson(asJson);

@@ -1,163 +1,193 @@
 # Data Format Converter
 
-A lightweight **IntelliJ IDEA plugin** that provides bidirectional conversion between the most common data serialisation formats, all inside a dedicated Tool Window with syntax-highlighted editors.
+Data Format Converter is an IntelliJ IDEA plugin that converts data between multiple structured formats inside a tool window, with syntax-highlighted editors, format-aware pretty-printing, and schema/code generation for selected targets. It supports JSON, XML, YAML, CSV, TOML, Protobuf, and Java POJO generation from structured input, all from a single conversion panel. [file:3][file:7][file:4][file:1]
 
----
+## Overview
+
+The plugin adds a custom IntelliJ tool window and renders a two-pane editor UI for input and output, with toolbar actions for convert, format, swap, copy, and clear. The panel normalizes most inputs through JSON as an internal pivot format, which keeps the individual converters smaller and makes cross-format conversion paths consistent. [file:1][file:3]
+
+The UI is built around `RSyntaxTextArea` editors, dark-theme styling, input/output format badges, and dynamic output-format constraints based on the selected source format. The current implementation allows JSON, XML, YAML, CSV, TOML, and Protobuf as input formats, while Java POJO is available as a generated output target rather than an input format. [file:3]
+
+## Supported conversions
+
+The plugin accepts these input formats: JSON, XML, YAML, CSV, TOML, and Protobuf. Available outputs include JSON, XML, YAML, CSV, TOML, Protobuf, and Java POJO, with the exact destination list filtered from a `VALID_OUTPUTS` map in the UI layer. [file:3]
+
+| Input | Supported outputs |
+|---|---|
+| JSON | XML, YAML, CSV, TOML, Protobuf, Java POJO [file:3] |
+| XML | JSON, YAML, CSV, TOML, Protobuf, Java POJO [file:3] |
+| YAML | JSON, XML, CSV, TOML, Protobuf, Java POJO [file:3] |
+| CSV | JSON, XML, YAML, TOML, Protobuf, Java POJO [file:3] |
+| TOML | JSON, XML, YAML, CSV, Protobuf, Java POJO [file:3] |
+| Protobuf | JSON, XML, YAML, CSV, TOML, Java POJO [file:3] |
+
+Most conversions follow a two-step dispatcher flow: input is first normalized to JSON, then JSON is rendered to the requested target format. The dispatcher applies JSON auto-closing only for JSON input before handing the normalized structure to downstream converters. [file:3]
 
 ## Features
 
-- **7 formats supported** — convert between any combination of:
+### Interactive tool window
 
-  | Format | Read | Write |
-  |---|:---:|:---:|
-  | JSON | ✅ | ✅ |
-  | XML | ✅ | ✅ |
-  | YAML | ✅ | ✅ |
-  | CSV | ✅ | ✅ |
-  | TOML | ✅ | ✅ |
-  | Protobuf (`.proto`) | ✅ | ✅ |
-  | Java POJO | — | ✅ |
+The plugin is registered through `ConverterToolWindowFactory`, which creates a `ConverterPanel` and mounts it as IntelliJ tool-window content. This keeps the experience embedded inside the IDE rather than opening a separate dialog or editor tab. [file:1]
 
-- **Syntax highlighting** — both input and output editors use RSyntaxTextArea with a dark theme and language-aware colouring.
-- **Format button** — pretty-prints / normalises the input in place.
-- **Swap button** — exchanges input and output content and format in one click.
-- **Copy button** — copies the output to clipboard.
-- **Clear button** — resets both editors to a clean state.
-- **autoClose** — automatically repairs truncated JSON input (unclosed `{` or `[` brackets) before conversion.
-- **Status bar** — shows a green ✓ on success or a red ✗ with the error message on failure.
-- **Java POJO generation** — infers field types (`Integer`, `Long`, `Double`, `Boolean`, `String`, `List<T>`, nested classes), emits `@JsonProperty` for renamed (snake_case / kebab-case) fields, and generates `toString()`, `equals()`, and `hashCode()` automatically.
+The panel contains split editors, format selectors, status feedback, syntax highlighting, and one-click actions for conversion and formatting. Output editor syntax mode is updated automatically based on the selected target format. [file:3]
 
----
+### Format-aware formatting
 
-## Supported Conversion Paths
+The **Format** action pretty-prints or canonicalizes the current input for supported formats such as JSON, XML, YAML, and TOML. JSON formatting also uses the panel’s lenient auto-close logic before parsing, which helps recover from truncated input during interactive editing. [file:3]
 
-Every input format can be converted to every output format via an internal **JSON hub**:
+### CSV export modes
 
+CSV generation now supports two expansion modes when the output format is CSV: `FLAT_FIRST` and `CROSS_JOIN`. The mode is intended to be user-selectable from the plugin UI whenever CSV is the chosen output, regardless of the input format, so that any source that can be normalized to JSON can share the same CSV flattening rules. [file:3]
+
+`FLAT_FIRST` expands only the first array-of-objects into rows and serializes later object arrays into a single JSON string cell, which is safer for wide or deeply nested documents. `CROSS_JOIN` performs a full Cartesian product across object arrays, producing every row combination and making it better suited for fully denormalized tabular exports. [file:8]
+
+### Java POJO generation
+
+Java POJO output is generated from JSON structure and emits field-only class skeletons, including `@JsonProperty` annotations where the original source key differs from the generated camelCase Java field name. Arrays of objects become `List<...>` fields, nested objects become nested class types, and number handling distinguishes common numeric categories such as `Integer`, `Long`, `Float`, `Double`, and `BigDecimal`. [file:7]
+
+The generator unwraps a top-level array by using the first element as the representative schema and rejects empty arrays with a descriptive error. It does not generate constructors, accessors, or Lombok annotations, leaving those additions to the IDE or the user’s own code style. [file:7]
+
+### Protobuf schema generation
+
+The Protobuf converter supports both directions at a structural level without invoking `protoc`. `protoToJson` parses proto3-style message blocks into a JSON representation with typed defaults, while `jsonToProto` walks a JSON tree and emits a proto3 schema, including nested message collection and repeated fields for arrays. [file:4]
+
+## CSV modes explained
+
+When exporting nested JSON-like data to CSV, the hardest problem is deciding how arrays of objects should become rows. The plugin’s CSV mode concept addresses this explicitly so users can choose between conservative flattening and full denormalization. [file:8]
+
+### `FLAT_FIRST`
+
+Use `FLAT_FIRST` when one array is the main record list and all other nested arrays should remain attached to each row as compact JSON payloads. In this mode, nested objects are flattened using dot notation, primitive arrays are joined into comma-separated cells, and only the first object-array field contributes extra rows. [file:8]
+
+Example input:
+
+```json
+{
+  "customer": "Alice",
+  "orders": [
+    {"id": "O1", "amount": 100},
+    {"id": "O2", "amount": 150}
+  ],
+  "tags": [
+    {"name": "vip"},
+    {"name": "priority"}
+  ]
+}
 ```
-Input → JSON (hub) → Output
+
+Representative output shape:
+
+```csv
+customer,orders.id,orders.amount,tags
+Alice,O1,100,"[{\"name\":\"vip\"},{\"name\":\"priority\"}]"
+Alice,O2,150,"[{\"name\":\"vip\"},{\"name\":\"priority\"}]"
 ```
 
-| From \ To | JSON | XML | YAML | CSV | TOML | Protobuf | Java POJO |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **JSON** | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **XML** | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **YAML** | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ |
-| **CSV** | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ |
-| **TOML** | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
-| **Protobuf** | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+This mode avoids row explosion and is usually the safer default for interactive CSV exports from arbitrary nested documents. [file:8]
 
----
+### `CROSS_JOIN`
 
-## Installation
+Use `CROSS_JOIN` when every array-of-objects should participate in the final row set. The converter recursively expands object arrays and uses a Cartesian product merge so that arrays of sizes `s1`, `s2`, …, `sN` produce `s1 × s2 × … × sN` rows. [file:8]
 
-### From source
+Example input:
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/your-username/data-format-converter.git
-   cd data-format-converter
-   ```
+```json
+{
+  "env": "prod",
+  "databases": [{"host": "db1"}, {"host": "db2"}],
+  "tenants": [{"name": "alpha"}, {"name": "beta"}]
+}
+```
 
-2. Build the plugin JAR:
-   ```bash
-   ./gradlew clean buildPlugin
-   ```
+Representative output shape:
 
-3. In IntelliJ IDEA, go to **Settings → Plugins → ⚙ → Install Plugin from Disk…** and select the generated `.zip` from `build/distributions/`.
+```csv
+env,databases.host,tenants.name
+prod,db1,alpha
+prod,db1,beta
+prod,db2,alpha
+prod,db2,beta
+```
 
-4. Restart the IDE. The **DataConverter** tool window will appear in the right-hand side panel.
+This mode is useful for analytics-oriented exports, but it can grow very quickly when several arrays are present. [file:8]
 
-### Requirements
+## Architecture
 
-- IntelliJ IDEA 2023.1 or later (Community or Ultimate)
-- JDK 17+
+### Tool window and UI
 
----
+`ConverterToolWindowFactory` is the IntelliJ entry point and simply instantiates `ConverterPanel` into the tool window content manager. Most application behavior lives in `ConverterPanel`, including the toolbar, editor construction, syntax highlighting, conversion dispatch, formatting actions, clipboard support, and input/output swapping. [file:1][file:3]
 
-## Usage
+`ConverterPanel` also controls which output formats are allowed for each input format through a central `VALID_OUTPUTS` map. That makes the UI logic explicit and avoids presenting unsupported combinations to the user. [file:3]
 
-1. Open the **DataConverter** tool window from the right side panel.
-2. Select the **input format** from the *From* dropdown.
-3. Paste or type your input in the left editor.
-4. Select the **output format** from the *To* dropdown.
-5. Click **Convert**. The result appears in the right editor.
+### Central conversion flow
 
-### Toolbar buttons
+The panel’s `dispatch(...)` method acts as the orchestration layer. It first repairs incomplete JSON input via `autoClose(...)` when the source format is JSON, then converts the input into a JSON string, and finally emits the selected target format through the appropriate converter class. [file:3]
 
-| Button | Description |
+This design means XML, YAML, CSV, TOML, and Protobuf converters do not all need pairwise knowledge of each other. Instead, each converter only needs to know how to translate to and from JSON or generate its specialized target representation. [file:3][file:4][file:7][file:8]
+
+### Core classes
+
+| Class | Responsibility |
 |---|---|
-| **Convert** | Runs the conversion |
-| **Format** | Pretty-prints the current input in place |
-| **Swap** | Swaps input ↔ output content and formats |
-| **Copy** | Copies output to clipboard |
-| **Clear** | Resets both editors |
+| `ConverterToolWindowFactory` | Registers and mounts the tool-window content. [file:1] |
+| `ConverterPanel` | UI, toolbar actions, dispatch, formatting, syntax handling, status updates, auto-close logic. [file:3] |
+| `JsonXmlConverter` | JSON  XML conversion. [file:2] |
+| `JsonYamlConverter` | JSON  YAML conversion. [file:6] |
+| `CsvConverter` | CSV  JSON conversion and CSV export flattening logic. [file:8] |
+| `TomlConverter` | TOML  JSON conversion. [file:5] |
+| `ProtoConverter` | Protobuf schema  JSON structural conversion. [file:4] |
+| `JavaPojoGenerator` | Java class generation from structured JSON or XML-derived JSON. [file:7] |
 
----
+## Installation and development
 
-## Project Structure
+### Build requirements
 
-```
-src/
-├── main/
-│   ├── java/com/converter/
-│   │   ├── ConverterPanel.java              # UI, toolbar, autoClose, dispatch hub
-│   │   ├── ConverterToolWindowFactory.java  # IntelliJ Tool Window entry point
-│   │   └── converter/
-│   │       ├── JsonXmlConverter.java
-│   │       ├── JsonYamlConverter.java
-│   │       ├── CsvConverter.java
-│   │       ├── TomlConverter.java
-│   │       ├── ProtoConverter.java
-│   │       └── JavaPojoGenerator.java
-│   └── resources/META-INF/
-│       └── plugin.xml
-└── test/
-    └── java/com/converter/converter/
-        ├── JsonXmlConverterTest.java
-        ├── JsonXmlConverterEdgeCaseTest.java
-        ├── JsonYamlConverterTest.java
-        ├── JsonYamlConverterEdgeCaseTest.java
-        ├── CsvConverterTest.java
-        ├── TomlConverterTest.java
-        ├── TomlConverterEdgeCaseTest.java
-        ├── ProtoConverterTest.java
-        ├── ProtoConverterEdgeCaseTest.java
-        ├── JavaPojoGeneratorTest.java
-        ├── JavaPojoGeneratorEdgeCaseTest.java
-        └── ConverterPipelineEdgeCaseTest.java
-```
+The Gradle configuration targets the IntelliJ Platform Gradle Plugin 2.x line and IntelliJ IDEA Community 2024.3.5 for local platform resolution, which is a valid target notation in that plugin DSL. The project is configured for Java 17, which matches modern IntelliJ Platform plugin requirements for the 2024.3 generation. [web:45][web:42]
 
----
+If the build file still mixes Jackson `2.21.1` and `2.18.2` artifacts, those dependencies should be aligned to a single Jackson version or managed through `jackson-bom` to avoid runtime incompatibilities between Jackson modules. Using the IntelliJ Platform Gradle Plugin version `2.16.0` instead of `2.2.1` is also advisable because newer 2.x releases include important fixes and compatibility improvements. [web:49][web:41][web:30]
 
-## Dependencies
+### Running locally
 
-| Dependency | Version | Scope |
-|---|---|---|
-| `com.fasterxml.jackson.core:jackson-databind` | `2.18.6` | `implementation` |
-| `com.fasterxml.jackson.dataformat:jackson-dataformat-xml` | `2.18.6` | `implementation` |
-| `com.fasterxml.jackson.dataformat:jackson-dataformat-yaml` | `2.18.6` | `implementation` |
-| `com.fasterxml.jackson.dataformat:jackson-dataformat-csv` | `2.18.6` | `implementation` |
-| `com.fasterxml.jackson.dataformat:jackson-dataformat-toml` | `2.18.6` | `implementation` |
-| `org.junit.jupiter:junit-jupiter-api` | `5.10.2` | `testImplementation` |
-| `org.assertj:assertj-core` | `3.27.7` | `testImplementation` |
+Typical local development flow:
 
----
+1. Open the project in IntelliJ IDEA.
+2. Run the Gradle `runIde` task to launch a sandbox IDE instance.
+3. Open the Data Format Converter tool window in the sandbox IDE.
+4. Paste sample input, choose source and destination formats, and run conversions.
 
-## Running Tests
+The project also defines a dedicated `unitTest` source set and task for pure JVM tests that do not require a full IDE sandbox. This is useful for converter logic such as CSV expansion, schema generation, and normalization behavior. [file:3]
 
-```bash
-./gradlew clean test
-```
+## Testing strategy
 
-Test results are written to `build/reports/tests/test/index.html`.
+The converter code benefits from two complementary test layers:
 
-To always re-run all tests regardless of cache:
-```bash
-./gradlew clean test --rerun-tasks
-```
+- Pure unit tests for converter classes, especially `CsvConverter`, `ProtoConverter`, and `JavaPojoGenerator` behavior.
+- Plugin/UI tests for toolbar interactions, selector visibility, and end-to-end conversion behavior inside the IntelliJ environment.
 
----
+For CSV mode coverage in particular, useful test categories include flat scalar input, single object-array expansion, multiple object-array Cartesian products, empty arrays, null handling, missing fields, mixed nested objects, and deterministic header ordering. Those scenarios are especially important because CSV flattening semantics are where users are most likely to notice edge-case regressions. [file:8]
 
-## License
+## Usage examples
 
-MIT License — see [LICENSE](LICENSE) for details.
+### JSON to YAML
+
+Select **From: JSON** and **To: YAML**, paste JSON into the left editor, then click **Convert**. The dispatcher keeps JSON as the intermediate format and forwards it to the YAML converter for output rendering. [file:3][file:6]
+
+### XML to Java POJO
+
+Select **From: XML** and **To: Java POJO**, then convert. The XML is first normalized to JSON and then passed into the Java POJO generator, which produces field declarations and nested classes based on the inferred structure. [file:3][file:7]
+
+### JSON to CSV with nested arrays
+
+Select **From: JSON** and **To: CSV**, choose either `FLAT_FIRST` or `CROSS_JOIN`, and then convert nested content. `FLAT_FIRST` is better for controlled row growth, while `CROSS_JOIN` is better when every combination of nested records must become a distinct CSV row. [file:8][file:3]
+
+## Limitations
+
+The current converters are structural rather than semantic, so generated Protobuf and Java output should be treated as a starting point instead of a finalized contract or domain model. For example, `jsonToProto` infers field types from representative JSON values, and `JavaPojoGenerator` emits only field declarations without methods or validation logic. [file:4][file:7]
+
+JSON auto-close is intentionally lenient and is only applied to raw JSON input in the UI dispatcher. That is helpful for interactive editing, but it also means malformed JSON may sometimes be repaired into a parseable shape that differs from the user’s original intent. [file:3]
+
+CSV flattening can also cause very large outputs under `CROSS_JOIN`, especially when multiple nested arrays are present. In practice, `FLAT_FIRST` is the safer default for general-purpose IDE usage, while `CROSS_JOIN` should be used when full denormalization is specifically desired. [file:8]
+
+## Roadmap ideas
+
+Potential next improvements for the plugin include richer CSV mode controls in the toolbar, preview warnings for row explosion under `CROSS_JOIN`, better validation messages for malformed Protobuf input, optional Lombok-aware Java generation, and explicit UI affordances for conversion-specific settings. These enhancements follow naturally from the current architecture because the dispatcher already centralizes format selection and the converters are separated by responsibility. [file:3][file:4][file:7][file:8]
