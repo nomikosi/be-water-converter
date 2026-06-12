@@ -144,7 +144,7 @@ public class ConverterPanel {
         javaOptions.add(toolbarLabel("Java POJO:"));
         javaOptions.add(lombokCheck);
 
-        optionsBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 5));
+        optionsBar = new JPanel(new WrapLayout(FlowLayout.LEFT, 8, 5));
         optionsBar.setBackground(BG_LABEL_BAR);
         optionsBar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, BORDER));
         optionsBar.add(toolbarLabel("Options:"));
@@ -185,6 +185,15 @@ public class ConverterPanel {
         north.add(toolbar,    BorderLayout.NORTH);
         north.add(optionsBar, BorderLayout.SOUTH);
 
+        // WrapLayout computes its height from the current width, so the
+        // toolbar rows must be re-laid-out whenever the panel is resized.
+        mainPanel.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                north.revalidate();
+            }
+        });
+
         mainPanel.add(north,     BorderLayout.NORTH);
         mainPanel.add(split,     BorderLayout.CENTER);
         mainPanel.add(statusBar, BorderLayout.SOUTH);
@@ -192,17 +201,14 @@ public class ConverterPanel {
 
     // ── Toolbar ───────────────────────────────────────────────────────────
     private JPanel buildToolbar() {
-        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 7));
+        JPanel bar = new JPanel(new WrapLayout(FlowLayout.LEFT, 8, 7));
         bar.setBackground(BG_TOOLBAR);
         bar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, BORDER));
 
         bar.add(toolbarLabel("From:"));
         bar.add(inputCombo);
 
-        JLabel arrow = new JLabel("to");
-        arrow.setForeground(TEXT_DIM);
-        arrow.setFont(new Font("SansSerif", Font.BOLD, 13));
-        bar.add(arrow);
+        bar.add(buildSwapButton());
 
         bar.add(toolbarLabel("To:"));
         bar.add(outputCombo);
@@ -224,16 +230,33 @@ public class ConverterPanel {
 
         bar.add(makeSep());
 
-        JButton swapBtn  = buildButton("Swap",  UTIL_BG, UTIL_HOVER);
         JButton copyBtn  = buildButton("Copy",  UTIL_BG, UTIL_HOVER);
         JButton clearBtn = buildButton("Clear", UTIL_BG, UTIL_HOVER);
-        swapBtn.addActionListener(e  -> doSwap());
         copyBtn.addActionListener(e  -> doCopy());
         clearBtn.addActionListener(e -> doClear());
-        bar.add(swapBtn);
         bar.add(copyBtn);
         bar.add(clearBtn);
         return bar;
+    }
+
+    /** Compact icon-only button between the From/To combos that swaps the two sides. */
+    private JButton buildSwapButton() {
+        JButton btn = new JButton(com.intellij.icons.AllIcons.Actions.SwapPanels);
+        btn.setToolTipText("Swap input and output");
+        btn.setBackground(UTIL_BG);
+        btn.setOpaque(true);
+        btn.setBorderPainted(true);
+        btn.setBorder(BorderFactory.createCompoundBorder(
+              BorderFactory.createLineBorder(BORDER, 1),
+              new EmptyBorder(4, 6, 4, 6)));
+        btn.setFocusPainted(false);
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseEntered(java.awt.event.MouseEvent e) { btn.setBackground(UTIL_HOVER); }
+            public void mouseExited(java.awt.event.MouseEvent e)  { btn.setBackground(UTIL_BG);    }
+        });
+        btn.addActionListener(e -> doSwap());
+        return btn;
     }
 
     // ── Output combo rebuild ──────────────────────────────────────────────
@@ -272,57 +295,40 @@ public class ConverterPanel {
 
     // ── Convert ───────────────────────────────────────────────────────────
     private void doConvert() {
-        String input  = inputArea.getText().trim();
-        String inFmt  = (String) inputCombo.getSelectedItem();
-        String outFmt = (String) outputCombo.getSelectedItem();
+        // 1. Read all UI state on the EDT
+        final String rawInput  = inputArea.getText();
+        final String inFmt     = (String) inputCombo.getSelectedItem();
+        final String outFmt    = (String) outputCombo.getSelectedItem();
+        final CsvConverter.CsvMode csvMode = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
+        final boolean useLombok = lombokCheck.isSelected();
 
-        if (input.isEmpty())  { setStatus("Input is empty", false); return; }
-        if (inFmt == null || outFmt == null) return;
+        setStatus("Converting…", true);
 
-        try {
-            CsvConverter.CsvMode csvMode =
-                  (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
-            String asJson = normalizeToJson(input, inFmt);
-
-            String rowNote = "";
-            if (FMT_CSV.equals(outFmt)) {
-                long estimate = csv.estimateRowCount(asJson, csvMode);
-                String rows   = String.format("%,d", estimate);
-                if (csvMode == CsvConverter.CsvMode.CROSS_JOIN
-                      && estimate >= ROW_WARNING_THRESHOLD
-                      && !confirmRowExplosion(rows)) {
-                    setStatusWarn("\u26A0  Conversion cancelled — CROSS_JOIN would generate ~"
-                          + rows + " rows");
-                    return;
-                }
-                rowNote = "  (" + rows + " row" + (estimate == 1 ? "" : "s") + ")";
-            }
-
-            String result = renderFromJson(asJson, outFmt, csvMode, lombokCheck.isSelected());
-            outputArea.setSyntaxEditingStyle(syntaxFor(outFmt));
-            outputArea.setText(result);
-            outputArea.setCaretPosition(0);
-            inputFormatLabel.setText(inFmt);
-            outputFormatLabel.setText(outFmt);
-            setStatus("\u2713  " + inFmt + " to " + outFmt + " done" + rowNote, true);
-        } catch (Exception ex) {
-            outputArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_NONE);
-            outputArea.setText("Error: " + ex.getMessage());
-            setStatus("\u2717  Failed: " + ex.getMessage(), false);
-        }
-    }
-
-    /** Asks the user to confirm a CROSS_JOIN expected to produce many rows. */
-    private boolean confirmRowExplosion(String formattedRows) {
-        int choice = JOptionPane.showConfirmDialog(
-              mainPanel,
-              "CROSS_JOIN will expand this input into approximately " + formattedRows
-                    + " rows.\nLarge cross joins can produce huge output and slow down the IDE."
-                    + "\n\nConvert anyway?",
-              "CSV row explosion warning",
-              JOptionPane.YES_NO_OPTION,
-              JOptionPane.WARNING_MESSAGE);
-        return choice == JOptionPane.YES_OPTION;
+        // 2. Run the conversion off the EDT on the IDE-managed pool
+        //    (never ForkJoinPool.commonPool() inside an IntelliJ plugin)
+        java.util.concurrent.CompletableFuture
+              .supplyAsync(() -> {
+                  try {
+                      String asJson = normalizeToJson(rawInput, inFmt);
+                      return renderFromJson(asJson, outFmt, csvMode, useLombok);
+                  } catch (Exception ex) {
+                      throw new java.util.concurrent.CompletionException(ex);
+                  }
+              }, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
+              // 3. Publish the result back on the EDT
+              .whenComplete((result, error) ->
+                    com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
+                        if (error != null) {
+                            Throwable cause = error.getCause() != null ? error.getCause() : error;
+                            setStatus("Error: " + cause.getMessage(), false);
+                        } else {
+                            outputArea.setSyntaxEditingStyle(syntaxFor(outFmt));
+                            outputArea.setText(result);
+                            outputArea.setCaretPosition(0);
+                            outputFormatLabel.setText(outFmt);
+                            setStatus("Converted " + inFmt + " → " + outFmt, true);
+                        }
+                    }));
     }
 
     /**

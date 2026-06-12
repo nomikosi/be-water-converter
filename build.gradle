@@ -21,7 +21,7 @@ dependencies {
         intellijIdeaCommunity('2024.3.5')
         instrumentationTools()
     }
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.21.1'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml:2.18.2'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.18.2'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-csv:2.18.2'
@@ -42,7 +42,7 @@ test {
 intellijPlatform {
     pluginConfiguration {
         version = project.version
-        name = 'Data Format Converter'
+        name = 'Be Water Converter'
         ideaVersion {
             sinceBuild = '243'
             untilBuild = '251.*'

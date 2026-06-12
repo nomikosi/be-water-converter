@@ -1,16 +1,33 @@
 <idea-plugin>
-    <id>com.converter.data-format-converter</id>
-    <name>Data Format Converter</name>
-    <vendor email="dev@converter.com">DataConverter</vendor>
+    <!-- NOTE: the id is permanent once the plugin is published — it can never change. -->
+    <id>com.converter.be-water-converter</id>
+    <name>Be Water Converter</name>
+    <!-- TODO: replace with your real name/company, email and website before publishing. -->
+    <vendor email="dev@converter.com" url="https://github.com/your-account/be-water-converter">Be Water Converter</vendor>
     <description><![CDATA[
-        Visually pleasing data format converter with syntax highlighting.
-        Supports JSON, XML, YAML, CSV, TOML, Protobuf bidirectional conversion and Java POJO generation.
+        <p><b>Be water, my friend.</b> Let your data flow between formats.</p>
+        <p>A visually pleasing data format converter with syntax-highlighted editors,
+        living in a tool window on the right side of your IDE.</p>
+        <ul>
+            <li>Bidirectional conversion between <b>JSON, XML, YAML, CSV, TOML and Protobuf</b></li>
+            <li><b>Java POJO generation</b> from any supported input, with optional Lombok annotations</li>
+            <li>Format-aware pretty-printing, including lenient auto-repair of truncated JSON</li>
+            <li>Two CSV expansion modes (<code>FLAT_FIRST</code> / <code>CROSS_JOIN</code>) with row-explosion warnings</li>
+            <li>One-click swap of input and output, copy to clipboard, dark-theme editors</li>
+        </ul>
     ]]></description>
+    <change-notes><![CDATA[
+        <h3>1.0.0</h3>
+        <ul>
+            <li>Initial release: JSON, XML, YAML, CSV, TOML and Protobuf conversion plus Java POJO generation.</li>
+        </ul>
+    ]]></change-notes>
     <depends>com.intellij.modules.platform</depends>
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="Data Converter"
+        <toolWindow id="Be Water"
                     secondary="false"
                     anchor="right"
+                    icon="/icons/beWater.svg"
                     factoryClass="com.converter.ConverterToolWindowFactory"/>
     </extensions>
 </idea-plugin>
