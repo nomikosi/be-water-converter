@@ -9,9 +9,9 @@ import java.util.*;
 /**
  * Generates Java POJO class skeletons from a JSON or XML structure.
  * Each class contains only field declarations (with @JsonProperty where the
- * JSON key differs from the camelCase Java name). No constructor, getters,
- * setters, toString, equals, or hashCode are emitted — add those via your IDE
- * or a Lombok annotation such as @Data.
+ * JSON key differs from the camelCase Java name). Constructors and accessors
+ * are not emitted; enable Lombok mode to annotate the generated classes with
+ * @Data, @NoArgsConstructor, and @AllArgsConstructor instead.
  */
 public class JavaPojoGenerator {
 
@@ -19,6 +19,10 @@ public class JavaPojoGenerator {
     private final XmlMapper   xmlMapper   = new XmlMapper();
 
     public String fromJson(String json) throws Exception {
+        return fromJson(json, false);
+    }
+
+    public String fromJson(String json, boolean useLombok) throws Exception {
         if (json == null || json.isBlank())
             throw new IllegalArgumentException("Input must not be null or blank");
         String safe = autoClose(json);
@@ -28,30 +32,40 @@ public class JavaPojoGenerator {
                 throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
             root = root.get(0);
         }
-        return generate(root, "Root");
+        return generate(root, "Root", useLombok);
     }
 
     public String fromXml(String xml) throws Exception {
+        return fromXml(xml, false);
+    }
+
+    public String fromXml(String xml, boolean useLombok) throws Exception {
         JsonNode root = xmlMapper.readTree(xml.getBytes());
         if (root.isArray()) {
             if (root.size() == 0)
                 throw new IllegalArgumentException("XML array is empty — nothing to generate.");
             root = root.get(0);
         }
-        return generate(root, "Root");
+        return generate(root, "Root", useLombok);
     }
 
     // ── Internal generation ───────────────────────────────────────────────
 
-    private String generate(JsonNode root, String rootClassName) {
+    private String generate(JsonNode root, String rootClassName, boolean useLombok) {
         LinkedHashMap<String, JsonNode> classMap = new LinkedHashMap<>();
         collectClasses(root, rootClassName, classMap, new HashSet<>());
         StringBuilder sb = new StringBuilder();
         sb.append("import com.fasterxml.jackson.annotation.JsonProperty;\n");
         sb.append("import java.math.BigDecimal;\n");
-        sb.append("import java.util.List;\n\n");
+        sb.append("import java.util.List;\n");
+        if (useLombok) {
+            sb.append("import lombok.AllArgsConstructor;\n");
+            sb.append("import lombok.Data;\n");
+            sb.append("import lombok.NoArgsConstructor;\n");
+        }
+        sb.append("\n");
         for (Map.Entry<String, JsonNode> entry : classMap.entrySet()) {
-            generateClass(entry.getKey(), entry.getValue(), sb);
+            generateClass(entry.getKey(), entry.getValue(), sb, useLombok);
             sb.append("\n");
         }
         return sb.toString();
@@ -81,7 +95,13 @@ public class JavaPojoGenerator {
      * @JsonProperty("originalKey") is added when the Java field name
      * differs from the original JSON key (e.g. first_name -> firstName).
      */
-    private void generateClass(String className, JsonNode node, StringBuilder sb) {
+    private void generateClass(String className, JsonNode node, StringBuilder sb,
+          boolean useLombok) {
+        if (useLombok) {
+            sb.append("@Data\n");
+            sb.append("@NoArgsConstructor\n");
+            sb.append("@AllArgsConstructor\n");
+        }
         sb.append("public class ").append(className).append(" {\n\n");
 
         Iterator<Map.Entry<String, JsonNode>> it = node.fields();

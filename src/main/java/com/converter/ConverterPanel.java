@@ -29,6 +29,7 @@ public class ConverterPanel {
     private static final Color TEXT_BRIGHT  = new Color(220, 220, 220);
     private static final Color TEXT_DIM     = new Color(130, 130, 130);
     private static final Color OK_COLOR     = new Color(98,  151,  85);
+    private static final Color WARN_COLOR   = new Color(222, 166,  62);
     private static final Color ERR_COLOR    = new Color(204,  60,  53);
     private static final Color BORDER       = new Color(25,  25,  25);
     private static final Color DROPDOWN_BG  = new Color(60,  63,  65);
@@ -54,6 +55,9 @@ public class ConverterPanel {
     private static final String[] ALL_INPUTS =
           {FMT_JSON, FMT_XML, FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO};
 
+    /** CROSS_JOIN conversions estimated to exceed this many rows trigger a confirmation. */
+    private static final long ROW_WARNING_THRESHOLD = 1_000L;
+
     private final JPanel            mainPanel;
     private final RSyntaxTextArea   inputArea;
     private final RSyntaxTextArea   outputArea;
@@ -63,6 +67,11 @@ public class ConverterPanel {
     private final JComboBox<String> inputCombo;
     private final JComboBox<String> outputCombo;
     private final JComboBox<CsvConverter.CsvMode> csvModeCombo;
+    private final JLabel    csvModeHint;
+    private final JCheckBox lombokCheck;
+    private final JPanel    csvOptions;
+    private final JPanel    javaOptions;
+    private final JPanel    optionsBar;
 
     private final JsonXmlConverter  jsonXml  = new JsonXmlConverter();
     private final JsonYamlConverter jsonYaml = new JsonYamlConverter();
@@ -88,14 +97,14 @@ public class ConverterPanel {
         outputCombo = buildCombo(VALID_OUTPUTS.get(FMT_JSON));
         outputCombo.setSelectedItem(FMT_XML);
 
-        // ── initialise csvModeCombo BEFORE buildToolbar() ────────────────
+        // ── conversion-specific option controls ──────────────────────────
         csvModeCombo = new JComboBox<>(CsvConverter.CsvMode.values());
         csvModeCombo.setBackground(DROPDOWN_BG);
         csvModeCombo.setForeground(TEXT_BRIGHT);
         csvModeCombo.setFont(new Font("SansSerif", Font.PLAIN, 13));
         csvModeCombo.setBorder(BorderFactory.createLineBorder(BORDER, 1));
         csvModeCombo.setFocusable(false);
-        csvModeCombo.setToolTipText("CSV expansion mode (only active when output is CSV)");
+        csvModeCombo.setToolTipText("How arrays of objects are expanded into CSV rows");
         csvModeCombo.setRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(JList<?> list, Object value,
@@ -107,7 +116,40 @@ public class ConverterPanel {
                 return this;
             }
         });
-        csvModeCombo.setVisible(false); // hidden until CSV is selected as output
+
+        csvModeHint = new JLabel(csvModeHintFor(CsvConverter.CsvMode.FLAT_FIRST));
+        csvModeHint.setForeground(TEXT_DIM);
+        csvModeHint.setFont(new Font("SansSerif", Font.ITALIC, 12));
+        csvModeCombo.addActionListener(e -> {
+            CsvConverter.CsvMode m = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
+            if (m != null) csvModeHint.setText(csvModeHintFor(m));
+        });
+
+        lombokCheck = new JCheckBox("Lombok annotations");
+        lombokCheck.setToolTipText(
+              "Annotate generated classes with @Data, @NoArgsConstructor and @AllArgsConstructor");
+        lombokCheck.setOpaque(false);
+        lombokCheck.setForeground(TEXT_BRIGHT);
+        lombokCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        lombokCheck.setFocusPainted(false);
+
+        csvOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        csvOptions.setOpaque(false);
+        csvOptions.add(toolbarLabel("CSV mode:"));
+        csvOptions.add(csvModeCombo);
+        csvOptions.add(csvModeHint);
+
+        javaOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        javaOptions.setOpaque(false);
+        javaOptions.add(toolbarLabel("Java POJO:"));
+        javaOptions.add(lombokCheck);
+
+        optionsBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 5));
+        optionsBar.setBackground(BG_LABEL_BAR);
+        optionsBar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, BORDER));
+        optionsBar.add(toolbarLabel("Options:"));
+        optionsBar.add(csvOptions);
+        optionsBar.add(javaOptions);
 
         inputCombo.addActionListener(e -> {
             String fmt = (String) inputCombo.getSelectedItem();
@@ -118,6 +160,7 @@ public class ConverterPanel {
         });
 
         JPanel toolbar    = buildToolbar();
+        updateConversionOptions();
         JPanel inputWrap  = wrapEditor(inputArea,  inputFormatLabel);
         JPanel outputWrap = wrapEditor(outputArea, outputFormatLabel);
 
@@ -137,7 +180,12 @@ public class ConverterPanel {
         statusBar.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, BORDER));
         statusBar.add(statusLabel, BorderLayout.WEST);
 
-        mainPanel.add(toolbar,   BorderLayout.NORTH);
+        JPanel north = new JPanel(new BorderLayout());
+        north.setOpaque(false);
+        north.add(toolbar,    BorderLayout.NORTH);
+        north.add(optionsBar, BorderLayout.SOUTH);
+
+        mainPanel.add(north,     BorderLayout.NORTH);
         mainPanel.add(split,     BorderLayout.CENTER);
         mainPanel.add(statusBar, BorderLayout.SOUTH);
     }
@@ -159,13 +207,8 @@ public class ConverterPanel {
         bar.add(toolbarLabel("To:"));
         bar.add(outputCombo);
 
-        bar.add(csvModeCombo); // appears right after the "To:" combo
-
-        // Show/hide whenever the output format changes
-        outputCombo.addActionListener(e -> {
-            boolean isCsv = FMT_CSV.equals(outputCombo.getSelectedItem());
-            csvModeCombo.setVisible(isCsv);
-        });
+        // Conversion-specific options live in the options bar below the toolbar
+        outputCombo.addActionListener(e -> updateConversionOptions());
 
         JButton convertBtn = buildButton("Convert", ACCENT, ACCENT_HOVER);
         convertBtn.setFont(new Font("SansSerif", Font.BOLD, 13));
@@ -205,7 +248,26 @@ public class ConverterPanel {
         }
         if (!found && options.length > 0) outputCombo.setSelectedIndex(0);
 
-        csvModeCombo.setVisible(FMT_CSV.equals(outputCombo.getSelectedItem()));
+        updateConversionOptions();
+    }
+
+    // ── Conversion-specific options visibility ────────────────────────────
+    private void updateConversionOptions() {
+        String outFmt = (String) outputCombo.getSelectedItem();
+        boolean isCsv  = FMT_CSV.equals(outFmt);
+        boolean isJava = FMT_JAVA.equals(outFmt);
+        csvOptions.setVisible(isCsv);
+        javaOptions.setVisible(isJava);
+        optionsBar.setVisible(isCsv || isJava);
+        optionsBar.revalidate();
+        optionsBar.repaint();
+    }
+
+    private static String csvModeHintFor(CsvConverter.CsvMode mode) {
+        return switch (mode) {
+            case FLAT_FIRST -> "expands only the first object-array into rows (safe default)";
+            case CROSS_JOIN -> "Cartesian product of all object-arrays — rows can explode";
+        };
     }
 
     // ── Convert ───────────────────────────────────────────────────────────
@@ -220,13 +282,29 @@ public class ConverterPanel {
         try {
             CsvConverter.CsvMode csvMode =
                   (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
-            String result = dispatch(input, inFmt, outFmt, csvMode);
+            String asJson = normalizeToJson(input, inFmt);
+
+            String rowNote = "";
+            if (FMT_CSV.equals(outFmt)) {
+                long estimate = csv.estimateRowCount(asJson, csvMode);
+                String rows   = String.format("%,d", estimate);
+                if (csvMode == CsvConverter.CsvMode.CROSS_JOIN
+                      && estimate >= ROW_WARNING_THRESHOLD
+                      && !confirmRowExplosion(rows)) {
+                    setStatusWarn("\u26A0  Conversion cancelled — CROSS_JOIN would generate ~"
+                          + rows + " rows");
+                    return;
+                }
+                rowNote = "  (" + rows + " row" + (estimate == 1 ? "" : "s") + ")";
+            }
+
+            String result = renderFromJson(asJson, outFmt, csvMode, lombokCheck.isSelected());
             outputArea.setSyntaxEditingStyle(syntaxFor(outFmt));
             outputArea.setText(result);
             outputArea.setCaretPosition(0);
             inputFormatLabel.setText(inFmt);
             outputFormatLabel.setText(outFmt);
-            setStatus("\u2713  " + inFmt + " to " + outFmt + " done", true);
+            setStatus("\u2713  " + inFmt + " to " + outFmt + " done" + rowNote, true);
         } catch (Exception ex) {
             outputArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_NONE);
             outputArea.setText("Error: " + ex.getMessage());
@@ -234,21 +312,27 @@ public class ConverterPanel {
         }
     }
 
-    /**
-     * Central dispatcher.
-     *
-     * KEY DESIGN: autoClose is applied to the RAW INPUT here, ONCE,
-     * before it is handed to any converter. This means every converter
-     * always receives structurally complete text regardless of format.
-     * Converters themselves no longer need to call autoClose.
-     */
-    private String dispatch(String rawInput, String inFmt, String outFmt,
-          CsvConverter.CsvMode csvMode) throws Exception {
-        // ── Step 0: repair truncated input (works for JSON; harmless for others) ──
-        String input = (inFmt.equals(FMT_JSON)) ? autoClose(rawInput) : rawInput;
+    /** Asks the user to confirm a CROSS_JOIN expected to produce many rows. */
+    private boolean confirmRowExplosion(String formattedRows) {
+        int choice = JOptionPane.showConfirmDialog(
+              mainPanel,
+              "CROSS_JOIN will expand this input into approximately " + formattedRows
+                    + " rows.\nLarge cross joins can produce huge output and slow down the IDE."
+                    + "\n\nConvert anyway?",
+              "CSV row explosion warning",
+              JOptionPane.YES_NO_OPTION,
+              JOptionPane.WARNING_MESSAGE);
+        return choice == JOptionPane.YES_OPTION;
+    }
 
-        // ── Step 1: normalise everything to JSON ──────────────────────────
-        String asJson = switch (inFmt) {
+    /**
+     * Step 0 + 1 of the conversion: repair truncated JSON input (autoClose is
+     * applied ONCE to the raw input, only for JSON), then normalise everything
+     * to JSON as the internal pivot format.
+     */
+    private String normalizeToJson(String rawInput, String inFmt) throws Exception {
+        String input = (inFmt.equals(FMT_JSON)) ? autoClose(rawInput) : rawInput;
+        return switch (inFmt) {
             case FMT_JSON  -> input;
             case FMT_XML   -> jsonXml.xmlToJson(input);
             case FMT_YAML  -> jsonYaml.yamlToJson(input);
@@ -257,8 +341,11 @@ public class ConverterPanel {
             case FMT_PROTO -> proto.protoToJson(input);
             default -> throw new UnsupportedOperationException("Unknown input: " + inFmt);
         };
+    }
 
-        // ── Step 2: JSON → desired output ─────────────────────────────────
+    /** Step 2 of the conversion: JSON pivot → desired output format. */
+    private String renderFromJson(String asJson, String outFmt,
+          CsvConverter.CsvMode csvMode, boolean useLombok) throws Exception {
         return switch (outFmt) {
             case FMT_JSON  -> prettyJson(asJson);
             case FMT_XML   -> jsonXml.jsonToXml(asJson);
@@ -266,7 +353,7 @@ public class ConverterPanel {
             case FMT_CSV   -> csv.jsonToCsv(asJson, csvMode);
             case FMT_TOML  -> toml.jsonToToml(asJson);
             case FMT_PROTO -> proto.jsonToProto(asJson);
-            case FMT_JAVA  -> pojo.fromJson(asJson);
+            case FMT_JAVA  -> pojo.fromJson(asJson, useLombok);
             default -> throw new UnsupportedOperationException("Unknown output: " + outFmt);
         };
     }
@@ -492,6 +579,11 @@ public class ConverterPanel {
     private void setStatus(String msg, boolean ok) {
         statusLabel.setText(msg);
         statusLabel.setForeground(ok ? OK_COLOR : ERR_COLOR);
+    }
+
+    private void setStatusWarn(String msg) {
+        statusLabel.setText(msg);
+        statusLabel.setForeground(WARN_COLOR);
     }
 
     public JPanel getContent() { return mainPanel; }

@@ -35,9 +35,15 @@ The panel contains split editors, format selectors, status feedback, syntax high
 
 The **Format** action pretty-prints or canonicalizes the current input for supported formats such as JSON, XML, YAML, and TOML. JSON formatting also uses the panel’s lenient auto-close logic before parsing, which helps recover from truncated input during interactive editing. [file:3]
 
+### Conversion-specific options bar
+
+Whenever the selected output format has extra settings, a dedicated options bar appears below the main toolbar. For CSV output it shows a labeled mode selector with a live hint describing the selected expansion mode; for Java POJO output it shows a Lombok toggle. The bar hides itself entirely when the current conversion has no extra settings. [file:3]
+
 ### CSV export modes
 
-CSV generation now supports two expansion modes when the output format is CSV: `FLAT_FIRST` and `CROSS_JOIN`. The mode is intended to be user-selectable from the plugin UI whenever CSV is the chosen output, regardless of the input format, so that any source that can be normalized to JSON can share the same CSV flattening rules. [file:3]
+CSV generation supports two expansion modes when the output format is CSV: `FLAT_FIRST` and `CROSS_JOIN`. The mode is user-selectable from the options bar whenever CSV is the chosen output, regardless of the input format, so that any source that can be normalized to JSON can share the same CSV flattening rules. [file:3]
+
+Before a `CROSS_JOIN` conversion runs, the panel estimates the number of rows the Cartesian product would produce (without materializing them). If the estimate exceeds 1,000 rows, a warning dialog asks for confirmation before converting, and the status bar reports the row count after every CSV conversion. [file:3][file:8]
 
 `FLAT_FIRST` expands only the first array-of-objects into rows and serializes later object arrays into a single JSON string cell, which is safer for wide or deeply nested documents. `CROSS_JOIN` performs a full Cartesian product across object arrays, producing every row combination and making it better suited for fully denormalized tabular exports. [file:8]
 
@@ -45,11 +51,13 @@ CSV generation now supports two expansion modes when the output format is CSV: `
 
 Java POJO output is generated from JSON structure and emits field-only class skeletons, including `@JsonProperty` annotations where the original source key differs from the generated camelCase Java field name. Arrays of objects become `List<...>` fields, nested objects become nested class types, and number handling distinguishes common numeric categories such as `Integer`, `Long`, `Float`, `Double`, and `BigDecimal`. [file:7]
 
-The generator unwraps a top-level array by using the first element as the representative schema and rejects empty arrays with a descriptive error. It does not generate constructors, accessors, or Lombok annotations, leaving those additions to the IDE or the user’s own code style. [file:7]
+The generator unwraps a top-level array by using the first element as the representative schema and rejects empty arrays with a descriptive error. Constructors and accessors are not emitted by default; enabling the **Lombok annotations** option in the options bar annotates every generated class with `@Data`, `@NoArgsConstructor`, and `@AllArgsConstructor` and adds the matching `lombok.*` imports. [file:7][file:3]
 
 ### Protobuf schema generation
 
 The Protobuf converter supports both directions at a structural level without invoking `protoc`. `protoToJson` parses proto3-style message blocks into a JSON representation with typed defaults, while `jsonToProto` walks a JSON tree and emits a proto3 schema, including nested message collection and repeated fields for arrays. [file:4]
+
+Malformed Protobuf input now fails with targeted validation messages instead of being silently skipped: empty input, unbalanced braces (with open/close counts), malformed field statements (reported with the enclosing message name and the offending statement), and duplicate field numbers within a message all produce descriptive errors. Block comments, `option`/`reserved`/`import` statements, dotted types such as `google.protobuf.Timestamp`, `map<k, v>` fields, and `oneof`/nested-message blocks remain accepted. [file:4]
 
 ## CSV modes explained
 
@@ -190,4 +198,6 @@ CSV flattening can also cause very large outputs under `CROSS_JOIN`, especially 
 
 ## Roadmap ideas
 
-Potential next improvements for the plugin include richer CSV mode controls in the toolbar, preview warnings for row explosion under `CROSS_JOIN`, better validation messages for malformed Protobuf input, optional Lombok-aware Java generation, and explicit UI affordances for conversion-specific settings. These enhancements follow naturally from the current architecture because the dispatcher already centralizes format selection and the converters are separated by responsibility. [file:3][file:4][file:7][file:8]
+The previous roadmap items are now implemented: richer CSV mode controls live in a dedicated options bar with a per-mode hint, `CROSS_JOIN` conversions show a preview warning when the estimated row count exceeds 1,000, malformed Protobuf input fails with precise validation messages, Java POJO generation has an optional Lombok mode, and conversion-specific settings have explicit UI affordances that appear only when relevant. [file:3][file:4][file:7][file:8]
+
+Potential next improvements include exporting conversion results directly to a file, remembering option selections across IDE restarts, configurable row-warning thresholds, and Protobuf parsing that fully understands nested message and `oneof` blocks instead of treating them leniently. [file:3][file:4]

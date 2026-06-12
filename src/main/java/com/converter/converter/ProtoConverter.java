@@ -27,9 +27,30 @@ public class ProtoConverter {
     private static final Pattern FIELD_PATTERN =
         Pattern.compile("(repeated\\s+)?(\\w+)\\s+(\\w+)\\s*=\\s*\\d+\\s*;");
 
+    /**
+     * Permissive field statement (split on ';' and trimmed): allows dotted
+     * types (google.protobuf.Timestamp) and generic types (map&lt;k, v&gt;).
+     */
+    private static final Pattern STATEMENT_PATTERN = Pattern.compile(
+        "(?:repeated\\s+|optional\\s+|required\\s+)?[\\w.]+(?:\\s*<[^>]*>)?\\s+(\\w+)\\s*=\\s*(\\d+)",
+        Pattern.DOTALL);
+
+    /** Statements that are legal proto3 but irrelevant for structural conversion. */
+    private static final Pattern IGNORED_STATEMENT = Pattern.compile(
+        "^(option|reserved|package|import|syntax)\\b.*", Pattern.DOTALL);
+
     // ── proto -> JSON ─────────────────────────────────────────────────────
     public String protoToJson(String protoSchema) throws Exception {
-        String clean = protoSchema.replaceAll("//[^\\n]*", "").trim();
+        if (protoSchema == null || protoSchema.isBlank())
+            throw new IllegalArgumentException(
+                "Protobuf input is empty. Paste a proto3 schema containing at least one 'message' block.");
+
+        String clean = protoSchema
+            .replaceAll("(?s)/\\*.*?\\*/", "")   // block comments
+            .replaceAll("//[^\\n]*", "")          // line comments
+            .trim();
+        validateBraces(clean);
+
         ObjectNode root = jsonMapper.createObjectNode();
 
         Matcher msgMatcher = MSG_PATTERN.matcher(clean);
@@ -38,6 +59,7 @@ public class ProtoConverter {
             found = true;
             String     className = msgMatcher.group(1);
             String     body      = msgMatcher.group(2);
+            validateMessageBody(className, body);
             ObjectNode msgNode   = jsonMapper.createObjectNode();
 
             Matcher fm = FIELD_PATTERN.matcher(body);
@@ -65,12 +87,61 @@ public class ProtoConverter {
             root.set(className, msgNode);
         }
 
-        if (!found)
+        if (!found) {
+            if (clean.contains("message"))
+                throw new IllegalArgumentException(
+                    "Found the 'message' keyword but could not parse any message block. " +
+                    "Check that each block has a name and balanced braces, e.g.:\n\n" +
+                    "message Person {\n  string name = 1;\n  int32 age = 2;\n}");
             throw new IllegalArgumentException(
                 "No 'message' blocks found. Example:\n\n" +
                 "message Person {\n  string name = 1;\n  int32 age = 2;\n}");
+        }
 
         return jsonMapper.writeValueAsString(root);
+    }
+
+    // ── Validation helpers ────────────────────────────────────────────────
+
+    private void validateBraces(String schema) {
+        int open = 0, close = 0;
+        for (char c : schema.toCharArray()) {
+            if (c == '{') open++;
+            else if (c == '}') close++;
+        }
+        if (open != close)
+            throw new IllegalArgumentException(
+                "Unbalanced braces: found " + open + " '{' but " + close + " '}'. " +
+                "Make sure every message block is properly closed.");
+    }
+
+    /**
+     * Validates each statement inside a message body so malformed fields fail
+     * with a precise error instead of being silently skipped. Also rejects
+     * duplicate field numbers within the same message. Statements containing
+     * braces (oneof blocks, nested message definitions) are left to the
+     * lenient structural parser and are not validated here.
+     */
+    private void validateMessageBody(String messageName, String body) {
+        Set<String> seenNumbers = new HashSet<>();
+        for (String rawStatement : body.split(";")) {
+            String stmt = rawStatement.trim();
+            if (stmt.isEmpty()
+                  || stmt.contains("{") || stmt.contains("}")
+                  || IGNORED_STATEMENT.matcher(stmt).matches()) continue;
+
+            Matcher m = STATEMENT_PATTERN.matcher(stmt);
+            if (!m.matches())
+                throw new IllegalArgumentException(
+                    "Invalid field in message '" + messageName + "': \"" + stmt + "\". " +
+                    "Expected the form: [repeated] <type> <name> = <number>;");
+
+            String number = m.group(2);
+            if (!seenNumbers.add(number))
+                throw new IllegalArgumentException(
+                    "Duplicate field number " + number + " in message '" + messageName +
+                    "'. Each field must have a unique number.");
+        }
     }
 
     // ── JSON -> proto ─────────────────────────────────────────────────────
@@ -83,6 +154,11 @@ public class ProtoConverter {
                 throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
             root = root.get(0);
         }
+
+        if (!root.isObject())
+            throw new IllegalArgumentException(
+                "JSON root must be an object (or an array of objects) to generate a Protobuf schema, " +
+                "but got: " + root.getNodeType().name().toLowerCase());
 
         StringBuilder sb = new StringBuilder();
         sb.append("syntax = \"proto3\";\n\n");

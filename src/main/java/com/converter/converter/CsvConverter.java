@@ -93,6 +93,82 @@ public class CsvConverter {
         return csvMapper.writer(sb.build()).writeValueAsString(normalised);
     }
 
+    // ── Row-count estimation (no row materialisation) ────────────────────────
+
+    /** Cap used by the estimator so Cartesian products cannot overflow. */
+    public static final long ESTIMATE_CAP = 1_000_000_000L;
+
+    /**
+     * Estimates how many CSV data rows {@link #jsonToCsv(String, CsvMode)} would
+     * produce, without building them. Useful for warning about row explosion
+     * under {@link CsvMode#CROSS_JOIN} before running the conversion.
+     * The result is capped at {@link #ESTIMATE_CAP}.
+     */
+    public long estimateRowCount(String json, CsvMode mode) throws Exception {
+        JsonNode root = jsonMapper.readTree(json);
+        if (root.isObject()) {
+            com.fasterxml.jackson.databind.node.ArrayNode arr = jsonMapper.createArrayNode();
+            arr.add(root);
+            root = arr;
+        }
+        if (!root.isArray()) return 0;
+
+        long total = 0;
+        for (JsonNode element : root) {
+            if (!element.isObject()) continue;
+            long perElement = (mode == CsvMode.CROSS_JOIN)
+                  ? estimateCrossJoinRows(element)
+                  : estimateFlatFirstRows(element);
+            total = saturatingAdd(total, perElement);
+        }
+        return total;
+    }
+
+    private long estimateFlatFirstRows(JsonNode obj) {
+        // Only the first array-of-objects contributes extra rows; each object
+        // element of that array becomes one row candidate.
+        for (Iterator<Map.Entry<String, JsonNode>> it = obj.fields(); it.hasNext(); ) {
+            Map.Entry<String, JsonNode> e = it.next();
+            if (e.getValue().isArray() && hasObjectElements(e.getValue())) {
+                long count = 0;
+                for (JsonNode item : e.getValue())
+                    if (item.isObject()) count++;
+                return Math.max(1, count);
+            }
+        }
+        return 1;
+    }
+
+    private long estimateCrossJoinRows(JsonNode obj) {
+        long product = 1;
+        Iterator<Map.Entry<String, JsonNode>> it = obj.fields();
+        while (it.hasNext()) {
+            JsonNode val = it.next().getValue();
+            if (val.isObject()) {
+                product = saturatingMul(product, estimateCrossJoinRows(val));
+            } else if (val.isArray() && hasObjectElements(val)) {
+                long candidates = 0;
+                for (JsonNode item : val)
+                    candidates = saturatingAdd(candidates,
+                          item.isObject() ? estimateCrossJoinRows(item) : 1);
+                // An empty candidate list leaves the current row set unchanged.
+                if (candidates > 0) product = saturatingMul(product, candidates);
+            }
+        }
+        return product;
+    }
+
+    private long saturatingMul(long a, long b) {
+        long r = a * b;
+        if (a != 0 && (r / a != b || r > ESTIMATE_CAP)) return ESTIMATE_CAP;
+        return Math.min(r, ESTIMATE_CAP);
+    }
+
+    private long saturatingAdd(long a, long b) {
+        long r = a + b;
+        return (r < 0 || r > ESTIMATE_CAP) ? ESTIMATE_CAP : r;
+    }
+
     // ── FLAT_FIRST ────────────────────────────────────────────────────────────
 
     private List<Map<String, String>> expandFlatFirst(JsonNode obj, String prefix) {
