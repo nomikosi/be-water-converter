@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
@@ -34,6 +35,17 @@ public class JavaPojoGenerator {
     private final ObjectMapper jsonMapper = new ObjectMapper();
     private final XmlMapper   xmlMapper   = new XmlMapper();
 
+    private static final Set<String> JAVA_KEYWORDS = Set.of(
+          "abstract", "assert", "boolean", "break", "byte", "case", "catch",
+          "char", "class", "const", "continue", "default", "do", "double",
+          "else", "enum", "extends", "final", "finally", "float", "for",
+          "goto", "if", "implements", "import", "instanceof", "int",
+          "interface", "long", "native", "new", "package", "private",
+          "protected", "public", "return", "short", "static", "strictfp",
+          "super", "switch", "synchronized", "this", "throw", "throws",
+          "transient", "try", "void", "volatile", "while",
+          "var", "yield", "record", "sealed", "permits");
+
     public String fromJson(String json) throws Exception {
         return fromJson(json, false);
     }
@@ -41,8 +53,7 @@ public class JavaPojoGenerator {
     public String fromJson(String json, boolean useLombok) throws Exception {
         if (json == null || json.isBlank())
             throw new IllegalArgumentException("Input must not be null or blank");
-        String safe = autoClose(json);
-        JsonNode root = jsonMapper.readTree(safe);
+        JsonNode root = jsonMapper.readTree(json);
         if (root.isArray()) {
             if (root.size() == 0)
                 throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
@@ -56,7 +67,9 @@ public class JavaPojoGenerator {
     }
 
     public String fromXml(String xml, boolean useLombok) throws Exception {
-        JsonNode root = xmlMapper.readTree(xml.getBytes());
+        if (xml == null || xml.isBlank())
+            throw new IllegalArgumentException("Input XML must not be null or blank");
+        JsonNode root = xmlMapper.readTree(xml.getBytes(StandardCharsets.UTF_8));
         if (root.isArray()) {
             if (root.size() == 0)
                 throw new IllegalArgumentException("XML array is empty — nothing to generate.");
@@ -171,26 +184,12 @@ public class JavaPojoGenerator {
                 sb.append(Character.toUpperCase(parts[i].charAt(0)))
                       .append(parts[i].substring(1).toLowerCase());
         }
-        return sb.toString();
+        String result = sb.toString();
+        if (JAVA_KEYWORDS.contains(result)) {
+            result = result + "Value";
+        }
+        return result;
     }
 
     private String sanitize(String s) { return s.replaceAll("[^a-zA-Z0-9_$]", "_"); }
-
-    private String autoClose(String json) {
-        if (json == null) return "";
-        Deque<Character> stack = new ArrayDeque<>();
-        boolean inString = false, escape = false;
-        for (char c : json.toCharArray()) {
-            if (escape)         { escape = false; continue; }
-            if (c == '\\')   { if (inString) escape = true; continue; }
-            if (c == '"')      { inString = !inString; continue; }
-            if (inString)       continue;
-            if (c == '{')      stack.push('}');
-            else if (c == '[') stack.push(']');
-            else if (c == '}' || c == ']') { if (!stack.isEmpty()) stack.pop(); }
-        }
-        StringBuilder sb = new StringBuilder(json);
-        while (!stack.isEmpty()) sb.append(stack.pop());
-        return sb.toString();
-    }
 }

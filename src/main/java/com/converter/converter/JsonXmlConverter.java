@@ -21,6 +21,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 
+import java.nio.charset.StandardCharsets;
+
 public class JsonXmlConverter {
     private final ObjectMapper jsonMapper;
     private final XmlMapper xmlMapper;
@@ -49,7 +51,7 @@ public class JsonXmlConverter {
         if (xml == null || xml.isBlank()) {
             throw new IllegalArgumentException("Input XML must not be empty");
         }
-        JsonNode node = xmlMapper.readTree(xml.getBytes());
+        JsonNode node = xmlMapper.readTree(xml.getBytes(StandardCharsets.UTF_8));
         return jsonMapper.writeValueAsString(node);
     }
 }

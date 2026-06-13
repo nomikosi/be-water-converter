@@ -70,9 +70,9 @@ class JavaPojoGeneratorTest {
               .contains("private String name");
     }
 
-    @Test @DisplayName("JSON->POJO: truncated JSON auto-closed")
-    void fromJsonTruncated() throws Exception {
-        String result = generator.fromJson("[{\"id\":1,\"name\":\"Alice\"");
+    @Test @DisplayName("JSON->POJO: valid JSON with all fields generates correctly")
+    void fromJsonComplete() throws Exception {
+        String result = generator.fromJson("[{\"id\":1,\"name\":\"Alice\"}]");
         assertThat(result).contains("public class Root").contains("private Integer id");
     }
 

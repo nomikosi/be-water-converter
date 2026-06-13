@@ -51,6 +51,8 @@ public class CsvConverter {
     // ── CSV → JSON ────────────────────────────────────────────────────────────
 
     public String csvToJson(String csv) throws Exception {
+        if (csv == null || csv.isBlank())
+            throw new IllegalArgumentException("Input CSV must not be empty");
         CsvSchema schema = CsvSchema.emptySchema().withHeader();
         MappingIterator<Map<String, String>> it =
               csvMapper.readerFor(Map.class).with(schema).readValues(csv);

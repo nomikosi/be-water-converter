@@ -38,6 +38,8 @@ public class TomlConverter {
     }
 
     public String jsonToToml(String json) throws Exception {
+        if (json == null || json.isBlank())
+            throw new IllegalArgumentException("Input JSON must not be empty");
         JsonNode node = jsonMapper.readTree(json);
         return tomlMapper.writeValueAsString(node);
     }

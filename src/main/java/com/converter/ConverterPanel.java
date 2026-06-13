@@ -28,12 +28,17 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ConverterPanel {
 
@@ -79,7 +84,18 @@ public class ConverterPanel {
         FORMAT_COLORS.put(FMT_CSV,   new JBColor(new Color(39, 174,  96), new Color(46, 204, 113)));
         FORMAT_COLORS.put(FMT_TOML,  new JBColor(new Color(44,  62,  80), new Color(149, 165, 166)));
         FORMAT_COLORS.put(FMT_PROTO, new JBColor(new Color(192, 57,  43), new Color(231, 76,  60)));
-        FORMAT_COLORS.put(FMT_JAVA,  new JBColor(new Color(211, 84,   0), new Color(243, 156, 18)));
+        FORMAT_COLORS.put(FMT_JAVA,  new JBColor(new Color(142, 110, 45), new Color(243, 196, 66)));
+    }
+
+    private static final Map<String, String> FORMAT_EXTENSIONS = new LinkedHashMap<>();
+    static {
+        FORMAT_EXTENSIONS.put(FMT_JSON,  "json");
+        FORMAT_EXTENSIONS.put(FMT_XML,   "xml");
+        FORMAT_EXTENSIONS.put(FMT_YAML,  "yaml");
+        FORMAT_EXTENSIONS.put(FMT_CSV,   "csv");
+        FORMAT_EXTENSIONS.put(FMT_TOML,  "toml");
+        FORMAT_EXTENSIONS.put(FMT_PROTO, "proto");
+        FORMAT_EXTENSIONS.put(FMT_JAVA,  "java");
     }
 
     private static final Map<String, String[]> VALID_OUTPUTS = new LinkedHashMap<>();
@@ -99,6 +115,7 @@ public class ConverterPanel {
     private static final long ROW_WARNING_THRESHOLD = 1_000L;
 
     private static final int BUTTON_ARC = 8;
+    private static final int STATUS_MAX_LEN = 120;
 
     private final JPanel            mainPanel;
     private final RSyntaxTextArea   inputArea;
@@ -116,6 +133,9 @@ public class ConverterPanel {
     private final JPanel    javaOptions;
     private final JPanel    optionsBar;
     private final JSplitPane splitPane;
+    private JButton convertBtn;
+
+    private final AtomicBoolean converting = new AtomicBoolean(false);
 
     private final JsonXmlConverter  jsonXml  = new JsonXmlConverter();
     private final JsonYamlConverter jsonYaml = new JsonYamlConverter();
@@ -147,7 +167,6 @@ public class ConverterPanel {
         csvModeCombo.setForeground(TEXT_BRIGHT);
         csvModeCombo.setFont(new Font("SansSerif", Font.PLAIN, 13));
         csvModeCombo.setBorder(BorderFactory.createLineBorder(BORDER, 1));
-        csvModeCombo.setFocusable(false);
         csvModeCombo.setToolTipText("How arrays of objects are expanded into CSV rows");
         csvModeCombo.setRenderer(new DefaultListCellRenderer() {
             @Override
@@ -270,6 +289,18 @@ public class ConverterPanel {
             @Override public void actionPerformed(ActionEvent e) { doCopy(); }
         });
 
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_O,
+              InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "openFile");
+        am.put("openFile", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { doOpenFile(); }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_S,
+              InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "saveFile");
+        am.put("saveFile", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { doSaveFile(); }
+        });
+
         // ── live char/line count ─────────────────────────────────────────
         DocumentListener countUpdater = new DocumentListener() {
             @Override public void insertUpdate(DocumentEvent e)  { updateCharCount(); }
@@ -304,7 +335,7 @@ public class ConverterPanel {
 
         outputCombo.addActionListener(e -> updateConversionOptions());
 
-        JButton convertBtn = buildButton("Convert", ACCENT, ACCENT_HOVER, false);
+        convertBtn = buildButton("Convert", ACCENT, ACCENT_HOVER, false);
         convertBtn.setFont(new Font("SansSerif", Font.BOLD, 13));
         convertBtn.setToolTipText("Convert (Ctrl+Enter)");
         convertBtn.addActionListener(e -> doConvert());
@@ -329,6 +360,18 @@ public class ConverterPanel {
         bar.add(clearBtn);
 
         bar.add(makeSep());
+
+        JButton openBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.MenuOpen,
+              "Open file (Ctrl+Shift+O)");
+        openBtn.addActionListener(e -> doOpenFile());
+        bar.add(openBtn);
+
+        JButton saveBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.MenuSaveall,
+              "Save output to file (Ctrl+Shift+S)");
+        saveBtn.addActionListener(e -> doSaveFile());
+        bar.add(saveBtn);
+
+        bar.add(makeSep());
         bar.add(buildSplitToggleButton());
 
         return bar;
@@ -336,50 +379,16 @@ public class ConverterPanel {
 
     /** Compact icon-only button between the From/To combos that swaps the two sides. */
     private JButton buildSwapButton() {
-        JButton btn = new JButton(com.intellij.icons.AllIcons.Actions.SwapPanels);
-        btn.setToolTipText("Swap input and output");
-        btn.setOpaque(false);
-        btn.setContentAreaFilled(false);
-        btn.setBorderPainted(false);
-        btn.setBorder(JBUI.Borders.empty(4, 6));
-        btn.setFocusPainted(false);
-        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.addMouseListener(new MouseAdapter() {
-            public void mouseEntered(MouseEvent e) {
-                btn.setContentAreaFilled(true);
-                btn.setBackground(UTIL_HOVER);
-                btn.setOpaque(true);
-            }
-            public void mouseExited(MouseEvent e) {
-                btn.setContentAreaFilled(false);
-                btn.setOpaque(false);
-            }
-        });
+        JButton btn = buildIconButton(com.intellij.icons.AllIcons.Actions.SwapPanels,
+              "Swap input and output");
         btn.addActionListener(e -> doSwap());
         return btn;
     }
 
     /** Toggle button that switches the split pane between horizontal and vertical. */
     private JButton buildSplitToggleButton() {
-        JButton btn = new JButton(com.intellij.icons.AllIcons.Actions.SplitVertically);
-        btn.setToolTipText("Toggle vertical / horizontal split");
-        btn.setOpaque(false);
-        btn.setContentAreaFilled(false);
-        btn.setBorderPainted(false);
-        btn.setBorder(JBUI.Borders.empty(4, 6));
-        btn.setFocusPainted(false);
-        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.addMouseListener(new MouseAdapter() {
-            public void mouseEntered(MouseEvent e) {
-                btn.setContentAreaFilled(true);
-                btn.setBackground(UTIL_HOVER);
-                btn.setOpaque(true);
-            }
-            public void mouseExited(MouseEvent e) {
-                btn.setContentAreaFilled(false);
-                btn.setOpaque(false);
-            }
-        });
+        JButton btn = buildIconButton(com.intellij.icons.AllIcons.Actions.SplitVertically,
+              "Toggle vertical / horizontal split");
         btn.addActionListener(e -> {
             boolean wasHorizontal = splitPane.getOrientation() == JSplitPane.HORIZONTAL_SPLIT;
             splitPane.setOrientation(wasHorizontal
@@ -389,6 +398,30 @@ public class ConverterPanel {
                   : com.intellij.icons.AllIcons.Actions.SplitVertically);
             installDividerUI();
             splitPane.setDividerLocation(0.5);
+        });
+        return btn;
+    }
+
+    private JButton buildIconButton(Icon icon, String tooltip) {
+        JButton btn = new JButton(icon);
+        btn.setToolTipText(tooltip);
+        btn.setOpaque(false);
+        btn.setContentAreaFilled(false);
+        btn.setBorderPainted(false);
+        btn.setBorder(JBUI.Borders.empty(4, 6));
+        btn.setFocusPainted(false);
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.getAccessibleContext().setAccessibleName(tooltip);
+        btn.addMouseListener(new MouseAdapter() {
+            public void mouseEntered(MouseEvent e) {
+                btn.setContentAreaFilled(true);
+                btn.setBackground(UTIL_HOVER);
+                btn.setOpaque(true);
+            }
+            public void mouseExited(MouseEvent e) {
+                btn.setContentAreaFilled(false);
+                btn.setOpaque(false);
+            }
         });
         return btn;
     }
@@ -461,18 +494,44 @@ public class ConverterPanel {
 
     // ── Convert ───────────────────────────────────────────────────────────
     private void doConvert() {
+        if (!converting.compareAndSet(false, true)) return;
+
         final String rawInput  = inputArea.getText();
         final String inFmt     = (String) inputCombo.getSelectedItem();
         final String outFmt    = (String) outputCombo.getSelectedItem();
         final CsvConverter.CsvMode csvMode = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
         final boolean useLombok = lombokCheck.isSelected();
 
+        convertBtn.setEnabled(false);
         setStatus("Converting\u2026", true);
 
         java.util.concurrent.CompletableFuture
               .supplyAsync(() -> {
                   try {
                       String asJson = normalizeToJson(rawInput, inFmt);
+
+                      if (FMT_CSV.equals(outFmt) && csvMode == CsvConverter.CsvMode.CROSS_JOIN) {
+                          long estimate = csv.estimateRowCount(asJson, csvMode);
+                          if (estimate > ROW_WARNING_THRESHOLD) {
+                              final long est = estimate;
+                              java.util.concurrent.atomic.AtomicBoolean proceed =
+                                    new java.util.concurrent.atomic.AtomicBoolean(false);
+                              try {
+                                  SwingUtilities.invokeAndWait(() -> {
+                                      int choice = JOptionPane.showConfirmDialog(mainPanel,
+                                            String.format("CROSS_JOIN will produce ~%,d rows. Continue?", est),
+                                            "Row explosion warning",
+                                            JOptionPane.OK_CANCEL_OPTION,
+                                            JOptionPane.WARNING_MESSAGE);
+                                      proceed.set(choice == JOptionPane.OK_OPTION);
+                                  });
+                              } catch (Exception ignored) {}
+                              if (!proceed.get()) {
+                                  throw new IllegalStateException("Cancelled by user");
+                              }
+                          }
+                      }
+
                       return renderFromJson(asJson, outFmt, csvMode, useLombok);
                   } catch (Exception ex) {
                       throw new java.util.concurrent.CompletionException(ex);
@@ -480,6 +539,8 @@ public class ConverterPanel {
               }, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
               .whenComplete((result, error) ->
                     com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
+                        converting.set(false);
+                        convertBtn.setEnabled(true);
                         if (error != null) {
                             Throwable cause = error.getCause() != null ? error.getCause() : error;
                             setStatus("Error: " + cause.getMessage(), false);
@@ -495,9 +556,8 @@ public class ConverterPanel {
     }
 
     /**
-     * Step 0 + 1 of the conversion: repair truncated JSON input (autoClose is
-     * applied ONCE to the raw input, only for JSON), then normalise everything
-     * to JSON as the internal pivot format.
+     * Normalise input to JSON as the internal pivot format.
+     * autoClose is applied once for JSON input to repair truncated brackets.
      */
     private String normalizeToJson(String rawInput, String inFmt) throws Exception {
         String input = (inFmt.equals(FMT_JSON)) ? autoClose(rawInput) : rawInput;
@@ -512,7 +572,7 @@ public class ConverterPanel {
         };
     }
 
-    /** Step 2 of the conversion: JSON pivot -> desired output format. */
+    /** JSON pivot -> desired output format. */
     private String renderFromJson(String asJson, String outFmt,
           CsvConverter.CsvMode csvMode, boolean useLombok) throws Exception {
         return switch (outFmt) {
@@ -540,10 +600,16 @@ public class ConverterPanel {
                           new com.fasterxml.jackson.dataformat.xml.XmlMapper();
                     xm.enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT);
                     yield xm.writer().withRootName("root")
-                          .writeValueAsString(xm.readTree(input.getBytes()));
+                          .writeValueAsString(xm.readTree(input.getBytes(StandardCharsets.UTF_8)));
                 }
                 case FMT_YAML -> jsonYaml.jsonToYaml(jsonYaml.yamlToJson(input));
                 case FMT_TOML -> toml.jsonToToml(toml.tomlToJson(input));
+                case FMT_CSV  -> {
+                    String json = csv.csvToJson(input);
+                    yield csv.jsonToCsv(json, CsvConverter.CsvMode.FLAT_FIRST);
+                }
+                case FMT_PROTO -> input.replaceAll("[ \t]+\n", "\n")
+                      .replaceAll("\n{3,}", "\n\n").trim();
                 default       -> input;
             };
             inputArea.setText(formatted);
@@ -552,6 +618,63 @@ public class ConverterPanel {
         } catch (Exception ex) {
             setStatus("\u2717  Format failed: " + ex.getMessage(), false);
         }
+    }
+
+    // ── File I/O ─────────────────────────────────────────────────────────
+    private void doOpenFile() {
+        JFileChooser fc = new JFileChooser();
+        fc.setDialogTitle("Open input file");
+        fc.setFileFilter(new FileNameExtensionFilter(
+              "Data files (json, xml, yaml, csv, toml, proto)",
+              "json", "xml", "yaml", "yml", "csv", "toml", "proto"));
+        if (fc.showOpenDialog(mainPanel) != JFileChooser.APPROVE_OPTION) return;
+        File file = fc.getSelectedFile();
+        try {
+            String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            inputArea.setText(content);
+            inputArea.setCaretPosition(0);
+
+            String ext = getExtension(file.getName()).toLowerCase();
+            String fmt = switch (ext) {
+                case "json"          -> FMT_JSON;
+                case "xml"           -> FMT_XML;
+                case "yaml", "yml"   -> FMT_YAML;
+                case "csv"           -> FMT_CSV;
+                case "toml"          -> FMT_TOML;
+                case "proto"         -> FMT_PROTO;
+                default              -> null;
+            };
+            if (fmt != null) {
+                inputCombo.setSelectedItem(fmt);
+            }
+            setStatus("Loaded " + file.getName(), true);
+        } catch (Exception ex) {
+            setStatus("Failed to open file: " + ex.getMessage(), false);
+        }
+    }
+
+    private void doSaveFile() {
+        String output = outputArea.getText();
+        if (output.isEmpty()) { setStatus("Nothing to save", false); return; }
+
+        JFileChooser fc = new JFileChooser();
+        fc.setDialogTitle("Save output");
+        String outFmt = (String) outputCombo.getSelectedItem();
+        String ext = FORMAT_EXTENSIONS.getOrDefault(outFmt, "txt");
+        fc.setSelectedFile(new File("output." + ext));
+        if (fc.showSaveDialog(mainPanel) != JFileChooser.APPROVE_OPTION) return;
+        File file = fc.getSelectedFile();
+        try {
+            Files.writeString(file.toPath(), output, StandardCharsets.UTF_8);
+            setStatus("Saved to " + file.getName(), true);
+        } catch (Exception ex) {
+            setStatus("Failed to save: " + ex.getMessage(), false);
+        }
+    }
+
+    private static String getExtension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot >= 0 ? name.substring(dot + 1) : "";
     }
 
     // ── Utility actions ───────────────────────────────────────────────────
@@ -565,16 +688,28 @@ public class ConverterPanel {
         outputArea.setSyntaxEditingStyle(tmpSyntax);
         outputArea.setText(tmpText);
 
-        inputFormatLabel.setText(outputFormatLabel.getText());
-        outputFormatLabel.setText(tmpLabel);
+        String newInputFmt  = outputFormatLabel.getText();
+        String newOutputFmt = tmpLabel;
+
+        inputFormatLabel.setText(newInputFmt);
+        outputFormatLabel.setText(newOutputFmt);
         inputFormatLabel.repaint();
         outputFormatLabel.repaint();
 
-        String newIn = inputFormatLabel.getText();
-        for (int i = 0; i < inputCombo.getItemCount(); i++) {
-            if (inputCombo.getItemAt(i).equals(newIn)) {
-                inputCombo.setSelectedItem(newIn);
-                break;
+        boolean inputIsValid = false;
+        for (String fmt : ALL_INPUTS) {
+            if (fmt.equals(newInputFmt)) { inputIsValid = true; break; }
+        }
+
+        if (inputIsValid) {
+            inputCombo.setSelectedItem(newInputFmt);
+            rebuildOutputCombo(newInputFmt);
+
+            for (int i = 0; i < outputCombo.getItemCount(); i++) {
+                if (outputCombo.getItemAt(i).equals(newOutputFmt)) {
+                    outputCombo.setSelectedItem(newOutputFmt);
+                    break;
+                }
             }
         }
         setStatus("Swapped input and output", true);
@@ -601,10 +736,12 @@ public class ConverterPanel {
         inputCombo.setSelectedItem(FMT_JSON);
         rebuildOutputCombo(FMT_JSON);
         outputCombo.setSelectedItem(FMT_XML);
+        csvModeCombo.setSelectedItem(CsvConverter.CsvMode.FLAT_FIRST);
+        lombokCheck.setSelected(false);
         setStatus("Cleared", true);
     }
 
-    // ── autoClose — lives ONLY here now ──────────────────────────────────
+    // ── autoClose ────────────────────────────────────────────────────────
     /**
      * Leniently closes any unclosed JSON { or [ brackets.
      * Called once per conversion on the raw input before anything else.
@@ -722,7 +859,6 @@ public class ConverterPanel {
         combo.setForeground(TEXT_BRIGHT);
         combo.setFont(new Font("SansSerif", Font.PLAIN, 13));
         combo.setBorder(BorderFactory.createLineBorder(BORDER, 1));
-        combo.setFocusable(false);
         combo.setRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(JList<?> list, Object value,
@@ -745,11 +881,11 @@ public class ConverterPanel {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
                       RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(getBackground());
+                g2.setColor(isEnabled() ? getBackground() : UTIL_BG);
                 g2.fillRoundRect(0, 0, getWidth(), getHeight(), BUTTON_ARC, BUTTON_ARC);
 
                 FontMetrics fm = g2.getFontMetrics(getFont());
-                g2.setColor(getForeground());
+                g2.setColor(isEnabled() ? getForeground() : TEXT_DIM);
                 int x = (getWidth()  - fm.stringWidth(getText())) / 2;
                 int y = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
                 g2.drawString(getText(), x, y);
@@ -768,8 +904,8 @@ public class ConverterPanel {
         btn.setBorder(JBUI.Borders.empty(5, 14));
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         btn.addMouseListener(new MouseAdapter() {
-            public void mouseEntered(MouseEvent e) { btn.setBackground(hover); }
-            public void mouseExited(MouseEvent e)  { btn.setBackground(bg);    }
+            public void mouseEntered(MouseEvent e) { if (btn.isEnabled()) btn.setBackground(hover); }
+            public void mouseExited(MouseEvent e)  { if (btn.isEnabled()) btn.setBackground(bg);    }
         });
         return btn;
     }
@@ -795,16 +931,30 @@ public class ConverterPanel {
             case FMT_XML   -> SyntaxConstants.SYNTAX_STYLE_XML;
             case FMT_YAML  -> SyntaxConstants.SYNTAX_STYLE_YAML;
             case FMT_JAVA  -> SyntaxConstants.SYNTAX_STYLE_JAVA;
+            case FMT_PROTO -> SyntaxConstants.SYNTAX_STYLE_PROTO;
+            case FMT_CSV   -> SyntaxConstants.SYNTAX_STYLE_CSV;
             default        -> SyntaxConstants.SYNTAX_STYLE_NONE;
         };
     }
 
     private void setStatus(String msg, boolean ok) {
+        if (msg.length() > STATUS_MAX_LEN) {
+            statusLabel.setToolTipText(msg);
+            msg = msg.substring(0, STATUS_MAX_LEN) + "\u2026";
+        } else {
+            statusLabel.setToolTipText(null);
+        }
         statusLabel.setText(msg);
         statusLabel.setForeground(ok ? OK_COLOR : ERR_COLOR);
     }
 
     private void setStatusWarn(String msg) {
+        if (msg.length() > STATUS_MAX_LEN) {
+            statusLabel.setToolTipText(msg);
+            msg = msg.substring(0, STATUS_MAX_LEN) + "\u2026";
+        } else {
+            statusLabel.setToolTipText(null);
+        }
         statusLabel.setText(msg);
         statusLabel.setForeground(WARN_COLOR);
     }

@@ -1,9 +1,25 @@
+<!--
+  Copyright (c) 2026 Nomikosi Consulting
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+
 <idea-plugin>
     <!-- NOTE: the id is permanent once the plugin is published — it can never change. -->
     <id>com.converter.be-water-converter</id>
     <name>Be Water Converter</name>
-    <!-- TODO: replace with your real name/company, email and website before publishing. -->
-    <vendor email="dev@converter.com" url="https://github.com/your-account/be-water-converter">Be Water Converter</vendor>
+    <vendor email="info@nomikosi.com" url="https://github.com/nomikosi/be-water-converter">Nomikosi Consulting</vendor>
+    <category>Code Tools</category>
     <description><![CDATA[
         <p><b>Be water, my friend.</b> Let your data flow between formats.</p>
         <p>A visually pleasing data format converter with syntax-highlighted editors,
@@ -13,7 +29,8 @@
             <li><b>Java POJO generation</b> from any supported input, with optional Lombok annotations</li>
             <li>Format-aware pretty-printing, including lenient auto-repair of truncated JSON</li>
             <li>Two CSV expansion modes (<code>FLAT_FIRST</code> / <code>CROSS_JOIN</code>) with row-explosion warnings</li>
-            <li>One-click swap of input and output, copy to clipboard, dark-theme editors</li>
+            <li>One-click swap of input and output, copy to clipboard, file import/export</li>
+            <li>Keyboard shortcuts: <b>Ctrl+Enter</b> convert, <b>Alt+Shift+L</b> format, <b>Alt+Shift+C</b> copy</li>
         </ul>
     ]]></description>
     <change-notes><![CDATA[
@@ -30,4 +47,13 @@
                     icon="/icons/beWater.svg"
                     factoryClass="com.converter.ConverterToolWindowFactory"/>
     </extensions>
+    <actions>
+        <action id="BeWaterConverter.Open"
+                class="com.converter.OpenConverterAction"
+                text="Be Water Converter"
+                description="Open the Be Water data format converter"
+                icon="/icons/beWater.svg">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>

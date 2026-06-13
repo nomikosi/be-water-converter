@@ -26,11 +26,10 @@ import java.awt.Insets;
 
 /**
  * A FlowLayout that wraps components onto new rows AND reports the resulting
- * height in its preferred size, so parent containers (e.g. BorderLayout.NORTH)
+ * height in its preferred size, so parent containers (e.g., BorderLayout.NORTH)
  * grow instead of clipping the wrapped rows.
- *
  * Based on the well-known WrapLayout by Rob Camick
- * (https://tips4java.wordpress.com/2008/11/06/wrap-layout/).
+ * (<a href="https://tips4java.wordpress.com/2008/11/06/wrap-layout/">...</a>).
  */
 public class WrapLayout extends FlowLayout {
 
@@ -50,15 +49,42 @@ public class WrapLayout extends FlowLayout {
         return minimum;
     }
 
+    @Override
+    public void layoutContainer(Container target) {
+        synchronized (target.getTreeLock()) {
+            Insets insets = target.getInsets();
+            int maxWidth = target.getWidth() - insets.left - insets.right - getHgap() * 2;
+
+            int x = insets.left + getHgap();
+            int y = insets.top  + getVgap();
+            int rowHeight = 0;
+
+            int memberCount = target.getComponentCount();
+            for (int i = 0; i < memberCount; i++) {
+                Component m = target.getComponent(i);
+                if (!m.isVisible()) continue;
+
+                Dimension d = m.getPreferredSize();
+
+                if (x > insets.left + getHgap() && x + d.width > maxWidth + insets.left + getHgap()) {
+                    x = insets.left + getHgap();
+                    y += rowHeight + getVgap();
+                    rowHeight = 0;
+                }
+
+                m.setBounds(x, y, d.width, d.height);
+                x += d.width + getHgap();
+                rowHeight = Math.max(rowHeight, d.height);
+            }
+        }
+    }
+
     /**
      * Computes the size of the target laying out the components in rows that
      * fit within the target's current width.
      */
     private Dimension layoutSize(Container target, boolean preferred) {
         synchronized (target.getTreeLock()) {
-            // Width available for laying out rows. When the container has no
-            // size yet (first layout pass), fall back to a huge width so the
-            // result equals plain FlowLayout behaviour.
             int targetWidth = target.getSize().width;
             Container container = target;
             while (container.getSize().width == 0 && container.getParent() != null) {
@@ -86,7 +112,6 @@ public class WrapLayout extends FlowLayout {
 
                 Dimension d = preferred ? m.getPreferredSize() : m.getMinimumSize();
 
-                // Component does not fit on the current row: start a new one.
                 if (rowWidth + d.width > maxWidth) {
                     addRow(dim, rowWidth, rowHeight);
                     rowWidth = 0;
@@ -103,8 +128,6 @@ public class WrapLayout extends FlowLayout {
             dim.width += horizontalInsetsAndGap;
             dim.height += insets.top + insets.bottom + vgap * 2;
 
-            // Inside a scroll pane the viewport width must not be widened by
-            // the preferred width, otherwise wrapping never kicks in.
             Container scrollPane = SwingUtilities.getAncestorOfClass(JScrollPane.class, target);
             if (scrollPane != null && target.isValid()) {
                 dim.width -= (hgap + 1);

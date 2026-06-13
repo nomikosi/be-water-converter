@@ -16,20 +16,24 @@
 
 package com.converter;
 
+import com.intellij.openapi.actionSystem.AnAction;
+import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.ToolWindow;
-import com.intellij.openapi.wm.ToolWindowFactory;
-import com.intellij.ui.content.Content;
-import com.intellij.ui.content.ContentFactory;
+import com.intellij.openapi.wm.ToolWindowManager;
 import org.jetbrains.annotations.NotNull;
 
-public class ConverterToolWindowFactory implements ToolWindowFactory {
+/**
+ * Menu action (Tools > Be Water Converter) that activates the tool window.
+ */
+public class OpenConverterAction extends AnAction {
     @Override
-    public void createToolWindowContent(@NotNull Project project,
-                                        @NotNull ToolWindow toolWindow) {
-        ConverterPanel panel = new ConverterPanel();
-        ContentFactory cf = ContentFactory.getInstance();
-        Content content = cf.createContent(panel.getContent(), "Converter", false);
-        toolWindow.getContentManager().addContent(content);
+    public void actionPerformed(@NotNull AnActionEvent e) {
+        Project project = e.getProject();
+        if (project == null) return;
+        ToolWindow tw = ToolWindowManager.getInstance(project).getToolWindow("Be Water");
+        if (tw != null) {
+            tw.show();
+        }
     }
 }
