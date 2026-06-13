@@ -7,19 +7,38 @@
 
   An IntelliJ IDEA plugin that converts data between JSON, XML, YAML, CSV, TOML and
   Protobuf, and generates Java POJOs — all inside a syntax-highlighted tool window.
+
+  [![Java 17](https://img.shields.io/badge/Java-17-blue)](https://openjdk.org/projects/jdk/17/)
+  [![IntelliJ 2024.3+](https://img.shields.io/badge/IntelliJ-2024.3%2B-purple)](https://plugins.jetbrains.com/)
+  [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
 </div>
+
+---
 
 ## Overview
 
 Be Water Converter adds a tool window (anchored on the right) with a two-pane editor UI
-for input and output, toolbar actions for convert, format, swap, copy, and clear, and a
-context-sensitive options bar for conversion-specific settings. Inputs are normalized
-through JSON as an internal pivot format, which keeps the individual converters small and
-makes every cross-format conversion path consistent.
+for input and output, toolbar actions for convert, format, swap, copy, clear, open, and
+save, and a context-sensitive options bar for conversion-specific settings. Inputs are
+normalized through JSON as an internal pivot format, which keeps the individual converters
+small and makes every cross-format conversion path consistent.
 
 The UI is built around `RSyntaxTextArea` editors with dark-theme styling, input/output
 format badges, and dynamic output-format constraints based on the selected source format.
 The toolbar wraps responsively onto multiple rows when the tool window is narrow.
+
+## Installation
+
+1. In IntelliJ IDEA, go to **Settings → Plugins → Marketplace**.
+2. Search for **Be Water Converter**.
+3. Click **Install** and restart the IDE.
+
+Or install from disk: download the ZIP from the
+[releases page](https://github.com/nomikosi/be-water-converter/releases), then
+**Settings → Plugins → ⚙ → Install Plugin from Disk…**.
+
+Once installed, open the **Be Water** tool window from the right side bar, or via
+**Tools → Be Water Converter**.
 
 ## Supported conversions
 
@@ -43,8 +62,26 @@ auto-close step that repairs unclosed `{` / `[` brackets before parsing.
 The plugin is registered through `ConverterToolWindowFactory`, which mounts a
 `ConverterPanel` as tool-window content. The panel contains split editors, format
 selectors, a swap button between the From/To selectors, status feedback, and one-click
-actions for conversion and formatting. The output editor's syntax mode and format badge
-update automatically after each successful conversion.
+actions for conversion, formatting, file open/save, and more. The output editor's syntax
+mode and format badge update automatically after each successful conversion.
+
+### Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Convert input to selected output format |
+| <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> | Format / pretty-print input |
+| <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> | Copy output to clipboard |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | Open a file as input |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | Save output to a file |
+
+### File import and export
+
+**Open** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>) loads a file into the input
+editor and auto-detects the source format from the file extension (`.json`, `.xml`,
+`.yaml`/`.yml`, `.csv`, `.toml`, `.proto`). **Save**
+(<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>) writes the current output to disk using
+the appropriate format extension.
 
 ### Format-aware formatting
 
@@ -134,7 +171,8 @@ of being silently skipped.
 | Class | Responsibility |
 |---|---|
 | `ConverterToolWindowFactory` | Registers and mounts the tool-window content. |
-| `ConverterPanel` | UI, toolbar actions, conversion dispatch, formatting, status updates. |
+| `ConverterPanel` | UI, toolbar actions, conversion dispatch, formatting, file I/O, status updates. |
+| `OpenConverterAction` | Menu action (**Tools → Be Water Converter**) that activates the tool window. |
 | `WrapLayout` | Responsive multi-row wrapping for the toolbar and options bar. |
 | `JsonXmlConverter` | JSON ↔ XML conversion. |
 | `JsonYamlConverter` | JSON ↔ YAML conversion. |
@@ -165,10 +203,10 @@ Run pure JVM unit tests (no IDE sandbox required) with:
 gradle unitTest
 ```
 
-The `check` task runs them automatically. Converter classes — especially `CsvConverter`,
-`ProtoConverter`, and `JavaPojoGenerator` — are the main unit-test targets; CSV flattening
-edge cases (empty arrays, nulls, missing fields, header ordering) are where regressions
-are most visible.
+The `check` task runs them automatically. The test suite covers all converter classes with
+~340 test cases, including CSV flattening edge cases (empty arrays, nulls, missing fields,
+header ordering), Protobuf validation, POJO generation variants, and end-to-end cross-format
+pipeline tests.
 
 ### Building a distribution
 
@@ -178,6 +216,15 @@ gradle buildPlugin
 
 The installable ZIP is produced in `build/distributions/`. To validate compatibility
 against a range of IDE builds before publishing, run `gradle verifyPlugin`.
+
+## Compatibility
+
+| Property | Value |
+|---|---|
+| Plugin version | 1.0.0 |
+| Minimum IDE build | 243 (IntelliJ IDEA 2024.3) |
+| Maximum IDE build | 251.* (IntelliJ IDEA 2025.1) |
+| Java | 17 |
 
 ## Limitations
 
@@ -190,7 +237,12 @@ against a range of IDE builds before publishing, run `gradle verifyPlugin`.
 
 ## Roadmap ideas
 
-- Export conversion results directly to a file.
-- Remember option selections across IDE restarts.
+- Remember option selections (CSV mode, Lombok toggle) across IDE restarts.
 - Configurable row-warning threshold for `CROSS_JOIN`.
 - Full structural awareness of nested `message` and `oneof` blocks in Protobuf parsing.
+- Conversion history or undo support.
+- Drag-and-drop file input.
+
+## License
+
+[Apache License 2.0](LICENSE) — Copyright 2026 Nomikosi Consulting.
