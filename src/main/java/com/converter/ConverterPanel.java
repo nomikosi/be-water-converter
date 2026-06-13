@@ -1,6 +1,24 @@
+/*
+ * Copyright (c) 2026 Nomikosi Consulting
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.converter;
 
 import com.converter.converter.*;
+import com.intellij.ui.JBColor;
+import com.intellij.util.ui.JBUI;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 import org.fife.ui.rsyntaxtextarea.Theme;
@@ -8,31 +26,42 @@ import org.fife.ui.rtextarea.RTextScrollPane;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
+import java.awt.event.*;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
 
 public class ConverterPanel {
 
-    private static final Color BG_DARK      = new Color(43,  43,  43);
-    private static final Color BG_TOOLBAR   = new Color(55,  58,  60);
-    private static final Color BG_LABEL_BAR = new Color(37,  37,  38);
-    private static final Color BG_STATUS    = new Color(30,  30,  30);
-    private static final Color ACCENT       = new Color(75, 110, 175);
-    private static final Color ACCENT_HOVER = new Color(95, 135, 205);
-    private static final Color UTIL_BG      = new Color(70,  73,  75);
-    private static final Color UTIL_HOVER   = new Color(90,  93,  95);
-    private static final Color FORMAT_BG    = new Color(50, 100,  60);
-    private static final Color FORMAT_HOVER = new Color(65, 125,  75);
-    private static final Color TEXT_BRIGHT  = new Color(220, 220, 220);
-    private static final Color TEXT_DIM     = new Color(130, 130, 130);
-    private static final Color OK_COLOR     = new Color(98,  151,  85);
-    private static final Color WARN_COLOR   = new Color(222, 166,  62);
-    private static final Color ERR_COLOR    = new Color(204,  60,  53);
-    private static final Color BORDER       = new Color(25,  25,  25);
-    private static final Color DROPDOWN_BG  = new Color(60,  63,  65);
+    private static final Color BG_DARK      = new JBColor(new Color(245, 245, 245), new Color(43,  43,  43));
+    private static final Color BG_TOOLBAR   = new JBColor(new Color(235, 237, 240), new Color(55,  58,  60));
+    private static final Color BG_LABEL_BAR = new JBColor(new Color(240, 240, 242), new Color(37,  37,  38));
+    private static final Color BG_STATUS    = new JBColor(new Color(232, 232, 232), new Color(30,  30,  30));
+    private static final Color ACCENT       = new JBColor(new Color(55, 100, 180),  new Color(75, 110, 175));
+    private static final Color ACCENT_HOVER = new JBColor(new Color(70, 120, 210),  new Color(95, 135, 205));
+    private static final Color UTIL_BG      = new JBColor(new Color(212, 214, 216), new Color(70,  73,  75));
+    private static final Color UTIL_HOVER   = new JBColor(new Color(195, 198, 200), new Color(90,  93,  95));
+    private static final Color FORMAT_BG    = new JBColor(new Color(46, 139,  87),  new Color(50, 100,  60));
+    private static final Color FORMAT_HOVER = new JBColor(new Color(56, 160, 100),  new Color(65, 125,  75));
+    private static final Color TEXT_BRIGHT  = new JBColor(new Color(40,  40,  40),  new Color(220, 220, 220));
+    private static final Color TEXT_DIM     = new JBColor(new Color(120, 120, 120), new Color(130, 130, 130));
+    private static final Color OK_COLOR     = new JBColor(new Color(40, 130,  40),  new Color(98,  151,  85));
+    private static final Color WARN_COLOR   = new JBColor(new Color(180, 130,  0),  new Color(222, 166,  62));
+    private static final Color ERR_COLOR    = new JBColor(new Color(200, 50,  50),  new Color(204,  60,  53));
+    private static final Color BORDER       = new JBColor(new Color(210, 210, 210), new Color(25,  25,  25));
+    private static final Color DROPDOWN_BG  = new JBColor(new Color(255, 255, 255), new Color(60,  63,  65));
+    private static final Color BTN_TEXT     = new JBColor(new Color(255, 255, 255), new Color(220, 220, 220));
+    private static final Color UTIL_TEXT    = new JBColor(new Color(50,  50,  50),  new Color(220, 220, 220));
+    private static final Color EDITOR_BG    = new JBColor(new Color(255, 255, 255), new Color(30,  31,  34));
+    private static final Color GUTTER_BG    = new JBColor(new Color(245, 245, 245), new Color(43,  43,  43));
+    private static final Color GUTTER_FG    = new JBColor(new Color(170, 170, 170), new Color(90,  90,  90));
+    private static final Color DIVIDER_BG   = new JBColor(new Color(220, 220, 220), new Color(50,  50,  50));
+    private static final Color DIVIDER_GRIP = new JBColor(new Color(170, 170, 170), new Color(90,  90,  90));
+    private static final Color SELECTION_BG = new JBColor(new Color(173, 214, 255), new Color(33,  66, 131));
 
     static final String FMT_JSON  = "JSON";
     static final String FMT_XML   = "XML";
@@ -41,6 +70,17 @@ public class ConverterPanel {
     static final String FMT_TOML  = "TOML";
     static final String FMT_PROTO = "Protobuf";
     static final String FMT_JAVA  = "Java POJO";
+
+    private static final Map<String, Color> FORMAT_COLORS = new LinkedHashMap<>();
+    static {
+        FORMAT_COLORS.put(FMT_JSON,  new JBColor(new Color(41, 128, 185), new Color(52, 152, 219)));
+        FORMAT_COLORS.put(FMT_XML,   new JBColor(new Color(211, 84,   0), new Color(230, 126, 34)));
+        FORMAT_COLORS.put(FMT_YAML,  new JBColor(new Color(142, 68, 173), new Color(155, 89, 182)));
+        FORMAT_COLORS.put(FMT_CSV,   new JBColor(new Color(39, 174,  96), new Color(46, 204, 113)));
+        FORMAT_COLORS.put(FMT_TOML,  new JBColor(new Color(44,  62,  80), new Color(149, 165, 166)));
+        FORMAT_COLORS.put(FMT_PROTO, new JBColor(new Color(192, 57,  43), new Color(231, 76,  60)));
+        FORMAT_COLORS.put(FMT_JAVA,  new JBColor(new Color(211, 84,   0), new Color(243, 156, 18)));
+    }
 
     private static final Map<String, String[]> VALID_OUTPUTS = new LinkedHashMap<>();
     static {
@@ -58,10 +98,13 @@ public class ConverterPanel {
     /** CROSS_JOIN conversions estimated to exceed this many rows trigger a confirmation. */
     private static final long ROW_WARNING_THRESHOLD = 1_000L;
 
+    private static final int BUTTON_ARC = 8;
+
     private final JPanel            mainPanel;
     private final RSyntaxTextArea   inputArea;
     private final RSyntaxTextArea   outputArea;
     private final JLabel            statusLabel;
+    private final JLabel            charCountLabel;
     private final JLabel            inputFormatLabel;
     private final JLabel            outputFormatLabel;
     private final JComboBox<String> inputCombo;
@@ -72,6 +115,7 @@ public class ConverterPanel {
     private final JPanel    csvOptions;
     private final JPanel    javaOptions;
     private final JPanel    optionsBar;
+    private final JSplitPane splitPane;
 
     private final JsonXmlConverter  jsonXml  = new JsonXmlConverter();
     private final JsonYamlConverter jsonYaml = new JsonYamlConverter();
@@ -87,8 +131,8 @@ public class ConverterPanel {
         inputArea  = buildEditor();
         outputArea = buildEditor();
         outputArea.setEditable(false);
-        applyDarkTheme(inputArea);
-        applyDarkTheme(outputArea);
+        applyEditorTheme(inputArea);
+        applyEditorTheme(outputArea);
 
         inputFormatLabel  = buildFormatBadge(FMT_JSON);
         outputFormatLabel = buildFormatBadge(FMT_XML);
@@ -156,37 +200,44 @@ public class ConverterPanel {
             if (fmt == null) return;
             inputArea.setSyntaxEditingStyle(syntaxFor(fmt));
             inputFormatLabel.setText(fmt);
+            inputFormatLabel.repaint();
             rebuildOutputCombo(fmt);
         });
 
         JPanel toolbar    = buildToolbar();
         updateConversionOptions();
-        JPanel inputWrap  = wrapEditor(inputArea,  inputFormatLabel);
-        JPanel outputWrap = wrapEditor(outputArea, outputFormatLabel);
+        JPanel inputWrap  = wrapEditor(inputArea,  inputFormatLabel,  "Input");
+        JPanel outputWrap = wrapEditor(outputArea, outputFormatLabel, "Output");
 
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, inputWrap, outputWrap);
-        split.setResizeWeight(0.5);
-        split.setDividerSize(4);
-        split.setBorder(null);
-        split.setBackground(BG_DARK);
+        splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, inputWrap, outputWrap);
+        splitPane.setResizeWeight(0.5);
+        splitPane.setDividerSize(JBUI.scale(6));
+        splitPane.setBorder(null);
+        splitPane.setBackground(BG_DARK);
+        installDividerUI();
 
         statusLabel = new JLabel("Ready");
         statusLabel.setForeground(TEXT_DIM);
         statusLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        statusLabel.setBorder(new EmptyBorder(4, 10, 4, 10));
+        statusLabel.setBorder(JBUI.Borders.empty(4, 10));
+
+        charCountLabel = new JLabel("");
+        charCountLabel.setForeground(TEXT_DIM);
+        charCountLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        charCountLabel.setBorder(JBUI.Borders.empty(4, 10));
+        updateCharCount();
 
         JPanel statusBar = new JPanel(new BorderLayout());
         statusBar.setBackground(BG_STATUS);
         statusBar.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, BORDER));
-        statusBar.add(statusLabel, BorderLayout.WEST);
+        statusBar.add(statusLabel,    BorderLayout.WEST);
+        statusBar.add(charCountLabel, BorderLayout.EAST);
 
         JPanel north = new JPanel(new BorderLayout());
         north.setOpaque(false);
         north.add(toolbar,    BorderLayout.NORTH);
         north.add(optionsBar, BorderLayout.SOUTH);
 
-        // WrapLayout computes its height from the current width, so the
-        // toolbar rows must be re-laid-out whenever the panel is resized.
         mainPanel.addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
@@ -195,8 +246,46 @@ public class ConverterPanel {
         });
 
         mainPanel.add(north,     BorderLayout.NORTH);
-        mainPanel.add(split,     BorderLayout.CENTER);
+        mainPanel.add(splitPane, BorderLayout.CENTER);
         mainPanel.add(statusBar, BorderLayout.SOUTH);
+
+        // ── keyboard shortcuts ───────────────────────────────────────────
+        InputMap im = mainPanel.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+        ActionMap am = mainPanel.getActionMap();
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK), "convert");
+        am.put("convert", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { doConvert(); }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_L,
+              InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "format");
+        am.put("format", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { doFormat(); }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_C,
+              InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "copyOutput");
+        am.put("copyOutput", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { doCopy(); }
+        });
+
+        // ── live char/line count ─────────────────────────────────────────
+        DocumentListener countUpdater = new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent e)  { updateCharCount(); }
+            @Override public void removeUpdate(DocumentEvent e)  { updateCharCount(); }
+            @Override public void changedUpdate(DocumentEvent e) { updateCharCount(); }
+        };
+        inputArea.getDocument().addDocumentListener(countUpdater);
+        outputArea.getDocument().addDocumentListener(countUpdater);
+
+        // ── re-apply editor theme when IDE L&F changes ───────────────────
+        UIManager.addPropertyChangeListener(evt -> {
+            if ("lookAndFeel".equals(evt.getPropertyName())) {
+                applyEditorTheme(inputArea);
+                applyEditorTheme(outputArea);
+            }
+        });
     }
 
     // ── Toolbar ───────────────────────────────────────────────────────────
@@ -213,29 +302,35 @@ public class ConverterPanel {
         bar.add(toolbarLabel("To:"));
         bar.add(outputCombo);
 
-        // Conversion-specific options live in the options bar below the toolbar
         outputCombo.addActionListener(e -> updateConversionOptions());
 
-        JButton convertBtn = buildButton("Convert", ACCENT, ACCENT_HOVER);
+        JButton convertBtn = buildButton("Convert", ACCENT, ACCENT_HOVER, false);
         convertBtn.setFont(new Font("SansSerif", Font.BOLD, 13));
+        convertBtn.setToolTipText("Convert (Ctrl+Enter)");
         convertBtn.addActionListener(e -> doConvert());
         bar.add(convertBtn);
 
         bar.add(makeSep());
 
-        JButton formatBtn = buildButton("Format", FORMAT_BG, FORMAT_HOVER);
-        formatBtn.setToolTipText("Pretty-print / format the input");
+        JButton formatBtn = buildButton("Format", FORMAT_BG, FORMAT_HOVER, false);
+        formatBtn.setToolTipText("Format input (Alt+Shift+L)");
         formatBtn.addActionListener(e -> doFormat());
         bar.add(formatBtn);
 
         bar.add(makeSep());
 
-        JButton copyBtn  = buildButton("Copy",  UTIL_BG, UTIL_HOVER);
-        JButton clearBtn = buildButton("Clear", UTIL_BG, UTIL_HOVER);
+        JButton copyBtn  = buildButton("Copy",  UTIL_BG, UTIL_HOVER, true);
+        JButton clearBtn = buildButton("Clear", UTIL_BG, UTIL_HOVER, true);
+        copyBtn.setToolTipText("Copy output (Alt+Shift+C)");
+        clearBtn.setToolTipText("Clear all");
         copyBtn.addActionListener(e  -> doCopy());
         clearBtn.addActionListener(e -> doClear());
         bar.add(copyBtn);
         bar.add(clearBtn);
+
+        bar.add(makeSep());
+        bar.add(buildSplitToggleButton());
+
         return bar;
     }
 
@@ -243,20 +338,91 @@ public class ConverterPanel {
     private JButton buildSwapButton() {
         JButton btn = new JButton(com.intellij.icons.AllIcons.Actions.SwapPanels);
         btn.setToolTipText("Swap input and output");
-        btn.setBackground(UTIL_BG);
-        btn.setOpaque(true);
-        btn.setBorderPainted(true);
-        btn.setBorder(BorderFactory.createCompoundBorder(
-              BorderFactory.createLineBorder(BORDER, 1),
-              new EmptyBorder(4, 6, 4, 6)));
+        btn.setOpaque(false);
+        btn.setContentAreaFilled(false);
+        btn.setBorderPainted(false);
+        btn.setBorder(JBUI.Borders.empty(4, 6));
         btn.setFocusPainted(false);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.addMouseListener(new java.awt.event.MouseAdapter() {
-            public void mouseEntered(java.awt.event.MouseEvent e) { btn.setBackground(UTIL_HOVER); }
-            public void mouseExited(java.awt.event.MouseEvent e)  { btn.setBackground(UTIL_BG);    }
+        btn.addMouseListener(new MouseAdapter() {
+            public void mouseEntered(MouseEvent e) {
+                btn.setContentAreaFilled(true);
+                btn.setBackground(UTIL_HOVER);
+                btn.setOpaque(true);
+            }
+            public void mouseExited(MouseEvent e) {
+                btn.setContentAreaFilled(false);
+                btn.setOpaque(false);
+            }
         });
         btn.addActionListener(e -> doSwap());
         return btn;
+    }
+
+    /** Toggle button that switches the split pane between horizontal and vertical. */
+    private JButton buildSplitToggleButton() {
+        JButton btn = new JButton(com.intellij.icons.AllIcons.Actions.SplitVertically);
+        btn.setToolTipText("Toggle vertical / horizontal split");
+        btn.setOpaque(false);
+        btn.setContentAreaFilled(false);
+        btn.setBorderPainted(false);
+        btn.setBorder(JBUI.Borders.empty(4, 6));
+        btn.setFocusPainted(false);
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.addMouseListener(new MouseAdapter() {
+            public void mouseEntered(MouseEvent e) {
+                btn.setContentAreaFilled(true);
+                btn.setBackground(UTIL_HOVER);
+                btn.setOpaque(true);
+            }
+            public void mouseExited(MouseEvent e) {
+                btn.setContentAreaFilled(false);
+                btn.setOpaque(false);
+            }
+        });
+        btn.addActionListener(e -> {
+            boolean wasHorizontal = splitPane.getOrientation() == JSplitPane.HORIZONTAL_SPLIT;
+            splitPane.setOrientation(wasHorizontal
+                  ? JSplitPane.VERTICAL_SPLIT : JSplitPane.HORIZONTAL_SPLIT);
+            btn.setIcon(wasHorizontal
+                  ? com.intellij.icons.AllIcons.Actions.SplitHorizontally
+                  : com.intellij.icons.AllIcons.Actions.SplitVertically);
+            installDividerUI();
+            splitPane.setDividerLocation(0.5);
+        });
+        return btn;
+    }
+
+    // ── Custom split-pane divider with grip dots ─────────────────────────
+    private void installDividerUI() {
+        splitPane.setUI(new javax.swing.plaf.basic.BasicSplitPaneUI() {
+            @Override
+            public javax.swing.plaf.basic.BasicSplitPaneDivider createDefaultDivider() {
+                return new javax.swing.plaf.basic.BasicSplitPaneDivider(this) {
+                    @Override
+                    public void paint(Graphics g) {
+                        Graphics2D g2 = (Graphics2D) g.create();
+                        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                              RenderingHints.VALUE_ANTIALIAS_ON);
+                        g2.setColor(DIVIDER_BG);
+                        g2.fillRect(0, 0, getWidth(), getHeight());
+
+                        g2.setColor(DIVIDER_GRIP);
+                        int cx = getWidth()  / 2;
+                        int cy = getHeight() / 2;
+                        int dot = JBUI.scale(3);
+                        boolean horiz =
+                              splitPane.getOrientation() == JSplitPane.HORIZONTAL_SPLIT;
+                        for (int i = -2; i <= 2; i++) {
+                            int x = horiz ? cx - dot / 2 : cx + i * JBUI.scale(5) - dot / 2;
+                            int y = horiz ? cy + i * JBUI.scale(5) - dot / 2 : cy - dot / 2;
+                            g2.fillRoundRect(x, y, dot, dot, dot, dot);
+                        }
+                        g2.dispose();
+                    }
+                };
+            }
+        });
     }
 
     // ── Output combo rebuild ──────────────────────────────────────────────
@@ -289,23 +455,20 @@ public class ConverterPanel {
     private static String csvModeHintFor(CsvConverter.CsvMode mode) {
         return switch (mode) {
             case FLAT_FIRST -> "expands only the first object-array into rows (safe default)";
-            case CROSS_JOIN -> "Cartesian product of all object-arrays — rows can explode";
+            case CROSS_JOIN -> "Cartesian product of all object-arrays \u2014 rows can explode";
         };
     }
 
     // ── Convert ───────────────────────────────────────────────────────────
     private void doConvert() {
-        // 1. Read all UI state on the EDT
         final String rawInput  = inputArea.getText();
         final String inFmt     = (String) inputCombo.getSelectedItem();
         final String outFmt    = (String) outputCombo.getSelectedItem();
         final CsvConverter.CsvMode csvMode = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
         final boolean useLombok = lombokCheck.isSelected();
 
-        setStatus("Converting…", true);
+        setStatus("Converting\u2026", true);
 
-        // 2. Run the conversion off the EDT on the IDE-managed pool
-        //    (never ForkJoinPool.commonPool() inside an IntelliJ plugin)
         java.util.concurrent.CompletableFuture
               .supplyAsync(() -> {
                   try {
@@ -315,7 +478,6 @@ public class ConverterPanel {
                       throw new java.util.concurrent.CompletionException(ex);
                   }
               }, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
-              // 3. Publish the result back on the EDT
               .whenComplete((result, error) ->
                     com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
                         if (error != null) {
@@ -326,7 +488,8 @@ public class ConverterPanel {
                             outputArea.setText(result);
                             outputArea.setCaretPosition(0);
                             outputFormatLabel.setText(outFmt);
-                            setStatus("Converted " + inFmt + " → " + outFmt, true);
+                            outputFormatLabel.repaint();
+                            setStatus("Converted " + inFmt + " \u2192 " + outFmt, true);
                         }
                     }));
     }
@@ -349,7 +512,7 @@ public class ConverterPanel {
         };
     }
 
-    /** Step 2 of the conversion: JSON pivot → desired output format. */
+    /** Step 2 of the conversion: JSON pivot -> desired output format. */
     private String renderFromJson(String asJson, String outFmt,
           CsvConverter.CsvMode csvMode, boolean useLombok) throws Exception {
         return switch (outFmt) {
@@ -404,6 +567,8 @@ public class ConverterPanel {
 
         inputFormatLabel.setText(outputFormatLabel.getText());
         outputFormatLabel.setText(tmpLabel);
+        inputFormatLabel.repaint();
+        outputFormatLabel.repaint();
 
         String newIn = inputFormatLabel.getText();
         for (int i = 0; i < inputCombo.getItemCount(); i++) {
@@ -431,6 +596,8 @@ public class ConverterPanel {
         outputArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JSON);
         inputFormatLabel.setText(FMT_JSON);
         outputFormatLabel.setText(FMT_XML);
+        inputFormatLabel.repaint();
+        outputFormatLabel.repaint();
         inputCombo.setSelectedItem(FMT_JSON);
         rebuildOutputCombo(FMT_JSON);
         outputCombo.setSelectedItem(FMT_XML);
@@ -476,31 +643,43 @@ public class ConverterPanel {
         area.setAntiAliasingEnabled(true);
         area.setFont(new Font("JetBrains Mono", Font.PLAIN, 13));
         area.setTabSize(2);
-        area.setBackground(new Color(30, 31, 34));
-        area.setCaretColor(new Color(220, 220, 220));
-        area.setSelectionColor(new Color(33, 66, 131));
+        area.setBackground(EDITOR_BG);
+        area.setCaretColor(TEXT_BRIGHT);
+        area.setSelectionColor(SELECTION_BG);
         return area;
     }
 
-    private void applyDarkTheme(RSyntaxTextArea area) {
+    private void applyEditorTheme(RSyntaxTextArea area) {
         try {
-            InputStream is = getClass().getResourceAsStream(
-                  "/org/fife/ui/rsyntaxtextarea/themes/dark.xml");
+            String path = JBColor.isBright()
+                  ? "/org/fife/ui/rsyntaxtextarea/themes/default.xml"
+                  : "/org/fife/ui/rsyntaxtextarea/themes/dark.xml";
+            InputStream is = getClass().getResourceAsStream(path);
             if (is != null) Theme.load(is).apply(area);
         } catch (IOException ignored) {}
     }
 
-    private JPanel wrapEditor(RSyntaxTextArea area, JLabel badge) {
+    private JPanel wrapEditor(RSyntaxTextArea area, JLabel badge, String title) {
         RTextScrollPane scroll = new RTextScrollPane(area);
         scroll.setLineNumbersEnabled(true);
         scroll.setBorder(null);
-        scroll.getGutter().setBackground(new Color(43, 43, 43));
-        scroll.getGutter().setLineNumberColor(new Color(90, 90, 90));
+        scroll.getGutter().setBackground(GUTTER_BG);
+        scroll.getGutter().setLineNumberColor(GUTTER_FG);
+
+        JLabel titleLabel = new JLabel(title);
+        titleLabel.setForeground(TEXT_DIM);
+        titleLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        titleLabel.setBorder(JBUI.Borders.empty(0, 6));
+
+        JPanel leftLabels = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 3));
+        leftLabels.setOpaque(false);
+        leftLabels.add(titleLabel);
+        leftLabels.add(badge);
 
         JPanel labelBar = new JPanel(new BorderLayout());
         labelBar.setBackground(BG_LABEL_BAR);
         labelBar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, BORDER));
-        labelBar.add(badge, BorderLayout.WEST);
+        labelBar.add(leftLabels, BorderLayout.WEST);
 
         JPanel wrapper = new JPanel(new BorderLayout());
         wrapper.setBackground(BG_DARK);
@@ -509,11 +688,31 @@ public class ConverterPanel {
         return wrapper;
     }
 
+    /** Color-coded pill badge showing the current format name. */
     private JLabel buildFormatBadge(String text) {
-        JLabel lbl = new JLabel(text);
-        lbl.setForeground(TEXT_DIM);
+        JLabel lbl = new JLabel(text) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                      RenderingHints.VALUE_ANTIALIAS_ON);
+                Color pill = FORMAT_COLORS.getOrDefault(getText(), ACCENT);
+                g2.setColor(pill);
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(),
+                      JBUI.scale(10), JBUI.scale(10));
+
+                FontMetrics fm = g2.getFontMetrics(getFont());
+                g2.setColor(Color.WHITE);
+                int x = (getWidth()  - fm.stringWidth(getText())) / 2;
+                int y = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
+                g2.drawString(getText(), x, y);
+                g2.dispose();
+            }
+        };
+        lbl.setOpaque(false);
+        lbl.setForeground(Color.WHITE);
         lbl.setFont(new Font("SansSerif", Font.BOLD, 11));
-        lbl.setBorder(new EmptyBorder(4, 10, 4, 10));
+        lbl.setBorder(JBUI.Borders.empty(3, 10));
         return lbl;
     }
 
@@ -538,21 +737,39 @@ public class ConverterPanel {
         return combo;
     }
 
-    private JButton buildButton(String label, Color bg, Color hover) {
-        JButton btn = new JButton(label);
+    /** Rounded-corner button with hover effect. {@code utilStyle} gives theme-aware dark/light text. */
+    private JButton buildButton(String label, Color bg, Color hover, boolean utilStyle) {
+        JButton btn = new JButton(label) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                      RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(getBackground());
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), BUTTON_ARC, BUTTON_ARC);
+
+                FontMetrics fm = g2.getFontMetrics(getFont());
+                g2.setColor(getForeground());
+                int x = (getWidth()  - fm.stringWidth(getText())) / 2;
+                int y = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
+                g2.drawString(getText(), x, y);
+                g2.dispose();
+            }
+
+            @Override protected void paintBorder(Graphics g) { /* rounded rect is the border */ }
+        };
         btn.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        btn.setForeground(TEXT_BRIGHT);
+        btn.setForeground(utilStyle ? UTIL_TEXT : BTN_TEXT);
         btn.setBackground(bg);
-        btn.setOpaque(true);
-        btn.setBorderPainted(true);
-        btn.setBorder(BorderFactory.createCompoundBorder(
-              BorderFactory.createLineBorder(BORDER, 1),
-              new EmptyBorder(4, 10, 4, 10)));
+        btn.setOpaque(false);
+        btn.setContentAreaFilled(false);
+        btn.setBorderPainted(false);
         btn.setFocusPainted(false);
+        btn.setBorder(JBUI.Borders.empty(5, 14));
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.addMouseListener(new java.awt.event.MouseAdapter() {
-            public void mouseEntered(java.awt.event.MouseEvent e) { btn.setBackground(hover); }
-            public void mouseExited(java.awt.event.MouseEvent e)  { btn.setBackground(bg);    }
+        btn.addMouseListener(new MouseAdapter() {
+            public void mouseEntered(MouseEvent e) { btn.setBackground(hover); }
+            public void mouseExited(MouseEvent e)  { btn.setBackground(bg);    }
         });
         return btn;
     }
@@ -567,7 +784,7 @@ public class ConverterPanel {
     private JSeparator makeSep() {
         JSeparator sep = new JSeparator(SwingConstants.VERTICAL);
         sep.setPreferredSize(new Dimension(1, 24));
-        sep.setForeground(new Color(80, 80, 80));
+        sep.setForeground(new JBColor(new Color(200, 200, 200), new Color(80, 80, 80)));
         return sep;
     }
 
@@ -590,6 +807,15 @@ public class ConverterPanel {
     private void setStatusWarn(String msg) {
         statusLabel.setText(msg);
         statusLabel.setForeground(WARN_COLOR);
+    }
+
+    private void updateCharCount() {
+        String in  = inputArea.getText();
+        String out = outputArea.getText();
+        long inLines  = in.isEmpty()  ? 0 : in.split("\n", -1).length;
+        long outLines = out.isEmpty() ? 0 : out.split("\n", -1).length;
+        charCountLabel.setText(String.format("In: %,d lines  |  Out: %,d lines  |  %,d chars",
+              inLines, outLines, (long) in.length() + out.length()));
     }
 
     public JPanel getContent() { return mainPanel; }

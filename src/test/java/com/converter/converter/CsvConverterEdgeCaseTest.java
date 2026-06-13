@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2026 Nomikosi Consulting
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.converter.converter;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -8,10 +24,9 @@ import static org.assertj.core.api.Assertions.*;
 /**
  * Edge-case tests for CsvConverter.
  * Covers: quoted fields, empty/missing fields, header-only CSVs,
- * Windows line endings, inconsistent columns, unicode, numeric strings,
+ * Windows line endings, inconsistent columns, Unicode, numeric strings,
  * wide tables, JSON null to CSV, and round-trip correctness.
- *
- * NOTE: null/missing-value behaviour under FLAT_FIRST/CROSS_JOIN is already
+ * NOTE: null/missing-value behavior under FLAT_FIRST/CROSS_JOIN is already
  * exercised exhaustively in CsvConverterTest#NullValues — no duplication here.
  */
 @DisplayName("CsvConverter – Edge Cases")
