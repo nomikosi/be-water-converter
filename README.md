@@ -83,6 +83,9 @@ editor and auto-detects the source format from the file extension (`.json`, `.xm
 (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>) writes the current output to disk using
 the appropriate format extension.
 
+You can also **drag and drop** a file directly onto the input editor. The file is loaded
+and the source format is auto-detected from the extension, just like the Open action.
+
 ### Format-aware formatting
 
 The **Format** action pretty-prints or canonicalizes the current input for JSON, XML,
@@ -105,8 +108,10 @@ CSV generation supports two expansion modes:
   safe default for nested documents.
 - **`CROSS_JOIN`** — performs a full Cartesian product across all object arrays, so
   arrays of sizes s1 × s2 × … × sN produce that many rows. Useful for fully denormalized
-  tabular exports, but row counts can explode; conversions estimated to exceed 1,000 rows
-  ask for confirmation first.
+  tabular exports, but row counts can explode; conversions estimated to exceed the
+  configurable **row warning threshold** (default 1,000) ask for confirmation first. The
+  threshold can be adjusted via the **Row warning** spinner that appears in the options
+  bar when `CROSS_JOIN` mode is selected.
 
 #### `FLAT_FIRST` example
 
@@ -160,11 +165,64 @@ generated class with `@Data`, `@NoArgsConstructor`, and `@AllArgsConstructor`.
 ### Protobuf schema generation
 
 The Protobuf converter works structurally in both directions without invoking `protoc`:
-`protoToJson` parses proto3-style message blocks into a JSON representation with typed
-defaults, while `jsonToProto` walks a JSON tree and emits a proto3 schema with nested
-messages and repeated fields. Malformed Protobuf input fails with targeted validation
-messages (unbalanced braces, malformed field statements, duplicate field numbers) instead
-of being silently skipped.
+
+- **`protoToJson`** parses proto3-style schemas using brace-depth tracking, so nested
+  `message` definitions, `oneof` blocks, and `enum` blocks are handled correctly.
+  Fields whose type matches a known message name are resolved to nested JSON objects
+  with that message's default structure, rather than producing empty placeholders.
+  `oneof` fields are included alongside regular fields with their typed defaults.
+- **`jsonToProto`** walks a JSON tree and emits a proto3 schema with inline nested
+  messages and repeated fields.
+
+Malformed Protobuf input fails with targeted validation messages (unbalanced braces,
+malformed field statements, duplicate field numbers) instead of being silently skipped.
+
+#### Nested message example
+
+```protobuf
+message Outer {
+  string name = 1;
+  message Inner {
+    int32 value = 1;
+  }
+  Inner inner = 2;
+}
+```
+
+Produces:
+
+```json
+{
+  "Outer": {
+    "name": "",
+    "inner": { "value": 0 }
+  }
+}
+```
+
+#### Oneof example
+
+```protobuf
+message Payment {
+  string currency = 1;
+  oneof payment_method {
+    string card_number = 2;
+    string bank_account = 3;
+  }
+}
+```
+
+Produces:
+
+```json
+{
+  "Payment": {
+    "currency": "",
+    "card_number": "",
+    "bank_account": ""
+  }
+}
+```
 
 ## Architecture
 
@@ -237,11 +295,9 @@ against a range of IDE builds before publishing, run `gradle verifyPlugin`.
 
 ## Roadmap ideas
 
-- Remember option selections (CSV mode, Lombok toggle) across IDE restarts.
-- Configurable row-warning threshold for `CROSS_JOIN`.
-- Full structural awareness of nested `message` and `oneof` blocks in Protobuf parsing.
+- Remember option selections (CSV mode, Lombok toggle, row threshold) across IDE restarts.
 - Conversion history or undo support.
-- Drag-and-drop file input.
+- Conversion cancel button for long-running operations.
 
 ## License
 

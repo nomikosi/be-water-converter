@@ -27,21 +27,31 @@ import java.util.regex.*;
 /**
  * Bidirectional Protobuf schema (proto3) converter — no protoc required.
  *
- * protoToJson : parses proto3 message blocks -> JSON structure with typed defaults.
- * jsonToProto : walks a JSON structure -> proto3 .proto schema.
- *
- * NOTE: autoClose / array-unwrapping is handled upstream in ConverterPanel.dispatch()
- *       before the JSON reaches this class.
+ * <ul>
+ *   <li>{@link #protoToJson} parses proto3 message blocks (including nested
+ *       {@code message} and {@code oneof} blocks) into a JSON structure with
+ *       typed defaults.  Field types that reference known messages are resolved
+ *       to nested objects instead of producing empty placeholders.</li>
+ *   <li>{@link #jsonToProto} walks a JSON structure and emits a proto3 schema
+ *       with inline nested messages and repeated fields.</li>
+ * </ul>
  */
 public class ProtoConverter {
 
     private final ObjectMapper jsonMapper =
         new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
-    private static final Pattern MSG_PATTERN =
-        Pattern.compile("message\\s+(\\w+)\\s*\\{([^}]*?)\\}", Pattern.DOTALL);
-    private static final Pattern FIELD_PATTERN =
-        Pattern.compile("(repeated\\s+)?(\\w+)\\s+(\\w+)\\s*=\\s*\\d+\\s*;");
+    /**
+     * Matches a single proto field statement in a message body.
+     * Groups: (1) repeated/optional prefix  (2) type (dotted / generic)
+     *         (3) field name  (4) field number.
+     */
+    private static final Pattern FIELD_PATTERN = Pattern.compile(
+        "(repeated\\s+|optional\\s+)?" +
+        "([\\w.]+(?:\\s*<[^>]+>)?)" +
+        "\\s+(\\w+)" +
+        "\\s*=\\s*(\\d+)" +
+        "\\s*;");
 
     /**
      * Permissive field statement (split on ';' and trimmed): allows dotted
@@ -55,7 +65,29 @@ public class ProtoConverter {
     private static final Pattern IGNORED_STATEMENT = Pattern.compile(
         "^(option|reserved|package|import|syntax)\\b.*", Pattern.DOTALL);
 
+    private static final Set<String> SCALAR_TYPES = Set.of(
+        "string", "int32", "sint32", "uint32", "fixed32", "sfixed32",
+        "int64", "sint64", "uint64", "fixed64", "sfixed64",
+        "float", "double", "bool", "bytes"
+    );
+
+    // ── Internal data structure ───────────────────────────────────────────
+
+    private static class Block {
+        final String name;
+        final String body;
+        final int start;
+        final int end;
+        Block(String name, String body, int start, int end) {
+            this.name = name;
+            this.body = body;
+            this.start = start;
+            this.end = end;
+        }
+    }
+
     // ── proto -> JSON ─────────────────────────────────────────────────────
+
     public String protoToJson(String protoSchema) throws Exception {
         if (protoSchema == null || protoSchema.isBlank())
             throw new IllegalArgumentException(
@@ -67,43 +99,9 @@ public class ProtoConverter {
             .trim();
         validateBraces(clean);
 
-        ObjectNode root = jsonMapper.createObjectNode();
+        List<Block> topMessages = findNamedBlocks(clean, "message");
 
-        Matcher msgMatcher = MSG_PATTERN.matcher(clean);
-        boolean found = false;
-        while (msgMatcher.find()) {
-            found = true;
-            String     className = msgMatcher.group(1);
-            String     body      = msgMatcher.group(2);
-            validateMessageBody(className, body);
-            ObjectNode msgNode   = jsonMapper.createObjectNode();
-
-            Matcher fm = FIELD_PATTERN.matcher(body);
-            while (fm.find()) {
-                boolean repeated  = fm.group(1) != null;
-                String  protoType = fm.group(2);
-                String  fieldName = fm.group(3);
-                if (repeated) {
-                    msgNode.putArray(fieldName);
-                } else {
-                    switch (protoType) {
-                        case "string"                          -> msgNode.put(fieldName, "");
-                        case "int32","sint32","uint32",
-                             "fixed32","sfixed32"              -> msgNode.put(fieldName, 0);
-                        case "int64","sint64","uint64",
-                             "fixed64","sfixed64"              -> msgNode.put(fieldName, 0L);
-                        case "float"                           -> msgNode.put(fieldName, 0.0f);
-                        case "double"                          -> msgNode.put(fieldName, 0.0);
-                        case "bool"                            -> msgNode.put(fieldName, false);
-                        case "bytes"                           -> msgNode.put(fieldName, "");
-                        default -> msgNode.putObject(fieldName);
-                    }
-                }
-            }
-            root.set(className, msgNode);
-        }
-
-        if (!found) {
+        if (topMessages.isEmpty()) {
             if (clean.contains("message"))
                 throw new IllegalArgumentException(
                     "Found the 'message' keyword but could not parse any message block. " +
@@ -114,10 +112,176 @@ public class ProtoConverter {
                 "message Person {\n  string name = 1;\n  int32 age = 2;\n}");
         }
 
+        Map<String, Block> registry = new LinkedHashMap<>();
+        for (Block msg : topMessages) registerAll(msg, registry);
+
+        ObjectNode root = jsonMapper.createObjectNode();
+        for (Block msg : topMessages) {
+            root.set(msg.name, buildMessageNode(msg, registry, new HashSet<>()));
+        }
+
         return jsonMapper.writeValueAsString(root);
     }
 
-    // ── Validation helpers ────────────────────────────────────────────────
+    // ── Registration ──────────────────────────────────────────────────────
+
+    private void registerAll(Block msg, Map<String, Block> registry) {
+        registry.put(msg.name, msg);
+        for (Block nested : findNamedBlocks(msg.body, "message")) {
+            registerAll(nested, registry);
+        }
+    }
+
+    // ── JSON node construction ────────────────────────────────────────────
+
+    private ObjectNode buildMessageNode(Block msg, Map<String, Block> registry,
+                                        Set<String> resolving) {
+        ObjectNode node = jsonMapper.createObjectNode();
+        if (!resolving.add(msg.name)) return node;
+
+        try {
+            for (Block nested : findNamedBlocks(msg.body, "message"))
+                registry.putIfAbsent(nested.name, nested);
+
+            List<Block> oneofs = findNamedBlocks(msg.body, "oneof");
+
+            String flatBody = stripBlocks(msg.body, "message", "oneof", "enum");
+            validateMessageBody(msg.name, flatBody);
+
+            addFields(flatBody, node, registry, resolving);
+
+            for (Block oneof : oneofs)
+                addFields(oneof.body, node, registry, resolving);
+        } finally {
+            resolving.remove(msg.name);
+        }
+        return node;
+    }
+
+    private void addFields(String body, ObjectNode node,
+                           Map<String, Block> registry, Set<String> resolving) {
+        Matcher fm = FIELD_PATTERN.matcher(body);
+        while (fm.find()) {
+            boolean repeated  = fm.group(1) != null && fm.group(1).trim().equals("repeated");
+            String  protoType = fm.group(2).trim();
+            String  fieldName = fm.group(3);
+
+            if (repeated) {
+                node.putArray(fieldName);
+            } else if (protoType.startsWith("map<") || protoType.startsWith("map <")) {
+                node.putObject(fieldName);
+            } else if (SCALAR_TYPES.contains(protoType)) {
+                addScalarDefault(node, fieldName, protoType);
+            } else if (registry.containsKey(protoType) && !resolving.contains(protoType)) {
+                node.set(fieldName,
+                      buildMessageNode(registry.get(protoType), registry, resolving));
+            } else {
+                node.putObject(fieldName);
+            }
+        }
+    }
+
+    private void addScalarDefault(ObjectNode node, String fieldName, String type) {
+        switch (type) {
+            case "string", "bytes"                                   -> node.put(fieldName, "");
+            case "int32", "sint32", "uint32", "fixed32", "sfixed32"  -> node.put(fieldName, 0);
+            case "int64", "sint64", "uint64", "fixed64", "sfixed64"  -> node.put(fieldName, 0L);
+            case "float"                                             -> node.put(fieldName, 0.0f);
+            case "double"                                            -> node.put(fieldName, 0.0);
+            case "bool"                                              -> node.put(fieldName, false);
+            default                                                  -> node.put(fieldName, "");
+        }
+    }
+
+    // ── Block finding (brace-depth aware) ─────────────────────────────────
+
+    /**
+     * Finds all {@code keyword Name { … }} blocks at the current level,
+     * using brace-depth tracking so nested braces are handled correctly.
+     */
+    private List<Block> findNamedBlocks(String input, String keyword) {
+        List<Block> blocks = new ArrayList<>();
+        int searchFrom = 0;
+
+        while (searchFrom < input.length()) {
+            int kwIdx = indexOfWord(input, keyword, searchFrom);
+            if (kwIdx < 0) break;
+
+            int afterKw = kwIdx + keyword.length();
+            int nameStart = afterKw;
+            while (nameStart < input.length() && Character.isWhitespace(input.charAt(nameStart)))
+                nameStart++;
+
+            int nameEnd = nameStart;
+            while (nameEnd < input.length() &&
+                   (Character.isLetterOrDigit(input.charAt(nameEnd)) || input.charAt(nameEnd) == '_'))
+                nameEnd++;
+
+            if (nameEnd == nameStart) { searchFrom = afterKw; continue; }
+
+            String name = input.substring(nameStart, nameEnd);
+
+            int bracePos = nameEnd;
+            while (bracePos < input.length() && Character.isWhitespace(input.charAt(bracePos)))
+                bracePos++;
+
+            if (bracePos >= input.length() || input.charAt(bracePos) != '{') {
+                searchFrom = nameEnd;
+                continue;
+            }
+
+            int bodyStart = bracePos + 1;
+            int depth = 1, pos = bodyStart;
+            while (pos < input.length() && depth > 0) {
+                if (input.charAt(pos) == '{') depth++;
+                else if (input.charAt(pos) == '}') depth--;
+                pos++;
+            }
+
+            if (depth != 0) { searchFrom = nameEnd; continue; }
+
+            blocks.add(new Block(name, input.substring(bodyStart, pos - 1), kwIdx, pos));
+            searchFrom = pos;
+        }
+        return blocks;
+    }
+
+    /** Finds {@code keyword} as a whole word (not preceded/followed by word characters). */
+    private int indexOfWord(String input, String keyword, int from) {
+        int idx = from;
+        while (idx <= input.length() - keyword.length()) {
+            idx = input.indexOf(keyword, idx);
+            if (idx < 0) return -1;
+
+            boolean leftOk = (idx == 0) ||
+                  !(Character.isLetterOrDigit(input.charAt(idx - 1)) || input.charAt(idx - 1) == '_');
+            int end = idx + keyword.length();
+            boolean rightOk = (end >= input.length()) ||
+                  !(Character.isLetterOrDigit(input.charAt(end)) || input.charAt(end) == '_');
+
+            if (leftOk && rightOk) return idx;
+            idx = end;
+        }
+        return -1;
+    }
+
+    /** Strips all named blocks for the given keywords from the input. */
+    private String stripBlocks(String input, String... keywords) {
+        String result = input;
+        for (String kw : keywords) {
+            StringBuilder sb = new StringBuilder();
+            int lastEnd = 0;
+            for (Block b : findNamedBlocks(result, kw)) {
+                sb.append(result, lastEnd, b.start);
+                lastEnd = b.end;
+            }
+            sb.append(result.substring(lastEnd));
+            result = sb.toString();
+        }
+        return result;
+    }
+
+    // ── Validation ────────────────────────────────────────────────────────
 
     private void validateBraces(String schema) {
         int open = 0, close = 0;
@@ -133,10 +297,8 @@ public class ProtoConverter {
 
     /**
      * Validates each statement inside a message body so malformed fields fail
-     * with a precise error instead of being silently skipped. Also rejects
-     * duplicate field numbers within the same message. Statements containing
-     * braces (oneof blocks, nested message definitions) are left to the
-     * lenient structural parser and are not validated here.
+     * with a precise error instead of being silently skipped.  Also rejects
+     * duplicate field numbers within the same scope.
      */
     private void validateMessageBody(String messageName, String body) {
         Set<String> seenNumbers = new HashSet<>();
@@ -161,10 +323,10 @@ public class ProtoConverter {
     }
 
     // ── JSON -> proto ─────────────────────────────────────────────────────
+
     public String jsonToProto(String json) throws Exception {
         JsonNode root = jsonMapper.readTree(json);
 
-        // Unwrap root array — first element is the representative schema
         if (root.isArray()) {
             if (root.size() == 0)
                 throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
@@ -178,61 +340,50 @@ public class ProtoConverter {
 
         StringBuilder sb = new StringBuilder();
         sb.append("syntax = \"proto3\";\n\n");
-
-        LinkedHashMap<String, JsonNode> messages = new LinkedHashMap<>();
-        collectMessages(root, "Root", messages, new HashSet<>());
-
-        for (Map.Entry<String, JsonNode> entry : messages.entrySet()) {
-            int[] counter = {1};
-            generateMessage(entry.getKey(), entry.getValue(), sb, counter);
-            sb.append("\n");
-        }
+        generateMessage("Root", root, sb, 0);
         return sb.toString();
     }
 
-    private void collectMessages(JsonNode node, String name,
-                                  LinkedHashMap<String, JsonNode> messages,
-                                  Set<String> visited) {
-        if (!node.isObject() || visited.contains(name)) return;
-        visited.add(name);
-        messages.put(name, node);
+    private void generateMessage(String msgName, JsonNode node,
+                                  StringBuilder sb, int indent) {
+        String pad = "  ".repeat(indent);
+        sb.append(pad).append("message ").append(msgName).append(" {\n");
+
         Iterator<Map.Entry<String, JsonNode>> it = node.fields();
         while (it.hasNext()) {
             Map.Entry<String, JsonNode> e = it.next();
             String   childName = capitalize(e.getKey());
-            JsonNode child     = e.getValue();
-            if (child.isObject()) {
-                collectMessages(child, childName, messages, visited);
-            } else if (child.isArray() && !child.isEmpty() && child.get(0).isObject()) {
-                collectMessages(child.get(0), childName, messages, visited);
+            JsonNode val       = e.getValue();
+            if (val.isObject()) {
+                generateMessage(childName, val, sb, indent + 1);
+            } else if (val.isArray() && !val.isEmpty() && val.get(0).isObject()) {
+                generateMessage(childName, val.get(0), sb, indent + 1);
             }
         }
-    }
 
-    private void generateMessage(String msgName, JsonNode node,
-                                  StringBuilder sb, int[] counter) {
-        sb.append("message ").append(msgName).append(" {\n");
-        Iterator<Map.Entry<String, JsonNode>> it = node.fields();
+        int[] counter = {1};
+        it = node.fields();
         while (it.hasNext()) {
             Map.Entry<String, JsonNode> e = it.next();
             String   fieldName = e.getKey();
             JsonNode val       = e.getValue();
             String   childName = capitalize(fieldName);
+            String   fieldPad  = pad + "  ";
 
             if (val.isArray()) {
                 String elemType = (!val.isEmpty() && val.get(0).isObject())
                     ? childName : jsonTypeToProto(!val.isEmpty() ? val.get(0) : null);
-                sb.append("  repeated ").append(elemType).append(" ")
+                sb.append(fieldPad).append("repeated ").append(elemType).append(" ")
                   .append(fieldName).append(" = ").append(counter[0]++).append(";\n");
             } else if (val.isObject()) {
-                sb.append("  ").append(childName).append(" ")
+                sb.append(fieldPad).append(childName).append(" ")
                   .append(fieldName).append(" = ").append(counter[0]++).append(";\n");
             } else {
-                sb.append("  ").append(jsonTypeToProto(val)).append(" ")
+                sb.append(fieldPad).append(jsonTypeToProto(val)).append(" ")
                   .append(fieldName).append(" = ").append(counter[0]++).append(";\n");
             }
         }
-        sb.append("}\n");
+        sb.append(pad).append("}\n");
     }
 
     private String jsonTypeToProto(JsonNode val) {

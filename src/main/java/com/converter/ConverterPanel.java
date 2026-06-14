@@ -30,6 +30,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
 import java.io.File;
@@ -38,6 +39,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ConverterPanel {
@@ -111,8 +113,7 @@ public class ConverterPanel {
     private static final String[] ALL_INPUTS =
           {FMT_JSON, FMT_XML, FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO};
 
-    /** CROSS_JOIN conversions estimated to exceed this many rows trigger a confirmation. */
-    private static final long ROW_WARNING_THRESHOLD = 1_000L;
+    private static final long DEFAULT_ROW_WARNING_THRESHOLD = 1_000L;
 
     private static final int BUTTON_ARC = 8;
     private static final int STATUS_MAX_LEN = 120;
@@ -128,6 +129,8 @@ public class ConverterPanel {
     private final JComboBox<String> outputCombo;
     private final JComboBox<CsvConverter.CsvMode> csvModeCombo;
     private final JLabel    csvModeHint;
+    private final JSpinner  rowThresholdSpinner;
+    private final JLabel    rowThresholdLabel;
     private final JCheckBox lombokCheck;
     private final JPanel    csvOptions;
     private final JPanel    javaOptions;
@@ -153,6 +156,7 @@ public class ConverterPanel {
         outputArea.setEditable(false);
         applyEditorTheme(inputArea);
         applyEditorTheme(outputArea);
+        installFileDrop(inputArea);
 
         inputFormatLabel  = buildFormatBadge(FMT_JSON);
         outputFormatLabel = buildFormatBadge(FMT_XML);
@@ -183,9 +187,24 @@ public class ConverterPanel {
         csvModeHint = new JLabel(csvModeHintFor(CsvConverter.CsvMode.FLAT_FIRST));
         csvModeHint.setForeground(TEXT_DIM);
         csvModeHint.setFont(new Font("SansSerif", Font.ITALIC, 12));
+
+        rowThresholdLabel = toolbarLabel("Row warning:");
+        rowThresholdSpinner = new JSpinner(
+              new SpinnerNumberModel(
+                    (Number) DEFAULT_ROW_WARNING_THRESHOLD, 10L, 10_000_000L, 100L));
+        rowThresholdSpinner.setToolTipText(
+              "CROSS_JOIN conversions estimated to exceed this row count trigger a confirmation");
+        rowThresholdSpinner.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        rowThresholdSpinner.setPreferredSize(new Dimension(90, 26));
+
         csvModeCombo.addActionListener(e -> {
             CsvConverter.CsvMode m = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
-            if (m != null) csvModeHint.setText(csvModeHintFor(m));
+            if (m != null) {
+                csvModeHint.setText(csvModeHintFor(m));
+                boolean isCross = m == CsvConverter.CsvMode.CROSS_JOIN;
+                rowThresholdLabel.setVisible(isCross);
+                rowThresholdSpinner.setVisible(isCross);
+            }
         });
 
         lombokCheck = new JCheckBox("Lombok annotations");
@@ -201,6 +220,10 @@ public class ConverterPanel {
         csvOptions.add(toolbarLabel("CSV mode:"));
         csvOptions.add(csvModeCombo);
         csvOptions.add(csvModeHint);
+        csvOptions.add(rowThresholdLabel);
+        csvOptions.add(rowThresholdSpinner);
+        rowThresholdLabel.setVisible(false);
+        rowThresholdSpinner.setVisible(false);
 
         javaOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         javaOptions.setOpaque(false);
@@ -501,6 +524,7 @@ public class ConverterPanel {
         final String outFmt    = (String) outputCombo.getSelectedItem();
         final CsvConverter.CsvMode csvMode = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
         final boolean useLombok = lombokCheck.isSelected();
+        final long rowWarningThreshold = ((Number) rowThresholdSpinner.getValue()).longValue();
 
         convertBtn.setEnabled(false);
         setStatus("Converting\u2026", true);
@@ -512,7 +536,7 @@ public class ConverterPanel {
 
                       if (FMT_CSV.equals(outFmt) && csvMode == CsvConverter.CsvMode.CROSS_JOIN) {
                           long estimate = csv.estimateRowCount(asJson, csvMode);
-                          if (estimate > ROW_WARNING_THRESHOLD) {
+                          if (estimate > rowWarningThreshold) {
                               final long est = estimate;
                               java.util.concurrent.atomic.AtomicBoolean proceed =
                                     new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -628,7 +652,10 @@ public class ConverterPanel {
               "Data files (json, xml, yaml, csv, toml, proto)",
               "json", "xml", "yaml", "yml", "csv", "toml", "proto"));
         if (fc.showOpenDialog(mainPanel) != JFileChooser.APPROVE_OPTION) return;
-        File file = fc.getSelectedFile();
+        loadFile(fc.getSelectedFile());
+    }
+
+    private void loadFile(File file) {
         try {
             String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
             inputArea.setText(content);
@@ -670,6 +697,34 @@ public class ConverterPanel {
         } catch (Exception ex) {
             setStatus("Failed to save: " + ex.getMessage(), false);
         }
+    }
+
+    /** Installs a file drop handler that chains with the editor's existing TransferHandler. */
+    private void installFileDrop(RSyntaxTextArea area) {
+        TransferHandler original = area.getTransferHandler();
+        area.setTransferHandler(new TransferHandler() {
+            @Override
+            public boolean canImport(TransferSupport support) {
+                if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) return true;
+                return original != null && original.canImport(support);
+            }
+            @Override
+            public boolean importData(TransferSupport support) {
+                if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        List<File> files = (List<File>) support.getTransferable()
+                              .getTransferData(DataFlavor.javaFileListFlavor);
+                        if (!files.isEmpty()) loadFile(files.get(0));
+                        return true;
+                    } catch (Exception ex) {
+                        setStatus("Drop failed: " + ex.getMessage(), false);
+                        return false;
+                    }
+                }
+                return original != null && original.importData(support);
+            }
+        });
     }
 
     private static String getExtension(String name) {
