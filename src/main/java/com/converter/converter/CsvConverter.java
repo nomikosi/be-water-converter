@@ -145,8 +145,7 @@ public class CsvConverter {
     private long estimateFlatFirstRows(JsonNode obj) {
         // Only the first array-of-objects contributes extra rows; each object
         // element of that array becomes one row candidate.
-        for (Iterator<Map.Entry<String, JsonNode>> it = obj.fields(); it.hasNext(); ) {
-            Map.Entry<String, JsonNode> e = it.next();
+        for (Map.Entry<String, JsonNode> e : obj.properties()) {
             if (e.getValue().isArray() && hasObjectElements(e.getValue())) {
                 long count = 0;
                 for (JsonNode item : e.getValue())
@@ -159,9 +158,8 @@ public class CsvConverter {
 
     private long estimateCrossJoinRows(JsonNode obj) {
         long product = 1;
-        Iterator<Map.Entry<String, JsonNode>> it = obj.fields();
-        while (it.hasNext()) {
-            JsonNode val = it.next().getValue();
+        for (Map.Entry<String, JsonNode> entry : obj.properties()) {
+            JsonNode val = entry.getValue();
             if (val.isObject()) {
                 product = saturatingMul(product, estimateCrossJoinRows(val));
             } else if (val.isArray() && hasObjectElements(val)) {
@@ -191,8 +189,7 @@ public class CsvConverter {
 
     private List<Map<String, String>> expandFlatFirst(JsonNode obj, String prefix) {
         String firstArrayField = null;
-        for (Iterator<Map.Entry<String, JsonNode>> it = obj.fields(); it.hasNext(); ) {
-            Map.Entry<String, JsonNode> e = it.next();
+        for (Map.Entry<String, JsonNode> e : obj.properties()) {
             if (e.getValue().isArray() && hasObjectElements(e.getValue())) {
                 firstArrayField = e.getKey();
                 break;
@@ -202,9 +199,7 @@ public class CsvConverter {
         List<Map<String, String>> result = new ArrayList<>();
         result.add(new LinkedHashMap<>());
 
-        Iterator<Map.Entry<String, JsonNode>> it = obj.fields();
-        while (it.hasNext()) {
-            Map.Entry<String, JsonNode> e   = it.next();
+        for (Map.Entry<String, JsonNode> e : obj.properties()) {
             String   key = prefix.isEmpty() ? e.getKey() : prefix + "." + e.getKey();
             JsonNode val = e.getValue();
 
@@ -250,9 +245,7 @@ public class CsvConverter {
         List<Map<String, String>> result = new ArrayList<>();
         result.add(new LinkedHashMap<>());
 
-        Iterator<Map.Entry<String, JsonNode>> it = obj.fields();
-        while (it.hasNext()) {
-            Map.Entry<String, JsonNode> e   = it.next();
+        for (Map.Entry<String, JsonNode> e : obj.properties()) {
             String   key = prefix.isEmpty() ? e.getKey() : prefix + "." + e.getKey();
             JsonNode val = e.getValue();
 
@@ -305,9 +298,7 @@ public class CsvConverter {
 
     private void flattenToCells(JsonNode node, String prefix, Map<String, String> out) {
         if (node.isObject()) {
-            Iterator<Map.Entry<String, JsonNode>> it = node.fields();
-            while (it.hasNext()) {
-                Map.Entry<String, JsonNode> e = it.next();
+            for (Map.Entry<String, JsonNode> e : node.properties()) {
                 flattenToCells(e.getValue(),
                       prefix.isEmpty() ? e.getKey() : prefix + "." + e.getKey(), out);
             }

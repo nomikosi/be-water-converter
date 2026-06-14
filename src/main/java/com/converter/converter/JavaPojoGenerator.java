@@ -106,9 +106,7 @@ public class JavaPojoGenerator {
         if (!node.isObject() || visited.contains(className)) return;
         visited.add(className);
         classMap.put(className, node);
-        Iterator<Map.Entry<String, JsonNode>> it = node.fields();
-        while (it.hasNext()) {
-            Map.Entry<String, JsonNode> entry = it.next();
+        for (Map.Entry<String, JsonNode> entry : node.properties()) {
             String childName = capitalize(toCamelCase(entry.getKey()));
             JsonNode child = entry.getValue();
             if (child.isObject()) {
@@ -133,9 +131,7 @@ public class JavaPojoGenerator {
         }
         sb.append("public class ").append(className).append(" {\n\n");
 
-        Iterator<Map.Entry<String, JsonNode>> it = node.fields();
-        while (it.hasNext()) {
-            Map.Entry<String, JsonNode> e = it.next();
+        for (Map.Entry<String, JsonNode> e : node.properties()) {
             String originalKey = e.getKey();
             String camelName   = toCamelCase(originalKey);
             String javaType    = resolveJavaType(e.getValue(), originalKey);

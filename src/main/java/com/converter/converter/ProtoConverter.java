@@ -349,9 +349,7 @@ public class ProtoConverter {
         String pad = "  ".repeat(indent);
         sb.append(pad).append("message ").append(msgName).append(" {\n");
 
-        Iterator<Map.Entry<String, JsonNode>> it = node.fields();
-        while (it.hasNext()) {
-            Map.Entry<String, JsonNode> e = it.next();
+        for (Map.Entry<String, JsonNode> e : node.properties()) {
             String   childName = capitalize(e.getKey());
             JsonNode val       = e.getValue();
             if (val.isObject()) {
@@ -362,9 +360,7 @@ public class ProtoConverter {
         }
 
         int[] counter = {1};
-        it = node.fields();
-        while (it.hasNext()) {
-            Map.Entry<String, JsonNode> e = it.next();
+        for (Map.Entry<String, JsonNode> e : node.properties()) {
             String   fieldName = e.getKey();
             JsonNode val       = e.getValue();
             String   childName = capitalize(fieldName);
