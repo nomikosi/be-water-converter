@@ -21,13 +21,33 @@ dependencies {
         intellijIdeaCommunity('2024.3.5')
         instrumentationTools()
     }
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
-    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml:2.18.2'
-    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.18.2'
-    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-csv:2.18.2'
-    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-toml:2.18.2'
+
+    // Jackson core is already provided by the IntelliJ Platform — compile against
+    // a known version but do NOT bundle it (avoids classloader conflicts).
+    compileOnly 'com.fasterxml.jackson.core:jackson-databind:2.21.1'
+
+    // Dataformat modules are NOT part of the platform — bundle them with the plugin.
+    // Exclude transitive jackson-core deps so only the platform's copy is used at runtime.
+    implementation('com.fasterxml.jackson.dataformat:jackson-dataformat-xml:2.21.1') {
+        exclude group: 'com.fasterxml.jackson.core'
+        exclude group: 'com.fasterxml.jackson'
+    }
+    implementation('com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.21.1') {
+        exclude group: 'com.fasterxml.jackson.core'
+        exclude group: 'com.fasterxml.jackson'
+    }
+    implementation('com.fasterxml.jackson.dataformat:jackson-dataformat-csv:2.21.1') {
+        exclude group: 'com.fasterxml.jackson.core'
+        exclude group: 'com.fasterxml.jackson'
+    }
+    implementation('com.fasterxml.jackson.dataformat:jackson-dataformat-toml:2.21.1') {
+        exclude group: 'com.fasterxml.jackson.core'
+        exclude group: 'com.fasterxml.jackson'
+    }
     implementation 'com.fifesoft:rsyntaxtextarea:3.5.4'
 
+    // Jackson core for unit tests (which run outside the IDE platform)
+    testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.21.1'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testImplementation 'org.assertj:assertj-core:3.27.7'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'

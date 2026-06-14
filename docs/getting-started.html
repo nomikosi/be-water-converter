@@ -1,0 +1,35 @@
+<h2>General</h2>
+<p>This is a fun-made project, I always wanted to create an Intellij plugin, if you find any issues, feel free to create a pr https://github.com/nomikosi/be-water-converter or message me directly (check below)</p>
+<p>If you have any other ideas about improvements, feel free to share those at nomikosi.consulting at gmail.com </p>
+
+
+<h2>1. Install the plugin</h2>
+<p>Open your JetBrains IDE, go to <b>Settings → Plugins → Marketplace</b>, search for
+    <b>Be Water Converter</b>, and click <b>Install</b>. Restart the IDE when prompted.</p>
+
+<h2>2. Open the tool window</h2>
+<p>Click the <b>Be Water</b> tab on the right side bar, or go to <b>Tools → Be Water Converter</b>.</p>
+
+<h2>3. Load your data</h2>
+<p>Paste text into the input editor, or load a file using one of these methods:</p>
+<ul>
+    <li><b>Drag and drop</b> a file onto the input editor</li>
+    <li><b>Load</b> a file from the respective button, onto the input editor</li>
+</ul>
+
+<p>The source format is auto-detected from the file extension.</p>
+
+<h2>4. Convert</h2>
+<p>Select the source format in the <b>From</b> dropdown and the target format in the
+    <b>To</b> dropdown, then click <b>Convert</b>.</p>
+
+
+<h2>Conversion-specific options</h2>
+<p>Some output formats show an options bar below the toolbar:</p>
+<ul>
+    <li><b>CSV</b> choose between <code>FLAT_FIRST</code> (expands the first array only) and
+        <code>CROSS_JOIN</code> (full Cartesian product). In <code>CROSS_JOIN</code> mode, adjust the
+        <b>Row warning</b> threshold to control when the confirmation dialog appears.</li>
+    <li><b>Java POJO</b> toggle <b>Lombok annotations</b> to add <code>@Data</code>,
+        <code>@NoArgsConstructor</code>, and <code>@AllArgsConstructor</code> to generated classes.</li>
+</ul>
