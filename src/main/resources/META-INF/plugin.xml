@@ -24,16 +24,42 @@
         <p><b>Be water, my friend.</b> Let your data flow between formats.</p>
         <p>A visually pleasing data format converter with syntax-highlighted editors,
         living in a tool window on the right side of your IDE.</p>
+
+        <h3>Supported formats</h3>
         <ul>
             <li>Bidirectional conversion between <b>JSON, XML, YAML, CSV, TOML and Protobuf</b></li>
             <li><b>Java POJO generation</b> from any supported input, with optional Lombok annotations</li>
+        </ul>
+
+        <h3>Protobuf</h3>
+        <ul>
+            <li>Full structural parsing of nested <code>message</code>, <code>oneof</code>, and <code>enum</code> blocks</li>
+            <li>Field types that reference known messages are resolved to nested JSON objects</li>
+            <li>JSON-to-Proto generates idiomatic inline nested messages</li>
+        </ul>
+
+        <h3>CSV</h3>
+        <ul>
+            <li>Two expansion modes: <code>FLAT_FIRST</code> (safe default) and <code>CROSS_JOIN</code> (full Cartesian product)</li>
+            <li>Configurable row-warning threshold for <code>CROSS_JOIN</code> to control the row-explosion confirmation</li>
+        </ul>
+
+        <h3>Editor &amp; UI</h3>
+        <ul>
             <li>Format-aware pretty-printing, including lenient auto-repair of truncated JSON</li>
-            <li>Two CSV expansion modes (<code>FLAT_FIRST</code> / <code>CROSS_JOIN</code>) with row-explosion warnings</li>
+            <li><b>Drag-and-drop</b> files onto the input editor with automatic format detection</li>
             <li>One-click swap of input and output, copy to clipboard, file import/export</li>
-            <li>Keyboard shortcuts: <b>Ctrl+Enter</b> convert, <b>Alt+Shift+L</b> format, <b>Alt+Shift+C</b> copy</li>
         </ul>
     ]]></description>
     <change-notes><![CDATA[
+        <h3>1.1.0</h3>
+        <ul>
+            <li><b>Drag-and-drop file input</b> — drop a file onto the input editor to load it with automatic format detection.</li>
+            <li><b>Configurable CROSS_JOIN row-warning threshold</b> — adjust the row limit via a spinner in the CSV options bar.</li>
+            <li><b>Full Protobuf structural parsing</b> — nested <code>message</code>, <code>oneof</code>, and <code>enum</code> blocks are
+                parsed correctly; field types referencing known messages resolve to nested JSON objects;
+                JSON-to-Proto generates inline nested messages.</li>
+        </ul>
         <h3>1.0.0</h3>
         <ul>
             <li>Initial release: JSON, XML, YAML, CSV, TOML and Protobuf conversion plus Java POJO generation.</li>

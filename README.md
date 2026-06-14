@@ -279,7 +279,7 @@ against a range of IDE builds before publishing, run `gradle verifyPlugin`.
 
 | Property | Value |
 |---|---|
-| Plugin version | 1.0.0 |
+| Plugin version | 1.1.0 |
 | Minimum IDE build | 243 (IntelliJ IDEA 2024.3) |
 | Maximum IDE build | 251.* (IntelliJ IDEA 2025.1) |
 | Java | 17 |
