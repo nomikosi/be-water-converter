@@ -2,7 +2,7 @@ import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
 
 plugins {
     id 'java'
-    id 'org.jetbrains.intellij.platform' version '2.2.1'
+    id 'org.jetbrains.intellij.platform' version '2.16.0'
 }
 
 group = 'com.converter'
@@ -18,8 +18,7 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        intellijIdeaCommunity('2024.3.5')
-        instrumentationTools()
+        intellijIdeaCommunity('2024.3.7')
     }
 
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.21.1'
@@ -30,6 +29,7 @@ dependencies {
     implementation 'com.fifesoft:rsyntaxtextarea:3.5.4'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testImplementation 'org.assertj:assertj-core:3.27.7'
+    testRuntimeOnly 'junit:junit:4.13.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
 }
@@ -37,6 +37,7 @@ dependencies {
 test {
     useJUnitPlatform()
     jvmArgs '-Dfile.encoding=UTF-8'
+    include '**/*Test.class'
 }
 
 intellijPlatform {
@@ -45,7 +46,6 @@ intellijPlatform {
         name = 'Be Water Converter'
         ideaVersion {
             sinceBuild = '243'
-            untilBuild = '262.*'
         }
     }
     pluginVerification {
@@ -56,16 +56,9 @@ intellijPlatform {
 }
 
 sourceSets {
-    unitTest {
-        java.srcDirs = ['src/test/java']
-        compileClasspath += main.output
-        runtimeClasspath += main.output
+    test {
+        java.srcDirs += sourceSets.main.java.srcDirs
     }
-}
-
-configurations {
-    unitTestImplementation.extendsFrom testImplementation
-    unitTestRuntimeOnly.extendsFrom testRuntimeOnly
 }
 
 // ── Unit test task — plain JVM, no IDE sandbox ─────────────────────────────
@@ -73,11 +66,12 @@ tasks.register('unitTest', Test) {
     description = 'Runs pure unit tests (no IntelliJ platform required).'
     group       = 'verification'
 
-    testClassesDirs = sourceSets.unitTest.output.classesDirs
-    classpath       = sourceSets.unitTest.runtimeClasspath
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath       = sourceSets.test.runtimeClasspath
 
     useJUnitPlatform()
     jvmArgs '-Dfile.encoding=UTF-8'
+    include '**/*Test.class'
 
     testLogging {
         events 'passed', 'skipped', 'failed'
@@ -91,6 +85,9 @@ tasks.register('unitTest', Test) {
 // Make 'check' run unit tests automatically
 tasks.named('check') { dependsOn tasks.named('unitTest') }
 
+// Make 'build' produce the installable plugin ZIP as well as the Java artifacts.
+tasks.named('build') { dependsOn tasks.named('buildPlugin') }
+
 // ── Suppress missing emojipicker.jar (Windows bug MP-6708) ────────────────
 tasks.withType(PrepareSandboxTask).configureEach {
     disabledPlugins.add("org.jetbrains.plugins.emojipicker")
@@ -98,11 +95,13 @@ tasks.withType(PrepareSandboxTask).configureEach {
 
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
 }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
-

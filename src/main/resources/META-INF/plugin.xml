@@ -55,10 +55,10 @@
         <h3>1.3.0</h3>
         <ul>
             <li><b>Fixed dependency bundling</b> — all Jackson dataformat modules and RSyntaxTextArea are now correctly
-                included in the plugin distribution, resolving "Package not found" errors across IDE versions 243–262.</li>
+                included in the plugin distribution, resolving "Package not found" errors across supported IDE versions.</li>
             <li><b>Replaced deprecated <code>JsonNode.fields()</code></b> — migrated all 10 usages to
                 <code>JsonNode.properties()</code> for forward-compatibility with Jackson 2.21+.</li>
-            <li><b>Extended compatibility range</b> — <code>untilBuild</code> now covers IntelliJ IDEA 2026.2 (build 262.*).</li>
+            <li><b>Extended compatibility range</b> — removed the upper build cap for IntelliJ Platform 2024.3+ forward compatibility.</li>
         </ul>
         <h3>1.1.0</h3>
         <ul>

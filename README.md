@@ -243,7 +243,7 @@ Produces:
 
 ### Requirements
 
-- Java 17
+- Java 21
 - IntelliJ Platform Gradle Plugin 2.x (targets IntelliJ IDEA Community 2024.3)
 
 ### Running locally
@@ -281,8 +281,8 @@ against a range of IDE builds before publishing, run `gradle verifyPlugin`.
 |---|---|
 | Plugin version | 1.3.0 |
 | Minimum IDE build | 243 (IntelliJ IDEA 2024.3) |
-| Maximum IDE build | 262.* (IntelliJ IDEA 2026.2) |
-| Java | 17 |
+| Maximum IDE build | Open-ended |
+| Java | 21 |
 
 ## Limitations
 
