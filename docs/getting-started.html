@@ -1,6 +1,6 @@
 <h2>General</h2>
-<p>This is a fun-made project, I always wanted to create an Intellij plugin, if you find any issues, feel free to create a pr https://github.com/nomikosi/be-water-converter or message me directly (check below)</p>
-<p>If you have any other ideas about improvements, feel free to share those at nomikosi.consulting at gmail.com </p>
+<p>This is a fun-made project. I always wanted to create an IntelliJ plugin. If you find any issues, feel free to create a PR at https://github.com/nomikosi/be-water-converter or message me directly.</p>
+<p>If you have any other ideas about improvements, feel free to share those at nomikosi.consulting at gmail.com.</p>
 
 
 <h2>1. Install the plugin</h2>
@@ -14,14 +14,25 @@
 <p>Paste text into the input editor, or load a file using one of these methods:</p>
 <ul>
     <li><b>Drag and drop</b> a file onto the input editor</li>
-    <li><b>Load</b> a file from the respective button, onto the input editor</li>
+    <li><b>Open</b> a file from the toolbar button or with <b>Ctrl+Shift+O</b></li>
 </ul>
 
 <p>The source format is auto-detected from the file extension.</p>
 
 <h2>4. Convert</h2>
 <p>Select the source format in the <b>From</b> dropdown and the target format in the
-    <b>To</b> dropdown, then click <b>Convert</b>.</p>
+    <b>To</b> dropdown, then click <b>Convert</b> or press <b>Ctrl+Enter</b>.</p>
+
+<h2>Keyboard shortcuts</h2>
+<p>Shortcuts are active while focus is inside the Be Water tool window, including inside
+    the input and output editors.</p>
+<ul>
+    <li><b>Ctrl+Enter</b> converts input to the selected output format</li>
+    <li><b>Alt+Shift+L</b> formats or pretty-prints the input</li>
+    <li><b>Alt+Shift+C</b> copies output to the clipboard</li>
+    <li><b>Ctrl+Shift+O</b> opens a file as input</li>
+    <li><b>Ctrl+Shift+S</b> saves the current output to a file</li>
+</ul>
 
 
 <h2>Conversion-specific options</h2>
@@ -33,3 +44,8 @@
     <li><b>Java POJO</b> toggle <b>Lombok annotations</b> to add <code>@Data</code>,
         <code>@NoArgsConstructor</code>, and <code>@AllArgsConstructor</code> to generated classes.</li>
 </ul>
+
+<h2>Swap behavior</h2>
+<p>The swap button exchanges input and output when the output format can also be parsed as
+    an input format. Generated <b>Java POJO</b> output is output-only, so it cannot be swapped
+    back into the input editor as a source format.</p>

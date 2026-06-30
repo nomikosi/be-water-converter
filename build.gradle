@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'com.converter'
-version = '1.3.0'
+version = '1.3.1'
 
 repositories {
     mavenCentral()
@@ -71,7 +71,7 @@ tasks.register('unitTest', Test) {
 
     useJUnitPlatform()
     jvmArgs '-Dfile.encoding=UTF-8'
-    include '**/*Test.class'
+    include 'com/converter/converter/**/*Test.class'
 
     testLogging {
         events 'passed', 'skipped', 'failed'

@@ -63,7 +63,9 @@ The plugin is registered through `ConverterToolWindowFactory`, which mounts a
 `ConverterPanel` as tool-window content. The panel contains split editors, format
 selectors, a swap button between the From/To selectors, status feedback, and one-click
 actions for conversion, formatting, file open/save, and more. The output editor's syntax
-mode and format badge update automatically after each successful conversion.
+mode and format badge update automatically after each successful conversion. Swap is
+available when the current output format is also a supported input format; generated
+Java POJO output is intentionally output-only.
 
 ### Keyboard shortcuts
 
@@ -74,6 +76,9 @@ mode and format badge update automatically after each successful conversion.
 | <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> | Copy output to clipboard |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | Open a file as input |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | Save output to a file |
+
+Shortcuts are active while focus is inside the Be Water tool window, including when the
+input or output editor has focus.
 
 ### File import and export
 
@@ -279,7 +284,7 @@ against a range of IDE builds before publishing, run `gradle verifyPlugin`.
 
 | Property | Value |
 |---|---|
-| Plugin version | 1.3.0 |
+| Plugin version | 1.3.1 |
 | Minimum IDE build | 243 (IntelliJ IDEA 2024.3) |
 | Maximum IDE build | Open-ended |
 | Java | 21 |

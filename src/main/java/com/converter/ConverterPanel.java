@@ -117,6 +117,11 @@ public class ConverterPanel {
 
     private static final int BUTTON_ARC = 8;
     private static final int STATUS_MAX_LEN = 120;
+    private static final String ACTION_CONVERT = "convert";
+    private static final String ACTION_FORMAT = "format";
+    private static final String ACTION_COPY_OUTPUT = "copyOutput";
+    private static final String ACTION_OPEN_FILE = "openFile";
+    private static final String ACTION_SAVE_FILE = "saveFile";
 
     private final JPanel            mainPanel;
     private final RSyntaxTextArea   inputArea;
@@ -292,37 +297,7 @@ public class ConverterPanel {
         mainPanel.add(statusBar, BorderLayout.SOUTH);
 
         // ── keyboard shortcuts ───────────────────────────────────────────
-        InputMap im = mainPanel.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
-        ActionMap am = mainPanel.getActionMap();
-
-        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK), "convert");
-        am.put("convert", new AbstractAction() {
-            @Override public void actionPerformed(ActionEvent e) { doConvert(); }
-        });
-
-        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_L,
-              InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "format");
-        am.put("format", new AbstractAction() {
-            @Override public void actionPerformed(ActionEvent e) { doFormat(); }
-        });
-
-        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_C,
-              InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "copyOutput");
-        am.put("copyOutput", new AbstractAction() {
-            @Override public void actionPerformed(ActionEvent e) { doCopy(); }
-        });
-
-        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_O,
-              InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "openFile");
-        am.put("openFile", new AbstractAction() {
-            @Override public void actionPerformed(ActionEvent e) { doOpenFile(); }
-        });
-
-        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_S,
-              InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "saveFile");
-        am.put("saveFile", new AbstractAction() {
-            @Override public void actionPerformed(ActionEvent e) { doSaveFile(); }
-        });
+        installKeyboardShortcuts();
 
         // ── live char/line count ─────────────────────────────────────────
         DocumentListener countUpdater = new DocumentListener() {
@@ -340,6 +315,56 @@ public class ConverterPanel {
                 applyEditorTheme(outputArea);
             }
         });
+    }
+
+    private void installKeyboardShortcuts() {
+        bindShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK),
+              ACTION_CONVERT, new AbstractAction() {
+                  @Override public void actionPerformed(ActionEvent e) { doConvert(); }
+              });
+
+        bindShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_L,
+              InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+              ACTION_FORMAT, new AbstractAction() {
+                  @Override public void actionPerformed(ActionEvent e) { doFormat(); }
+              });
+
+        bindShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_C,
+              InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+              ACTION_COPY_OUTPUT, new AbstractAction() {
+                  @Override public void actionPerformed(ActionEvent e) { doCopy(); }
+              });
+
+        bindShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_O,
+              InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+              ACTION_OPEN_FILE, new AbstractAction() {
+                  @Override public void actionPerformed(ActionEvent e) { doOpenFile(); }
+              });
+
+        bindShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_S,
+              InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+              ACTION_SAVE_FILE, new AbstractAction() {
+                  @Override public void actionPerformed(ActionEvent e) { doSaveFile(); }
+              });
+    }
+
+    private void bindShortcut(KeyStroke keyStroke, String actionKey, Action action) {
+        JComponent[] targets = {
+              mainPanel,
+              inputArea,
+              outputArea,
+              inputCombo,
+              outputCombo,
+              csvModeCombo,
+              rowThresholdSpinner,
+              lombokCheck
+        };
+        for (JComponent target : targets) {
+            target.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                  .put(keyStroke, actionKey);
+            target.getInputMap(JComponent.WHEN_FOCUSED).put(keyStroke, actionKey);
+            target.getActionMap().put(actionKey, action);
+        }
     }
 
     // ── Toolbar ───────────────────────────────────────────────────────────
@@ -734,40 +759,43 @@ public class ConverterPanel {
 
     // ── Utility actions ───────────────────────────────────────────────────
     private void doSwap() {
+        String newInputFmt  = outputFormatLabel.getText();
+        String newOutputFmt = inputFormatLabel.getText();
+        if (!isValidInputFormat(newInputFmt)) {
+            setStatusWarn(newInputFmt + " output cannot be used as input");
+            return;
+        }
+
         String tmpText   = inputArea.getText();
         String tmpSyntax = inputArea.getSyntaxEditingStyle();
-        String tmpLabel  = inputFormatLabel.getText();
 
         inputArea.setSyntaxEditingStyle(outputArea.getSyntaxEditingStyle());
         inputArea.setText(outputArea.getText());
         outputArea.setSyntaxEditingStyle(tmpSyntax);
         outputArea.setText(tmpText);
 
-        String newInputFmt  = outputFormatLabel.getText();
-        String newOutputFmt = tmpLabel;
-
         inputFormatLabel.setText(newInputFmt);
         outputFormatLabel.setText(newOutputFmt);
         inputFormatLabel.repaint();
         outputFormatLabel.repaint();
 
-        boolean inputIsValid = false;
-        for (String fmt : ALL_INPUTS) {
-            if (fmt.equals(newInputFmt)) { inputIsValid = true; break; }
-        }
+        inputCombo.setSelectedItem(newInputFmt);
+        rebuildOutputCombo(newInputFmt);
 
-        if (inputIsValid) {
-            inputCombo.setSelectedItem(newInputFmt);
-            rebuildOutputCombo(newInputFmt);
-
-            for (int i = 0; i < outputCombo.getItemCount(); i++) {
-                if (outputCombo.getItemAt(i).equals(newOutputFmt)) {
-                    outputCombo.setSelectedItem(newOutputFmt);
-                    break;
-                }
+        for (int i = 0; i < outputCombo.getItemCount(); i++) {
+            if (outputCombo.getItemAt(i).equals(newOutputFmt)) {
+                outputCombo.setSelectedItem(newOutputFmt);
+                break;
             }
         }
         setStatus("Swapped input and output", true);
+    }
+
+    private boolean isValidInputFormat(String format) {
+        for (String validInput : ALL_INPUTS) {
+            if (validInput.equals(format)) return true;
+        }
+        return false;
     }
 
     private void doCopy() {
