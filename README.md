@@ -8,7 +8,7 @@
   An IntelliJ IDEA plugin that converts data between JSON, XML, YAML, CSV, TOML and
   Protobuf, and generates Java POJOs — all inside a syntax-highlighted tool window.
 
-  [![Java 17](https://img.shields.io/badge/Java-17-blue)](https://openjdk.org/projects/jdk/17/)
+  [![Java 21](https://img.shields.io/badge/Java-21-blue)](https://openjdk.org/projects/jdk/21/)
   [![IntelliJ 2024.3+](https://img.shields.io/badge/IntelliJ-2024.3%2B-purple)](https://plugins.jetbrains.com/)
   [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
 </div>
