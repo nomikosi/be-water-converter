@@ -18,7 +18,7 @@
     <!-- NOTE: the id is permanent once the plugin is published — it can never change. -->
     <id>com.converter.be-water-converter</id>
     <name>Be Water Converter</name>
-    <vendor email="info@nomikosi.com" url="https://github.com/nomikosi/be-water-converter">Nomikosi Consulting</vendor>
+    <vendor email="hello@nomikosi.dev" url="https://github.com/nomikosi/be-water-converter">Nomikosi Consulting</vendor>
     <category>Code Tools</category>
     <description><![CDATA[
         <p><b>Be water, my friend.</b> Let your data flow between formats.</p>
