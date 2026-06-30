@@ -392,7 +392,7 @@ public class ConverterPanel {
         bar.add(makeSep());
 
         JButton formatBtn = buildButton("Format", FORMAT_BG, FORMAT_HOVER, false);
-        formatBtn.setToolTipText("Format input (Alt+Shift+L)");
+        formatBtn.setToolTipText("Format input");
         formatBtn.addActionListener(e -> doFormat());
         bar.add(formatBtn);
 
@@ -400,7 +400,7 @@ public class ConverterPanel {
 
         JButton copyBtn  = buildButton("Copy",  UTIL_BG, UTIL_HOVER, true);
         JButton clearBtn = buildButton("Clear", UTIL_BG, UTIL_HOVER, true);
-        copyBtn.setToolTipText("Copy output (Alt+Shift+C)");
+        copyBtn.setToolTipText("Copy output");
         clearBtn.setToolTipText("Clear all");
         copyBtn.addActionListener(e  -> doCopy());
         clearBtn.addActionListener(e -> doClear());
@@ -410,12 +410,12 @@ public class ConverterPanel {
         bar.add(makeSep());
 
         JButton openBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.MenuOpen,
-              "Open file (Ctrl+Shift+O)");
+              "Open file");
         openBtn.addActionListener(e -> doOpenFile());
         bar.add(openBtn);
 
         JButton saveBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.MenuSaveall,
-              "Save output to file (Ctrl+Shift+S)");
+              "Save output to file");
         saveBtn.addActionListener(e -> doSaveFile());
         bar.add(saveBtn);
 

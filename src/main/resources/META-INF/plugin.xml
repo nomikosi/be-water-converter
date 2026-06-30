@@ -54,11 +54,11 @@
     <change-notes><![CDATA[
         <h3>1.3.1</h3>
         <ul>
-            <li><b>Fixed keyboard shortcuts</b> — documented shortcuts now work reliably when focus is inside the
-                converter tool window, including inside the input and output editors.</li>
+            <li><b>Updated shortcut documentation</b> — only the confirmed <code>Ctrl+Enter</code> conversion shortcut
+                is documented; other actions remain available from the toolbar.</li>
             <li><b>Improved swap handling</b> — Java POJO output is now treated as output-only and no longer leaves
                 the UI in an invalid input-format state when swap is requested.</li>
-            <li><b>Added UI regression coverage</b> for shortcut bindings and output-only swap behavior.</li>
+            <li><b>Added UI regression coverage</b> for output-only swap behavior.</li>
         </ul>
         <h3>1.3.0</h3>
         <ul>

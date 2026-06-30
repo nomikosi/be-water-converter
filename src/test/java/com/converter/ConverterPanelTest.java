@@ -80,19 +80,7 @@ class ConverterPanelTest {
     private static List<Shortcut> documentedShortcuts() {
         return List.of(
               new Shortcut(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK),
-                    "convert"),
-              new Shortcut(KeyStroke.getKeyStroke(KeyEvent.VK_L,
-                    InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
-                    "format"),
-              new Shortcut(KeyStroke.getKeyStroke(KeyEvent.VK_C,
-                    InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
-                    "copyOutput"),
-              new Shortcut(KeyStroke.getKeyStroke(KeyEvent.VK_O,
-                    InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
-                    "openFile"),
-              new Shortcut(KeyStroke.getKeyStroke(KeyEvent.VK_S,
-                    InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
-                    "saveFile")
+                    "convert")
         );
     }
 

@@ -67,26 +67,20 @@ mode and format badge update automatically after each successful conversion. Swa
 available when the current output format is also a supported input format; generated
 Java POJO output is intentionally output-only.
 
-### Keyboard shortcuts
+### Keyboard shortcut
 
 | Shortcut | Action |
 |---|---|
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Convert input to selected output format |
-| <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> | Format / pretty-print input |
-| <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> | Copy output to clipboard |
-| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | Open a file as input |
-| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | Save output to a file |
 
-Shortcuts are active while focus is inside the Be Water tool window, including when the
-input or output editor has focus.
+This shortcut is active while focus is inside the Be Water tool window. Other actions are
+available from the toolbar buttons.
 
 ### File import and export
 
-**Open** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>) loads a file into the input
-editor and auto-detects the source format from the file extension (`.json`, `.xml`,
-`.yaml`/`.yml`, `.csv`, `.toml`, `.proto`). **Save**
-(<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>) writes the current output to disk using
-the appropriate format extension.
+**Open** loads a file into the input editor and auto-detects the source format from the
+file extension (`.json`, `.xml`, `.yaml`/`.yml`, `.csv`, `.toml`, `.proto`). **Save**
+writes the current output to disk using the appropriate format extension.
 
 You can also **drag and drop** a file directly onto the input editor. The file is loaded
 and the source format is auto-detected from the extension, just like the Open action.
