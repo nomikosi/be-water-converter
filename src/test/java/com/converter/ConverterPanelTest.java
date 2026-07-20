@@ -77,42 +77,6 @@ class ConverterPanelTest {
         });
     }
 
-    @Test
-    void lenientJsonInputAcceptsCommentsTrailingCommasAndSingleQuotes() throws Exception {
-        runOnEdt(() -> {
-            ConverterPanel panel = new ConverterPanel();
-            Method normalize = ConverterPanel.class.getDeclaredMethod(
-                  "normalizeToJson", String.class, String.class, boolean.class);
-            normalize.setAccessible(true);
-
-            String messy = "{\n  // a comment\n  'name': \"Alice\",\n  \"tags\": [1, 2,],\n}";
-            String strict = (String) normalize.invoke(panel, messy, "JSON", true);
-            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(strict);
-            assertThat(node.get("name").asText()).isEqualTo("Alice");
-            assertThat(node.get("tags")).hasSize(2);
-        });
-    }
-
-    @Test
-    void autoCloseRepairsUnterminatedStringsAndBrackets() throws Exception {
-        runOnEdt(() -> {
-            ConverterPanel panel = new ConverterPanel();
-            Method autoClose = ConverterPanel.class.getDeclaredMethod("autoClose", String.class);
-            autoClose.setAccessible(true);
-
-            String repaired = (String) autoClose.invoke(panel, "{\"name\": \"Al");
-            assertThat(repaired).isEqualTo("{\"name\": \"Al\"}");
-            // Repaired output must be parseable JSON.
-            new com.fasterxml.jackson.databind.ObjectMapper().readTree(repaired);
-
-            String bracketsOnly = (String) autoClose.invoke(panel, "{\"a\": [1, 2");
-            assertThat(bracketsOnly).isEqualTo("{\"a\": [1, 2]}");
-
-            String danglingEscape = (String) autoClose.invoke(panel, "{\"path\": \"C:\\");
-            new com.fasterxml.jackson.databind.ObjectMapper().readTree(danglingEscape);
-        });
-    }
-
     private static List<Shortcut> documentedShortcuts() {
         return List.of(
               new Shortcut(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK),

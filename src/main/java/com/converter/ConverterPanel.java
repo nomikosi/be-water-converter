@@ -39,8 +39,6 @@ import java.beans.PropertyChangeListener;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.StringReader;
-import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
@@ -71,13 +69,13 @@ public class ConverterPanel implements Disposable {
     /** Above this output size, syntax highlighting is disabled to keep the EDT responsive. */
     private static final int HIGHLIGHT_LIMIT_CHARS = 2_000_000;
 
-    static final String FMT_JSON  = "JSON";
-    static final String FMT_XML   = "XML";
-    static final String FMT_YAML  = "YAML";
-    static final String FMT_CSV   = "CSV";
-    static final String FMT_TOML  = "TOML";
-    static final String FMT_PROTO = "Protobuf";
-    static final String FMT_JAVA  = "Java POJO";
+    static final String FMT_JSON  = ConversionPipeline.FMT_JSON;
+    static final String FMT_XML   = ConversionPipeline.FMT_XML;
+    static final String FMT_YAML  = ConversionPipeline.FMT_YAML;
+    static final String FMT_CSV   = ConversionPipeline.FMT_CSV;
+    static final String FMT_TOML  = ConversionPipeline.FMT_TOML;
+    static final String FMT_PROTO = ConversionPipeline.FMT_PROTO;
+    static final String FMT_JAVA  = ConversionPipeline.FMT_JAVA;
 
     private static final Map<String, Color> FORMAT_COLORS = new LinkedHashMap<>();
     static {
@@ -119,26 +117,6 @@ public class ConverterPanel implements Disposable {
     /** Files larger than this trigger a confirmation before loading (whole pipeline is in-memory). */
     private static final long LARGE_FILE_WARNING_BYTES = 10L * 1024 * 1024;
 
-    /** Shared, thread-safe mapper for JSON pretty-printing. */
-    private static final com.fasterxml.jackson.databind.ObjectMapper PRETTY_JSON =
-          new com.fasterxml.jackson.databind.ObjectMapper()
-                .enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT);
-
-    /**
-     * Lenient reader for JSON input: accepts comments, trailing commas,
-     * single quotes and unquoted field names (pasted JS object literals).
-     * Input is normalised through this mapper into strict JSON before it
-     * reaches the downstream converters.
-     */
-    private static final com.fasterxml.jackson.databind.ObjectMapper LENIENT_JSON =
-          com.fasterxml.jackson.databind.json.JsonMapper.builder()
-                .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_JAVA_COMMENTS)
-                .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_YAML_COMMENTS)
-                .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_TRAILING_COMMA)
-                .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_SINGLE_QUOTES)
-                .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNQUOTED_FIELD_NAMES)
-                .enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT)
-                .build();
 
     private static final int BUTTON_ARC = 8;
     private static final int STATUS_MAX_LEN = 120;
@@ -183,12 +161,7 @@ public class ConverterPanel implements Disposable {
     private volatile boolean disposed;
     private volatile Thread convertWorker;
 
-    private final JsonXmlConverter  jsonXml  = new JsonXmlConverter();
-    private final JsonYamlConverter jsonYaml = new JsonYamlConverter();
-    private final CsvConverter      csv      = new CsvConverter();
-    private final TomlConverter     toml     = new TomlConverter();
-    private final ProtoConverter    proto    = new ProtoConverter();
-    private final JavaPojoGenerator pojo     = new JavaPojoGenerator();
+    private final ConversionPipeline pipeline = new ConversionPipeline();
 
     public ConverterPanel() {
         this(null);
@@ -398,6 +371,9 @@ public class ConverterPanel implements Disposable {
             if ("lookAndFeel".equals(evt.getPropertyName())) {
                 applyEditorTheme(inputArea);
                 applyEditorTheme(outputArea);
+                // Custom-painted components use JBColor (which resolves per
+                // theme at paint time) — a repaint refreshes them all.
+                mainPanel.repaint();
             }
         };
         UIManager.addPropertyChangeListener(lafListener);
@@ -888,26 +864,21 @@ public class ConverterPanel implements Disposable {
               .supplyAsync(() -> {
                   convertWorker = Thread.currentThread();
                   try {
-                      String asJson = normalizeToJson(rawInput, inFmt, inferCsvTypes);
+                      String asJson = pipeline.normalizeToJson(rawInput, inFmt, inferCsvTypes);
                       if (Thread.currentThread().isInterrupted())
                           throw new CancellationException("Conversion cancelled");
 
                       if (FMT_CSV.equals(outFmt) && csvMode == CsvConverter.CsvMode.CROSS_JOIN) {
-                          com.fasterxml.jackson.databind.JsonNode pivot = PRETTY_JSON.readTree(asJson);
-                          long estimate = csv.estimateRowCount(pivot, csvMode);
+                          com.fasterxml.jackson.databind.JsonNode pivot = pipeline.parseJson(asJson);
+                          long estimate = pipeline.estimateCsvRows(pivot, csvMode);
                           if (estimate > rowWarningThreshold) {
                               final long est = estimate;
                               java.util.concurrent.atomic.AtomicBoolean proceed =
                                     new java.util.concurrent.atomic.AtomicBoolean(false);
                               try {
-                                  SwingUtilities.invokeAndWait(() -> {
-                                      int choice = JOptionPane.showConfirmDialog(mainPanel,
-                                            String.format("CROSS_JOIN will produce ~%,d rows. Continue?", est),
-                                            "Row explosion warning",
-                                            JOptionPane.OK_CANCEL_OPTION,
-                                            JOptionPane.WARNING_MESSAGE);
-                                      proceed.set(choice == JOptionPane.OK_OPTION);
-                                  });
+                                  SwingUtilities.invokeAndWait(() -> proceed.set(confirmWarning(
+                                        "Row explosion warning",
+                                        String.format("CROSS_JOIN will produce ~%,d rows. Continue?", est))));
                               } catch (Exception dialogFailure) {
                                   LOG.warn("Row-explosion confirmation dialog failed; cancelling conversion",
                                         dialogFailure);
@@ -916,10 +887,10 @@ public class ConverterPanel implements Disposable {
                                   throw new CancellationException("Conversion cancelled");
                               }
                           }
-                          return csv.jsonToCsv(pivot, csvMode);
+                          return pipeline.renderCsv(pivot, csvMode);
                       }
 
-                      return renderFromJson(asJson, outFmt, csvMode, useLombok, detectDates);
+                      return pipeline.renderFromJson(asJson, outFmt, csvMode, useLombok, detectDates);
                   } catch (Exception ex) {
                       throw new java.util.concurrent.CompletionException(ex);
                   } finally {
@@ -957,26 +928,6 @@ public class ConverterPanel implements Disposable {
                     }));
     }
 
-    /**
-     * Normalise input to JSON as the internal pivot format.
-     * autoClose is applied once for JSON input to repair truncated brackets.
-     */
-    private String normalizeToJson(String rawInput, String inFmt, boolean inferCsvTypes)
-          throws Exception {
-        String input = (inFmt.equals(FMT_JSON)) ? autoClose(rawInput) : rawInput;
-        return switch (inFmt) {
-            // Lenient parse (comments, trailing commas, single quotes), then
-            // re-serialize so downstream converters always see strict JSON.
-            case FMT_JSON  -> LENIENT_JSON.writeValueAsString(LENIENT_JSON.readTree(input));
-            case FMT_XML   -> jsonXml.xmlToJson(input, inferCsvTypes);
-            case FMT_YAML  -> jsonYaml.yamlToJson(input);
-            case FMT_CSV   -> csv.csvToJson(input, inferCsvTypes);
-            case FMT_TOML  -> toml.tomlToJson(input);
-            case FMT_PROTO -> proto.protoToJson(input);
-            default -> throw new UnsupportedOperationException("Unknown input: " + inFmt);
-        };
-    }
-
     /** Interrupts the background conversion worker, if any. */
     private void cancelConvert() {
         Thread worker = convertWorker;
@@ -986,19 +937,10 @@ public class ConverterPanel implements Disposable {
         }
     }
 
-    /** JSON pivot -> desired output format. */
-    private String renderFromJson(String asJson, String outFmt,
-          CsvConverter.CsvMode csvMode, boolean useLombok, boolean detectDates) throws Exception {
-        return switch (outFmt) {
-            case FMT_JSON  -> prettyJson(asJson);
-            case FMT_XML   -> jsonXml.jsonToXml(asJson);
-            case FMT_YAML  -> jsonYaml.jsonToYaml(asJson);
-            case FMT_CSV   -> csv.jsonToCsv(asJson, csvMode);
-            case FMT_TOML  -> toml.jsonToToml(asJson);
-            case FMT_PROTO -> proto.jsonToProto(asJson);
-            case FMT_JAVA  -> pojo.fromJson(asJson, useLombok, detectDates);
-            default -> throw new UnsupportedOperationException("Unknown output: " + outFmt);
-        };
+    /** Shared OK/Cancel warning dialog; returns true when the user confirms. */
+    private boolean confirmWarning(String title, String message) {
+        return JOptionPane.showConfirmDialog(mainPanel, message, title,
+              JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) == JOptionPane.OK_OPTION;
     }
 
     // ── Format input ──────────────────────────────────────────────────────
@@ -1007,20 +949,7 @@ public class ConverterPanel implements Disposable {
         String fmt   = (String) inputCombo.getSelectedItem();
         if (input.isEmpty()) { setStatus("Input is empty", false); return; }
         try {
-            String formatted = switch (fmt) {
-                case FMT_JSON -> prettyJson(autoClose(input));
-                case FMT_XML  -> prettyXml(input);
-                case FMT_YAML -> jsonYaml.jsonToYaml(jsonYaml.yamlToJson(input));
-                case FMT_TOML -> toml.jsonToToml(toml.tomlToJson(input));
-                case FMT_CSV  -> {
-                    String json = csv.csvToJson(input, inferTypesCheck.isSelected());
-                    yield csv.jsonToCsv(json, CsvConverter.CsvMode.FLAT_FIRST);
-                }
-                case FMT_PROTO -> input.replaceAll("[ \t]+\n", "\n")
-                      .replaceAll("\n{3,}", "\n\n").trim();
-                default       -> input;
-            };
-            inputArea.setText(formatted);
+            inputArea.setText(pipeline.formatInput(input, fmt, inferTypesCheck.isSelected()));
             inputArea.setCaretPosition(0);
             setStatus("\u2713  Input formatted", true);
         } catch (Exception ex) {
@@ -1219,84 +1148,6 @@ public class ConverterPanel implements Disposable {
         rebuildOutputCombo(FMT_JSON);
         outputCombo.setSelectedItem(FMT_XML);
         setStatus("Cleared", true);
-    }
-
-    // ── autoClose ────────────────────────────────────────────────────────
-    /**
-     * Leniently closes any unclosed JSON { or [ brackets.
-     * Called once per conversion on the raw input before anything else.
-     * Only applied when the input format is JSON.
-     */
-    private String autoClose(String json) {
-        Deque<Character> stack = new ArrayDeque<>();
-        boolean inString = false;
-        boolean escape   = false;
-        for (char c : json.toCharArray()) {
-            if (escape)        { escape = false; continue; }
-            if (c == '\\')     { if (inString) escape = true; continue; }
-            if (c == '"')      { inString = !inString; continue; }
-            if (inString)      continue;
-            if (c == '{')      stack.push('}');
-            else if (c == '[') stack.push(']');
-            else if (c == '}' || c == ']') { if (!stack.isEmpty()) stack.pop(); }
-        }
-        StringBuilder sb = new StringBuilder(json);
-        // Close a dangling escape and an unterminated string before brackets,
-        // so truncated input like {"name": "Al still becomes parseable.
-        if (escape)   sb.append('\\');
-        if (inString) sb.append('"');
-        while (!stack.isEmpty()) sb.append(stack.pop());
-        return sb.toString();
-    }
-
-    // ── Builder helpers ───────────────────────────────────────────────────
-    private String prettyJson(String json) throws Exception {
-        return LENIENT_JSON.writeValueAsString(LENIENT_JSON.readTree(json));
-    }
-
-    /**
-     * Pretty-prints XML via DOM + Transformer so the original root element,
-     * attributes and structure are preserved (Jackson's tree model drops the
-     * root element name). External entities and DTDs are disabled.
-     */
-    private String prettyXml(String xml) throws Exception {
-        javax.xml.parsers.DocumentBuilderFactory dbf =
-              javax.xml.parsers.DocumentBuilderFactory.newInstance();
-        dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        dbf.setExpandEntityReferences(false);
-        org.w3c.dom.Document doc = dbf.newDocumentBuilder()
-              .parse(new org.xml.sax.InputSource(new StringReader(xml)));
-        doc.getDocumentElement().normalize();
-        stripWhitespaceNodes(doc.getDocumentElement());
-
-        javax.xml.transform.TransformerFactory tf =
-              javax.xml.transform.TransformerFactory.newInstance();
-        tf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
-        tf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "");
-        javax.xml.transform.Transformer t = tf.newTransformer();
-        t.setOutputProperty(javax.xml.transform.OutputKeys.INDENT, "yes");
-        t.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "2");
-        t.setOutputProperty(javax.xml.transform.OutputKeys.OMIT_XML_DECLARATION,
-              xml.stripLeading().startsWith("<?xml") ? "no" : "yes");
-
-        StringWriter out = new StringWriter();
-        t.transform(new javax.xml.transform.dom.DOMSource(doc),
-              new javax.xml.transform.stream.StreamResult(out));
-        return out.toString();
-    }
-
-    /** Removes whitespace-only text nodes so re-indenting doesn't stack blank lines. */
-    private void stripWhitespaceNodes(org.w3c.dom.Node node) {
-        org.w3c.dom.NodeList children = node.getChildNodes();
-        for (int i = children.getLength() - 1; i >= 0; i--) {
-            org.w3c.dom.Node child = children.item(i);
-            if (child.getNodeType() == org.w3c.dom.Node.TEXT_NODE
-                  && child.getTextContent().isBlank()) {
-                node.removeChild(child);
-            } else if (child.getNodeType() == org.w3c.dom.Node.ELEMENT_NODE) {
-                stripWhitespaceNodes(child);
-            }
-        }
     }
 
     private RSyntaxTextArea buildEditor() {

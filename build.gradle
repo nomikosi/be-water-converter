@@ -55,6 +55,11 @@ intellijPlatform {
             recommended()
         }
     }
+    publishing {
+        // Set by the release workflow; create the token at
+        // https://plugins.jetbrains.com/author/me/tokens
+        token = providers.environmentVariable('PUBLISH_TOKEN')
+    }
 }
 
 // ── Unit test task — plain JVM, no IDE sandbox ─────────────────────────────
@@ -67,7 +72,10 @@ tasks.register('unitTest', Test) {
 
     useJUnitPlatform()
     jvmArgs '-Dfile.encoding=UTF-8'
-    include 'com/converter/converter/**/*Test.class'
+    include 'com/converter/**/*Test.class'
+    // ConverterPanelTest needs IntelliJ platform classes, which only the
+    // platform-aware 'test' task provides.
+    exclude 'com/converter/ConverterPanelTest.class'
 
     testLogging {
         events 'passed', 'skipped', 'failed'

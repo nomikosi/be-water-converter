@@ -8,6 +8,7 @@
   An IntelliJ IDEA plugin that converts data between JSON, XML, YAML, CSV, TOML and
   Protobuf, and generates Java POJOs — all inside a syntax-highlighted tool window.
 
+  [![Build](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml/badge.svg)](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml)
   [![Java 21](https://img.shields.io/badge/Java-21-blue)](https://openjdk.org/projects/jdk/21/)
   [![IntelliJ 2024.3+](https://img.shields.io/badge/IntelliJ-2024.3%2B-purple)](https://plugins.jetbrains.com/)
   [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
@@ -266,15 +267,20 @@ Produces:
 | Class | Responsibility |
 |---|---|
 | `ConverterToolWindowFactory` | Registers and mounts the tool-window content. |
-| `ConverterPanel` | UI, toolbar actions, conversion dispatch, formatting, file I/O, status updates. |
+| `ConverterPanel` | UI: toolbar, editors, options, find bar, status updates, file I/O. |
+| `ConversionPipeline` | UI-independent conversion dispatch: normalize to JSON, render to output, per-format formatting, autoClose repair, XML pretty-printing. |
+| `ConversionHistory` | Bounded in-memory history of successful conversions. |
+| `ConverterActions` | Keymap-visible IDE actions (Convert, Format, Copy, Open, Save). |
 | `OpenConverterAction` | Menu action (**Tools → Be Water Converter**) that activates the tool window. |
+| `ConverterTheme` | Theme-aware color palette for the UI. |
 | `WrapLayout` | Responsive multi-row wrapping for the toolbar and options bar. |
-| `JsonXmlConverter` | JSON ↔ XML conversion. |
-| `JsonYamlConverter` | JSON ↔ YAML conversion. |
-| `CsvConverter` | CSV ↔ JSON conversion and CSV flattening logic. |
+| `JsonXmlConverter` | JSON ↔ XML conversion, element-name sanitization, optional type inference. |
+| `JsonYamlConverter` | JSON ↔ YAML conversion, multi-document support. |
+| `CsvConverter` | CSV ↔ JSON conversion, flattening logic, row estimation. |
 | `TomlConverter` | TOML ↔ JSON conversion. |
-| `ProtoConverter` | Protobuf schema ↔ JSON structural conversion. |
-| `JavaPojoGenerator` | Java class generation from structured JSON. |
+| `ProtoConverter` | Protobuf schema ↔ JSON structural conversion with identifier sanitization. |
+| `JavaPojoGenerator` | Java class generation from structured JSON, with date detection. |
+| `ScalarInference` | Shared string→typed-value inference for CSV and XML input. |
 
 ## Development
 
@@ -299,9 +305,9 @@ Run pure JVM unit tests (no IDE sandbox required) with:
 ```
 
 The `check` task runs them automatically. The test suite covers all converter classes with
-~340 test cases, including CSV flattening edge cases (empty arrays, nulls, missing fields,
-header ordering), Protobuf validation, POJO generation variants, and end-to-end cross-format
-pipeline tests.
+420+ test cases, including CSV flattening edge cases (empty arrays, nulls, missing fields,
+header ordering), type inference, Protobuf validation and sanitization, POJO generation
+variants, XXE hardening, and end-to-end cross-format pipeline tests.
 
 ### Building a distribution
 
@@ -317,6 +323,14 @@ against a range of IDE builds before publishing, run `./gradlew verifyPlugin`.
 Every push and pull request to `master` runs `./gradlew check buildPlugin` on GitHub
 Actions ([build.yml](.github/workflows/build.yml)) and uploads the plugin ZIP as a build
 artifact.
+
+### Releasing
+
+Pushing a `v*` tag (e.g. `git tag v1.4.0 && git push --tags`) triggers
+[release.yml](.github/workflows/release.yml), which runs the tests, verifies IDE
+compatibility, publishes the plugin to JetBrains Marketplace, and attaches the ZIP to a
+GitHub release. Publishing requires a `PUBLISH_TOKEN` repository secret containing a
+[JetBrains Marketplace token](https://plugins.jetbrains.com/author/me/tokens).
 
 ## Compatibility
 
