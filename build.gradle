@@ -86,8 +86,8 @@ tasks.register('unitTest', Test) {
     failFast = false
 }
 
-// Make 'check' run unit tests automatically
-tasks.named('check') { dependsOn tasks.named('unitTest') }
+// NOTE: 'check' deliberately does NOT depend on unitTest — the 'test' task
+// already runs a superset of it. unitTest exists as the fast local loop.
 
 // Make 'build' produce the installable plugin ZIP as well as the Java artifacts.
 tasks.named('build') { dependsOn tasks.named('buildPlugin') }

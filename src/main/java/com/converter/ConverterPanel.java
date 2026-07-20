@@ -30,17 +30,12 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
-import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
 import java.beans.PropertyChangeListener;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.CancellationException;
@@ -88,17 +83,6 @@ public class ConverterPanel implements Disposable {
         FORMAT_COLORS.put(FMT_JAVA,  new JBColor(new Color(142, 110, 45), new Color(243, 196, 66)));
     }
 
-    private static final Map<String, String> FORMAT_EXTENSIONS = new LinkedHashMap<>();
-    static {
-        FORMAT_EXTENSIONS.put(FMT_JSON,  "json");
-        FORMAT_EXTENSIONS.put(FMT_XML,   "xml");
-        FORMAT_EXTENSIONS.put(FMT_YAML,  "yaml");
-        FORMAT_EXTENSIONS.put(FMT_CSV,   "csv");
-        FORMAT_EXTENSIONS.put(FMT_TOML,  "toml");
-        FORMAT_EXTENSIONS.put(FMT_PROTO, "proto");
-        FORMAT_EXTENSIONS.put(FMT_JAVA,  "java");
-    }
-
     private static final Map<String, String[]> VALID_OUTPUTS = new LinkedHashMap<>();
     static {
         VALID_OUTPUTS.put(FMT_JSON,  new String[]{FMT_XML,  FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA});
@@ -113,9 +97,6 @@ public class ConverterPanel implements Disposable {
           {FMT_JSON, FMT_XML, FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO};
 
     private static final long DEFAULT_ROW_WARNING_THRESHOLD = 1_000L;
-
-    /** Files larger than this trigger a confirmation before loading (whole pipeline is in-memory). */
-    private static final long LARGE_FILE_WARNING_BYTES = 10L * 1024 * 1024;
 
 
     private static final int BUTTON_ARC = 8;
@@ -151,8 +132,8 @@ public class ConverterPanel implements Disposable {
     private final JSplitPane splitPane;
     private JButton convertBtn;
     private JButton splitToggleBtn;
-    private JPanel     findBar;
-    private JTextField findField;
+    private FindBar findBar;
+    private ConverterFileOps fileOps;
     private RSyntaxTextArea findTarget;
 
     private final com.intellij.openapi.project.Project project;
@@ -178,7 +159,19 @@ public class ConverterPanel implements Disposable {
         outputArea.setEditable(false);
         applyEditorTheme(inputArea);
         applyEditorTheme(outputArea);
-        installFileDrop(inputArea);
+        fileOps = new ConverterFileOps(mainPanel, project, () -> disposed,
+              new ConverterFileOps.Host() {
+                  @Override public void status(String message, boolean ok) {
+                      setStatus(message, ok);
+                  }
+                  @Override public void loaded(String content, String detectedFormat, String fileName) {
+                      inputArea.setText(content);
+                      inputArea.setCaretPosition(0);
+                      if (detectedFormat != null) inputCombo.setSelectedItem(detectedFormat);
+                      setStatus("Loaded " + fileName, true);
+                  }
+              });
+        inputArea.setTransferHandler(fileOps.chainFileDrop(inputArea.getTransferHandler()));
 
         inputFormatLabel  = buildFormatBadge(FMT_JSON);
         outputFormatLabel = buildFormatBadge(FMT_XML);
@@ -321,7 +314,10 @@ public class ConverterPanel implements Disposable {
         statusBar.add(statusLabel,    BorderLayout.WEST);
         statusBar.add(charCountLabel, BorderLayout.EAST);
 
-        buildFindBar();
+        findBar = new FindBar(() -> findTarget, new FindBar.StatusSink() {
+            @Override public void ok(String message)   { setStatus(message, true); }
+            @Override public void warn(String message) { setStatusWarn(message); }
+        });
         findTarget = inputArea;
         FocusAdapter targetTracker = new FocusAdapter() {
             @Override public void focusGained(FocusEvent e) {
@@ -487,7 +483,7 @@ public class ConverterPanel implements Disposable {
 
         bindShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK),
               ACTION_FIND, new AbstractAction() {
-                  @Override public void actionPerformed(ActionEvent e) { showFindBar(); }
+                  @Override public void actionPerformed(ActionEvent e) { findBar.open(); }
               });
     }
 
@@ -578,77 +574,6 @@ public class ConverterPanel implements Disposable {
         bar.add(historyBtn);
 
         return bar;
-    }
-
-    // ── Find bar ──────────────────────────────────────────────────────────
-    private void buildFindBar() {
-        findField = new JTextField(24);
-        findField.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        findField.setBackground(DROPDOWN_BG);
-        findField.setForeground(TEXT_BRIGHT);
-        findField.setCaretColor(TEXT_BRIGHT);
-        findField.setBorder(BorderFactory.createCompoundBorder(
-              BorderFactory.createLineBorder(BORDER, 1), new EmptyBorder(3, 6, 3, 6)));
-
-        findField.addActionListener(e -> findNext(true));
-        findField.getInputMap().put(
-              KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), "findPrev");
-        findField.getActionMap().put("findPrev", new AbstractAction() {
-            @Override public void actionPerformed(ActionEvent e) { findNext(false); }
-        });
-        findField.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFind");
-        findField.getActionMap().put("closeFind", new AbstractAction() {
-            @Override public void actionPerformed(ActionEvent e) { hideFindBar(); }
-        });
-
-        JButton prevBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.PreviousOccurence,
-              "Previous match (Shift+Enter)");
-        prevBtn.addActionListener(e -> findNext(false));
-        JButton nextBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.NextOccurence,
-              "Next match (Enter)");
-        nextBtn.addActionListener(e -> findNext(true));
-        JButton closeBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.Close,
-              "Close find bar (Esc)");
-        closeBtn.addActionListener(e -> hideFindBar());
-
-        findBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
-        findBar.setBackground(BG_TOOLBAR);
-        findBar.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, BORDER));
-        findBar.add(toolbarLabel("Find:"));
-        findBar.add(findField);
-        findBar.add(prevBtn);
-        findBar.add(nextBtn);
-        findBar.add(closeBtn);
-        findBar.setVisible(false);
-    }
-
-    private void showFindBar() {
-        findBar.setVisible(true);
-        findBar.revalidate();
-        findField.requestFocusInWindow();
-        findField.selectAll();
-    }
-
-    private void hideFindBar() {
-        findBar.setVisible(false);
-        findBar.revalidate();
-        if (findTarget != null) findTarget.requestFocusInWindow();
-    }
-
-    /** Searches the last-focused editor, wrapping around at the ends. */
-    private void findNext(boolean forward) {
-        String query = findField.getText();
-        if (query.isEmpty() || findTarget == null) return;
-        org.fife.ui.rtextarea.SearchContext ctx = new org.fife.ui.rtextarea.SearchContext(query);
-        ctx.setSearchForward(forward);
-        ctx.setMatchCase(false);
-        ctx.setSearchWrap(true);
-        boolean found = org.fife.ui.rtextarea.SearchEngine.find(findTarget, ctx).wasFound();
-        if (found) {
-            setStatus("Found \"" + query + "\"", true);
-        } else {
-            setStatusWarn("No matches for \"" + query + "\"");
-        }
     }
 
     // ── Soft-wrap ─────────────────────────────────────────────────────────
@@ -745,6 +670,11 @@ public class ConverterPanel implements Disposable {
     }
 
     private JButton buildIconButton(Icon icon, String tooltip) {
+        return iconButton(icon, tooltip);
+    }
+
+    /** Shared flat icon button with hover highlight (also used by FindBar). */
+    static JButton iconButton(Icon icon, String tooltip) {
         JButton btn = new JButton(icon);
         btn.setToolTipText(tooltip);
         btn.setOpaque(false);
@@ -957,123 +887,17 @@ public class ConverterPanel implements Disposable {
         }
     }
 
-    // ── File I/O ─────────────────────────────────────────────────────────
+    // ── File I/O (delegated to ConverterFileOps) ─────────────────────────
     private void doOpenFile() {
-        JFileChooser fc = new JFileChooser();
-        fc.setDialogTitle("Open input file");
-        fc.setFileFilter(new FileNameExtensionFilter(
-              "Data files (json, xml, yaml, csv, toml, proto)",
-              "json", "xml", "yaml", "yml", "csv", "toml", "proto"));
-        if (fc.showOpenDialog(mainPanel) != JFileChooser.APPROVE_OPTION) return;
-        loadFile(fc.getSelectedFile());
-    }
-
-    private void loadFile(File file) {
-        long size = file.length();
-        if (size > LARGE_FILE_WARNING_BYTES) {
-            int choice = JOptionPane.showConfirmDialog(mainPanel,
-                  String.format("%s is %,d MB. Loading large files may be slow. Continue?",
-                        file.getName(), size / (1024 * 1024)),
-                  "Large file", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
-            if (choice != JOptionPane.OK_OPTION) return;
-        }
-
-        setStatus("Loading " + file.getName() + "…", true);
-        // Read off the EDT so a large or slow-network file cannot freeze the IDE.
-        java.util.concurrent.CompletableFuture
-              .supplyAsync(() -> {
-                  try {
-                      return Files.readString(file.toPath(), StandardCharsets.UTF_8);
-                  } catch (IOException ex) {
-                      throw new java.util.concurrent.CompletionException(ex);
-                  }
-              }, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
-              .whenComplete((content, error) ->
-                    com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
-                        if (disposed) return;
-                        if (error != null) {
-                            Throwable cause = error.getCause() != null ? error.getCause() : error;
-                            setStatus("Failed to open file: " + cause.getMessage(), false);
-                            return;
-                        }
-                        inputArea.setText(content);
-                        inputArea.setCaretPosition(0);
-
-                        String ext = getExtension(file.getName()).toLowerCase();
-                        String fmt = switch (ext) {
-                            case "json"          -> FMT_JSON;
-                            case "xml"           -> FMT_XML;
-                            case "yaml", "yml"   -> FMT_YAML;
-                            case "csv"           -> FMT_CSV;
-                            case "toml"          -> FMT_TOML;
-                            case "proto"         -> FMT_PROTO;
-                            default              -> null;
-                        };
-                        if (fmt != null) {
-                            inputCombo.setSelectedItem(fmt);
-                        }
-                        setStatus("Loaded " + file.getName(), true);
-                    }));
+        fileOps.openFile();
     }
 
     private void doSaveFile() {
         String output = outputArea.getText();
         if (output.isEmpty()) { setStatus("Nothing to save", false); return; }
-
-        JFileChooser fc = new JFileChooser();
-        fc.setDialogTitle("Save output");
         // The badge reflects the format of the text actually in the output area;
         // the combo may have been changed since the last conversion.
-        String outFmt = outputFormatLabel.getText();
-        String ext = FORMAT_EXTENSIONS.getOrDefault(outFmt, "txt");
-        fc.setSelectedFile(new File("output." + ext));
-        if (fc.showSaveDialog(mainPanel) != JFileChooser.APPROVE_OPTION) return;
-        File file = fc.getSelectedFile();
-        if (file.exists()) {
-            int choice = JOptionPane.showConfirmDialog(mainPanel,
-                  file.getName() + " already exists. Overwrite?",
-                  "Confirm overwrite", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
-            if (choice != JOptionPane.OK_OPTION) return;
-        }
-        try {
-            Files.writeString(file.toPath(), output, StandardCharsets.UTF_8);
-            setStatus("Saved to " + file.getName(), true);
-        } catch (Exception ex) {
-            setStatus("Failed to save: " + ex.getMessage(), false);
-        }
-    }
-
-    /** Installs a file drop handler that chains with the editor's existing TransferHandler. */
-    private void installFileDrop(RSyntaxTextArea area) {
-        TransferHandler original = area.getTransferHandler();
-        area.setTransferHandler(new TransferHandler() {
-            @Override
-            public boolean canImport(TransferSupport support) {
-                if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) return true;
-                return original != null && original.canImport(support);
-            }
-            @Override
-            public boolean importData(TransferSupport support) {
-                if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
-                    try {
-                        @SuppressWarnings("unchecked")
-                        List<File> files = (List<File>) support.getTransferable()
-                              .getTransferData(DataFlavor.javaFileListFlavor);
-                        if (!files.isEmpty()) loadFile(files.get(0));
-                        return true;
-                    } catch (Exception ex) {
-                        setStatus("Drop failed: " + ex.getMessage(), false);
-                        return false;
-                    }
-                }
-                return original != null && original.importData(support);
-            }
-        });
-    }
-
-    private static String getExtension(String name) {
-        int dot = name.lastIndexOf('.');
-        return dot >= 0 ? name.substring(dot + 1) : "";
+        fileOps.saveOutput(output, outputFormatLabel.getText());
     }
 
     // ── Utility actions ───────────────────────────────────────────────────

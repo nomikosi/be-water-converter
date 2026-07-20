@@ -271,6 +271,8 @@ Produces:
 | `ConversionPipeline` | UI-independent conversion dispatch: normalize to JSON, render to output, per-format formatting, autoClose repair, XML pretty-printing. |
 | `ConversionHistory` | Bounded in-memory history of successful conversions. |
 | `ConverterActions` | Keymap-visible IDE actions (Convert, Format, Copy, Open, Save). |
+| `ConverterFileOps` | Native IDE file open/save dialogs, async loading, drag-and-drop. |
+| `FindBar` | Ctrl+F search bar for the editors. |
 | `OpenConverterAction` | Menu action (**Tools → Be Water Converter**) that activates the tool window. |
 | `ConverterTheme` | Theme-aware color palette for the UI. |
 | `WrapLayout` | Responsive multi-row wrapping for the toolbar and options bar. |

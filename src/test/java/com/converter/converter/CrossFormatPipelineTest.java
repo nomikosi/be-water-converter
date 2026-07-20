@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.*;
  * Also covers the autoClose repair logic for truncated JSON.
  */
 @DisplayName("Converter Pipeline (end-to-end)")
-class ConverterPipelineTest {
+class CrossFormatPipelineTest {
 
     private JsonXmlConverter  jsonXml;
     private JsonYamlConverter jsonYaml;

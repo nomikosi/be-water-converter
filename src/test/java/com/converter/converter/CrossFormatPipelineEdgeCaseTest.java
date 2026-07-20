@@ -31,7 +31,7 @@ import java.util.Deque;
  * corner cases, and boolean coercion through every path.
  */
 @DisplayName("Converter Pipeline Edge Cases")
-class ConverterPipelineEdgeCaseTest {
+class CrossFormatPipelineEdgeCaseTest {
 
     private JsonXmlConverter jsonXml;
     private JsonYamlConverter jsonYaml;
