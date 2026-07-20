@@ -27,12 +27,12 @@ dependencies {
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-csv:2.21.1'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-toml:2.21.1'
     implementation 'com.fifesoft:rsyntaxtextarea:3.5.4'
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:6.1.2'
     testImplementation 'org.assertj:assertj-core:3.27.7'
     // JUnit 4 is required at runtime by the IntelliJ platform test executor,
     // even though all tests are JUnit 5.
     testRuntimeOnly 'junit:junit:4.13.2'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:6.1.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
 }
 
