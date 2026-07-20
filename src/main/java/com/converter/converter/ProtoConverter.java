@@ -374,7 +374,7 @@ public class ProtoConverter {
         sb.append(pad).append("message ").append(msgName).append(" {\n");
 
         for (Map.Entry<String, JsonNode> e : node.properties()) {
-            String   childName = capitalize(e.getKey());
+            String   childName = protoMessageName(e.getKey());
             JsonNode val       = e.getValue();
             if (val.isObject()) {
                 generateMessage(childName, val, sb, indent + 1);
@@ -384,10 +384,11 @@ public class ProtoConverter {
         }
 
         int[] counter = {1};
+        Set<String> usedFieldNames = new HashSet<>();
         for (Map.Entry<String, JsonNode> e : node.properties()) {
-            String   fieldName = e.getKey();
+            String   fieldName = protoFieldName(e.getKey(), usedFieldNames);
             JsonNode val       = e.getValue();
-            String   childName = capitalize(fieldName);
+            String   childName = protoMessageName(e.getKey());
             String   fieldPad  = pad + "  ";
 
             if (val.isArray()) {
@@ -404,6 +405,36 @@ public class ProtoConverter {
             }
         }
         sb.append(pad).append("}\n");
+    }
+
+    /**
+     * Maps an arbitrary JSON key to a valid proto field identifier
+     * (snake_case-ish: invalid characters become underscores, a leading digit
+     * gets a prefix) and deduplicates within the message.
+     */
+    private String protoFieldName(String key, Set<String> used) {
+        StringBuilder sb = new StringBuilder(key.length());
+        for (int i = 0; i < key.length(); i++) {
+            char c = key.charAt(i);
+            boolean ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                  || (c >= '0' && c <= '9') || c == '_';
+            sb.append(ok ? c : '_');   // proto identifiers are ASCII-only
+        }
+        if (sb.isEmpty()) sb.append('_');
+        if (Character.isDigit(sb.charAt(0))) sb.insert(0, '_');
+        String name = sb.toString();
+        if (!used.add(name)) {
+            int n = 2;
+            while (!used.add(name + "_" + n)) n++;
+            name = name + "_" + n;
+        }
+        return name;
+    }
+
+    /** Sanitized, capitalized message name for a JSON key. */
+    private String protoMessageName(String key) {
+        String base = protoFieldName(key, new HashSet<>());
+        return capitalize(base);
     }
 
     private String jsonTypeToProto(JsonNode val) {

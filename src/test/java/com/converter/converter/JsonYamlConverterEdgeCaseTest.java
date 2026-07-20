@@ -249,14 +249,27 @@ class JsonYamlConverterEdgeCaseTest {
 
 // ── Multi-document YAML ───────────────────────────────────────────────
 
-    @Test @DisplayName("YAML->JSON: multi-document YAML either parses first doc or throws descriptively")
-    void yamlMultiDocument() {
+    @Test @DisplayName("YAML->JSON: multi-document YAML becomes a JSON array, one element per doc")
+    void yamlMultiDocument() throws Exception {
         String yaml = "name: Alice\n---\nname: Bob\n";
-        assertThatCode(() -> converter.yamlToJson(yaml))
-              .satisfiesAnyOf(
-                    t -> { /* first document parsed cleanly */ },
-                    t -> assertThat(t).isInstanceOf(Exception.class)
-              );
+        JsonNode result = json.readTree(converter.yamlToJson(yaml));
+        assertThat(result.isArray()).isTrue();
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).get("name").asText()).isEqualTo("Alice");
+        assertThat(result.get(1).get("name").asText()).isEqualTo("Bob");
+    }
+
+    @Test @DisplayName("YAML->JSON: single document is NOT wrapped in an array")
+    void yamlSingleDocumentNotWrapped() throws Exception {
+        JsonNode result = json.readTree(converter.yamlToJson("name: Alice\n"));
+        assertThat(result.isObject()).isTrue();
+        assertThat(result.get("name").asText()).isEqualTo("Alice");
+    }
+
+    @Test @DisplayName("YAML->JSON: trailing document separator does not add a null element")
+    void yamlTrailingSeparator() throws Exception {
+        JsonNode result = json.readTree(converter.yamlToJson("name: Alice\n---\n"));
+        assertThat(result.isObject()).isTrue();
     }
 
 // ── Tab indentation ───────────────────────────────────────────────────

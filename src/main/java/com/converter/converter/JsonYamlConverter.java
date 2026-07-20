@@ -45,10 +45,25 @@ public class JsonYamlConverter {
         return yamlMapper.writeValueAsString(node);
     }
 
+    /**
+     * Converts YAML to JSON. Multi-document input ("---"-separated, e.g.
+     * Kubernetes manifests) becomes a JSON array with one element per document;
+     * a single document maps to its JSON value directly.
+     */
     public String yamlToJson(String yaml) throws Exception {
         if (yaml == null || yaml.isBlank())
             throw new IllegalArgumentException("Input YAML must not be empty");
-        JsonNode node = yamlMapper.readTree(yaml);
+        java.util.List<JsonNode> docs =
+              yamlMapper.readerFor(JsonNode.class).<JsonNode>readValues(yaml).readAll();
+        // Trailing/empty documents surface as null, NullNode or a blank text
+        // scalar depending on parser configuration — drop them all.
+        docs.removeIf(d -> d == null || d.isNull() || d.isMissingNode()
+              || (d.isTextual() && d.asText().isBlank()));
+        if (docs.isEmpty())
+            throw new IllegalArgumentException("Input YAML contains no documents");
+        JsonNode node = docs.size() == 1
+              ? docs.get(0)
+              : jsonMapper.createArrayNode().addAll(docs);
         return jsonMapper.writeValueAsString(node);
     }
 }

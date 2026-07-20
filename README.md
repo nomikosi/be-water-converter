@@ -52,8 +52,14 @@ Once installed, open the **Be Water** tool window from the right side bar, or vi
 | Protobuf | JSON, XML, YAML, CSV, TOML, Java POJO |
 
 Most conversions follow a two-step flow: input is first normalized to JSON, then JSON is
-rendered to the requested target format. JSON input additionally passes through a lenient
-auto-close step that repairs unclosed `{` / `[` brackets before parsing.
+rendered to the requested target format. JSON input is parsed leniently — comments,
+trailing commas, single quotes, and unquoted field names are accepted — and additionally
+passes through an auto-close step that repairs unclosed `{` / `[` brackets and
+unterminated strings before parsing. Multi-document YAML (`---`-separated, e.g.
+Kubernetes manifests) converts to a JSON array with one element per document. JSON keys
+that are not valid XML element names or Protobuf identifiers (spaces, kebab-case,
+leading digits) are sanitized when rendering to those formats, so the output is always
+well-formed.
 
 ## Features
 
@@ -81,6 +87,7 @@ Java POJO output is intentionally output-only.
 | Shortcut | Action |
 |---|---|
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Convert input to selected output format |
+| <kbd>Ctrl</kbd>+<kbd>F</kbd> | Find in the focused editor (Enter = next, Shift+Enter = previous, Esc = close) |
 
 This shortcut is active while focus is inside the Be Water tool window. Other actions are
 available from the toolbar buttons. The main operations (Convert, Format Input, Copy
@@ -112,13 +119,13 @@ itself when the current conversion has no extra settings. All option values (CSV
 row-warning threshold, Lombok, type inference, split orientation) are persisted across
 IDE restarts.
 
-### CSV type inference
+### CSV / XML type inference
 
-When CSV is the input format, cell values that look like integers, decimals, booleans, or
-`null` are converted into typed JSON values by default, so `age,30` becomes `"age": 30`
-instead of `"age": "30"`. Values with leading zeros (`007`, `01234`) and integers too
-large for 64 bits stay strings, so identifiers are never mangled. Disable the **Infer
-types** checkbox to keep every cell a string.
+When CSV or XML is the input format, values that look like integers, decimals, booleans,
+or `null` are converted into typed JSON values by default, so `age,30` (or
+`<age>30</age>`) becomes `"age": 30` instead of `"age": "30"`. Values with leading zeros
+(`007`, `01234`) and integers too large for 64 bits stay strings, so identifiers are
+never mangled. Disable the **Infer types** checkbox to keep every value a string.
 
 ### CSV export modes
 
@@ -279,7 +286,7 @@ Produces:
 ### Running locally
 
 1. Open the project in IntelliJ IDEA.
-2. Run the Gradle `runIde` task to launch a sandbox IDE.
+2. Run `./gradlew runIde` to launch a sandbox IDE.
 3. Open the **Be Water** tool window on the right side of the sandbox IDE.
 4. Paste sample input, choose source and destination formats, and convert.
 
@@ -288,7 +295,7 @@ Produces:
 Run pure JVM unit tests (no IDE sandbox required) with:
 
 ```bash
-gradle unitTest
+./gradlew unitTest
 ```
 
 The `check` task runs them automatically. The test suite covers all converter classes with
@@ -299,11 +306,17 @@ pipeline tests.
 ### Building a distribution
 
 ```bash
-gradle buildPlugin
+./gradlew buildPlugin
 ```
 
 The installable ZIP is produced in `build/distributions/`. To validate compatibility
-against a range of IDE builds before publishing, run `gradle verifyPlugin`.
+against a range of IDE builds before publishing, run `./gradlew verifyPlugin`.
+
+### Continuous integration
+
+Every push and pull request to `master` runs `./gradlew check buildPlugin` on GitHub
+Actions ([build.yml](.github/workflows/build.yml)) and uploads the plugin ZIP as a build
+artifact.
 
 ## Compatibility
 

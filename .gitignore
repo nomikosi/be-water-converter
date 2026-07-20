@@ -107,7 +107,6 @@ package-lock.json
 .gradle/caches/
 .gradle/wrapper/dists/
 gradle-app.setting
-gradle/
 
 # ── JetBrains Toolbox / Fleet ───────────────────────────────
 .fleet/

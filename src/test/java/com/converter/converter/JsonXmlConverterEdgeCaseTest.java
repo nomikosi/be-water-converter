@@ -134,6 +134,57 @@ class JsonXmlConverterEdgeCaseTest {
         assertThat(result).isNotBlank().contains("Alice");
     }
 
+    // ── Element name sanitization (v1.4.0) ───────────────────────────────
+
+    @Test @DisplayName("JSON->XML: key with a space produces well-formed, round-trippable XML")
+    void spaceKeyProducesValidXml() throws Exception {
+        String xml = converter.jsonToXml("{\"first name\": 1}");
+        assertThat(xml).contains("<first_name>");
+        // Must parse back — the unsanitized <first name> element would fail here.
+        assertThatCode(() -> converter.xmlToJson(xml)).doesNotThrowAnyException();
+    }
+
+    @Test @DisplayName("JSON->XML: digit-leading and nested invalid keys are sanitized")
+    void digitLeadingKeySanitized() throws Exception {
+        String xml = converter.jsonToXml("{\"1st\": {\"a b\": [1, 2]}}");
+        assertThat(xml).contains("<_1st>").contains("<a_b>");
+        assertThatCode(() -> converter.xmlToJson(xml)).doesNotThrowAnyException();
+    }
+
+    // ── Type inference (v1.4.0) ──────────────────────────────────────────
+
+    @Test @DisplayName("XML->JSON: values stay strings by default")
+    void xmlValuesStringsByDefault() throws Exception {
+        JsonNode result = json.readTree(converter.xmlToJson("<r><age>30</age></r>"));
+        assertThat(result.get("age").isTextual()).isTrue();
+    }
+
+    @Test @DisplayName("XML->JSON: inference types numbers, booleans and null")
+    void xmlValueInference() throws Exception {
+        JsonNode result = json.readTree(converter.xmlToJson(
+              "<r><age>30</age><price>9.99</price><active>true</active><name>Alice</name></r>", true));
+        assertThat(result.get("age").intValue()).isEqualTo(30);
+        assertThat(result.get("price").doubleValue()).isEqualTo(9.99);
+        assertThat(result.get("active").isBoolean()).isTrue();
+        assertThat(result.get("name").isTextual()).isTrue();
+    }
+
+    // ── Security posture (pinned so a dependency upgrade cannot regress it) ──
+
+    @Test @DisplayName("XML->JSON: external entities (XXE) are rejected")
+    void externalEntitiesRejected() {
+        String xxe = "<!DOCTYPE foo [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>"
+              + "<foo><v>&x;</v></foo>";
+        assertThatThrownBy(() -> converter.xmlToJson(xxe)).isInstanceOf(Exception.class);
+    }
+
+    @Test @DisplayName("XML->JSON: internal entity expansion is rejected")
+    void entityExpansionRejected() {
+        String bomb = "<!DOCTYPE lolz [<!ENTITY lol \"lol\"><!ENTITY lol2 \"&lol;&lol;&lol;\">]>"
+              + "<a>&lol2;</a>";
+        assertThatThrownBy(() -> converter.xmlToJson(bomb)).isInstanceOf(Exception.class);
+    }
+
     // ── Multiple sibling repeated elements ───────────────────────────────
 
     @Test @DisplayName("XML->JSON: repeated same-name siblings produce array")

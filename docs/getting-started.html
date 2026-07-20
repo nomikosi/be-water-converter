@@ -23,23 +23,47 @@
 <p>Select the source format in the <b>From</b> dropdown and the target format in the
     <b>To</b> dropdown, then click <b>Convert</b> or press <b>Ctrl+Enter</b>.</p>
 
-<h2>Keyboard shortcut</h2>
-<p>This shortcut is active while focus is inside the Be Water tool window, including inside
+<h2>Keyboard shortcuts</h2>
+<p>These shortcuts are active while focus is inside the Be Water tool window, including inside
     the input and output editors. Other actions are available from the toolbar buttons.</p>
 <ul>
     <li><b>Ctrl+Enter</b> converts input to the selected output format</li>
+    <li><b>Ctrl+F</b> opens a find bar that searches the focused editor
+        (Enter = next match, Shift+Enter = previous, Esc = close)</li>
 </ul>
+<p>The main operations (Convert, Format Input, Copy Output, Open File, Save Output) are also
+    registered as IDE actions — search for "Be Water" in <b>Find Action</b> or assign your own
+    shortcuts in <b>Settings → Keymap</b>.</p>
 
+<h2>Toolbar extras</h2>
+<ul>
+    <li><b>Cancel</b> — while a conversion runs, the Convert button becomes Cancel.</li>
+    <li><b>History</b> — the clock button lists the last 20 conversions; selecting one restores
+        both editors. Restoring saves the current state first, so it can be undone.</li>
+    <li><b>Soft-wrap</b> — toggles line wrapping in both editors.</li>
+    <li><b>Split toggle</b> — switches between side-by-side and stacked editors.</li>
+</ul>
 
 <h2>Conversion-specific options</h2>
-<p>Some output formats show an options bar below the toolbar:</p>
+<p>Some formats show an options bar below the toolbar. All options are remembered across IDE
+    restarts:</p>
 <ul>
-    <li><b>CSV</b> choose between <code>FLAT_FIRST</code> (expands the first array only) and
+    <li><b>CSV output</b> choose between <code>FLAT_FIRST</code> (expands the first array only) and
         <code>CROSS_JOIN</code> (full Cartesian product). In <code>CROSS_JOIN</code> mode, adjust the
         <b>Row warning</b> threshold to control when the confirmation dialog appears.</li>
+    <li><b>CSV / XML input</b> toggle <b>Infer types</b> to convert values that look like numbers,
+        booleans, or <code>null</code> into typed JSON values (leading-zero values like
+        <code>007</code> always stay strings).</li>
     <li><b>Java POJO</b> toggle <b>Lombok annotations</b> to add <code>@Data</code>,
-        <code>@NoArgsConstructor</code>, and <code>@AllArgsConstructor</code> to generated classes.</li>
+        <code>@NoArgsConstructor</code>, and <code>@AllArgsConstructor</code>, and
+        <b>Detect dates</b> to type ISO-8601 values as <code>LocalDate</code> /
+        <code>LocalDateTime</code> / <code>OffsetDateTime</code>.</li>
 </ul>
+
+<h2>Input leniency</h2>
+<p>JSON input tolerates comments, trailing commas, single quotes, and unquoted field names, and
+    truncated JSON is auto-repaired (unclosed brackets and strings are closed). Multi-document
+    YAML ("---"-separated, e.g. Kubernetes manifests) converts to a JSON array.</p>
 
 <h2>Swap behavior</h2>
 <p>The swap button exchanges input and output when the output format can also be parsed as

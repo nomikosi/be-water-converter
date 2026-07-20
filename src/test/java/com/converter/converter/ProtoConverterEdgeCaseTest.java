@@ -108,6 +108,29 @@ class ProtoConverterEdgeCaseTest {
         assertThat(result).contains("int32 statusCode").contains("string name");
     }
 
+    // ── Field name sanitization (v1.4.0) ──────────────────────────────────
+
+    @Test @DisplayName("JSON->Proto: kebab and space keys become valid identifiers")
+    void jsonToProtoSanitizesFieldNames() throws Exception {
+        String result = converter.jsonToProto("{\"first-name\":\"x\",\"last name\":\"y\"}");
+        assertThat(result).contains("string first_name = 1;")
+              .contains("string last_name = 2;")
+              .doesNotContain("first-name");
+    }
+
+    @Test @DisplayName("JSON->Proto: keys colliding after sanitization are deduplicated")
+    void jsonToProtoDeduplicatesFieldNames() throws Exception {
+        String result = converter.jsonToProto("{\"a-b\":1,\"a b\":2}");
+        assertThat(result).contains("a_b = 1;").contains("a_b_2 = 2;");
+    }
+
+    @Test @DisplayName("JSON->Proto: generated schema with hostile keys round-trips through protoToJson")
+    void jsonToProtoRoundTripsWithHostileKeys() throws Exception {
+        String schema = converter.jsonToProto(
+              "{\"first-name\":\"x\",\"1st\":2,\"nested obj\":{\"k-v\":true}}");
+        assertThatCode(() -> converter.protoToJson(schema)).doesNotThrowAnyException();
+    }
+
     // ── Package / syntax / option directives ─────────────────────────────
 
     @Test @DisplayName("Proto->JSON: syntax + package header stripped, message still parsed")

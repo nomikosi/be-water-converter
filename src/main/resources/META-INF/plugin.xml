@@ -38,17 +38,24 @@
             <li>JSON-to-Proto generates idiomatic inline nested messages</li>
         </ul>
 
-        <h3>CSV</h3>
+        <h3>CSV &amp; XML</h3>
         <ul>
-            <li>Two expansion modes: <code>FLAT_FIRST</code> (safe default) and <code>CROSS_JOIN</code> (full Cartesian product)</li>
+            <li>Two CSV expansion modes: <code>FLAT_FIRST</code> (safe default) and <code>CROSS_JOIN</code> (full Cartesian product)</li>
             <li>Configurable row-warning threshold for <code>CROSS_JOIN</code> to control the row-explosion confirmation</li>
+            <li><b>Type inference</b> for CSV and XML input — numbers, booleans and null become typed JSON values</li>
         </ul>
 
         <h3>Editor &amp; UI</h3>
         <ul>
-            <li>Format-aware pretty-printing, including lenient auto-repair of truncated JSON</li>
+            <li>Format-aware pretty-printing, including lenient auto-repair of truncated JSON
+                and tolerant parsing of comments, trailing commas and single quotes</li>
+            <li><b>Conversion history</b> — restore any of the last 20 conversions from the toolbar</li>
+            <li><b>Java POJO generation</b> with optional Lombok annotations and ISO-8601 date detection
+                (<code>LocalDate</code> / <code>OffsetDateTime</code>)</li>
             <li><b>Drag-and-drop</b> files onto the input editor with automatic format detection</li>
-            <li>One-click swap of input and output, copy to clipboard, file import/export</li>
+            <li>Cancellable background conversions, find bar (Ctrl+F), soft-wrap toggle,
+                one-click swap, copy to clipboard, file import/export</li>
+            <li>Options persist across IDE restarts</li>
         </ul>
     ]]></description>
     <change-notes><![CDATA[
@@ -67,6 +74,19 @@
             <li><b>Date detection for Java POJOs</b> — ISO-8601 values are typed as
                 <code>LocalDate</code>, <code>LocalDateTime</code> or <code>OffsetDateTime</code>
                 (toggleable via <i>Detect dates</i>); <code>java.time</code> imports are emitted only when used.</li>
+            <li><b>Fixed: JSON→XML always emits well-formed XML</b> — keys that are not valid element names
+                (spaces, leading digits) are sanitized instead of producing unparseable output.</li>
+            <li><b>Fixed: JSON→Proto emits valid identifiers</b> — kebab-case and other hostile keys are
+                sanitized to snake_case and deduplicated.</li>
+            <li><b>Type inference for XML input</b> — the <i>Infer types</i> option now also applies to XML.</li>
+            <li><b>Lenient JSON input</b> — comments, trailing commas, single quotes and unquoted
+                field names are accepted and normalised.</li>
+            <li><b>Multi-document YAML</b> — "---"-separated documents (e.g. Kubernetes manifests)
+                convert to a JSON array.</li>
+            <li><b>Find bar and soft-wrap</b> — Ctrl+F searches the focused editor; a toolbar button
+                toggles soft-wrap in both editors.</li>
+            <li><b>Clear no longer resets saved preferences</b>, and restoring from history first
+                saves the current editors so the restore can be undone.</li>
             <li><b>Options persist across restarts</b> — CSV mode, row-warning threshold, Lombok toggle,
                 type inference and split orientation are remembered.</li>
             <li><b>Better error reporting</b> — multi-line validation errors are shown as an IDE notification

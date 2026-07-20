@@ -78,6 +78,22 @@ class ConverterPanelTest {
     }
 
     @Test
+    void lenientJsonInputAcceptsCommentsTrailingCommasAndSingleQuotes() throws Exception {
+        runOnEdt(() -> {
+            ConverterPanel panel = new ConverterPanel();
+            Method normalize = ConverterPanel.class.getDeclaredMethod(
+                  "normalizeToJson", String.class, String.class, boolean.class);
+            normalize.setAccessible(true);
+
+            String messy = "{\n  // a comment\n  'name': \"Alice\",\n  \"tags\": [1, 2,],\n}";
+            String strict = (String) normalize.invoke(panel, messy, "JSON", true);
+            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(strict);
+            assertThat(node.get("name").asText()).isEqualTo("Alice");
+            assertThat(node.get("tags")).hasSize(2);
+        });
+    }
+
+    @Test
     void autoCloseRepairsUnterminatedStringsAndBrackets() throws Exception {
         runOnEdt(() -> {
             ConverterPanel panel = new ConverterPanel();

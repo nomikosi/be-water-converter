@@ -27,7 +27,6 @@ import com.fasterxml.jackson.dataformat.csv.CsvSchema;
 
 import java.util.*;
 import java.util.concurrent.CancellationException;
-import java.util.regex.Pattern;
 
 public class CsvConverter {
 
@@ -54,12 +53,6 @@ public class CsvConverter {
 
     // ── CSV → JSON ────────────────────────────────────────────────────────────
 
-    /** Integer without leading zeros ("007" stays a string). */
-    private static final Pattern INT_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
-    /** Decimal / scientific notation with a fraction or exponent part. */
-    private static final Pattern DEC_PATTERN =
-          Pattern.compile("-?(0|[1-9]\\d*)(\\.\\d+([eE][+-]?\\d+)?|[eE][+-]?\\d+)");
-
     /** Convenience overload — infers scalar types by default. */
     public String csvToJson(String csv) throws Exception {
         return csvToJson(csv, true);
@@ -84,35 +77,11 @@ public class CsvConverter {
         for (Map<String, String> row : rows) {
             ObjectNode obj = arr.addObject();
             for (Map.Entry<String, String> e : row.entrySet()) {
-                obj.set(e.getKey(), inferNode(e.getValue()));
+                obj.set(e.getKey(),
+                      ScalarInference.infer(e.getValue(), jsonMapper.getNodeFactory()));
             }
         }
         return jsonMapper.writeValueAsString(arr);
-    }
-
-    private JsonNode inferNode(String value) {
-        var nf = jsonMapper.getNodeFactory();
-        if (value == null) return nf.nullNode();
-        if (value.isEmpty()) return nf.textNode("");
-        switch (value) {
-            case "true"  -> { return nf.booleanNode(true); }
-            case "false" -> { return nf.booleanNode(false); }
-            case "null"  -> { return nf.nullNode(); }
-        }
-        if (INT_PATTERN.matcher(value).matches()) {
-            try {
-                long v = Long.parseLong(value);
-                return (v >= Integer.MIN_VALUE && v <= Integer.MAX_VALUE)
-                      ? nf.numberNode((int) v) : nf.numberNode(v);
-            } catch (NumberFormatException overflow) {
-                return nf.textNode(value);
-            }
-        }
-        if (DEC_PATTERN.matcher(value).matches()) {
-            double d = Double.parseDouble(value);
-            if (!Double.isInfinite(d)) return nf.numberNode(d);
-        }
-        return nf.textNode(value);
     }
 
     // ── JSON → CSV (mode-aware) ───────────────────────────────────────────────

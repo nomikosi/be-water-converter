@@ -48,6 +48,8 @@ import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static com.converter.ConverterTheme.*;
+
 public class ConverterPanel implements Disposable {
 
     private static final Logger LOG = Logger.getInstance(ConverterPanel.class);
@@ -64,35 +66,10 @@ public class ConverterPanel implements Disposable {
     private static final String PROP_INFER_TYPES    = "beWater.csvInferTypes";
     private static final String PROP_DETECT_DATES   = "beWater.detectDates";
     private static final String PROP_SPLIT_VERTICAL = "beWater.splitVertical";
+    private static final String PROP_WRAP_LINES     = "beWater.wrapLines";
 
     /** Above this output size, syntax highlighting is disabled to keep the EDT responsive. */
     private static final int HIGHLIGHT_LIMIT_CHARS = 2_000_000;
-
-    private static final Color BG_DARK      = new JBColor(new Color(245, 245, 245), new Color(43,  43,  43));
-    private static final Color BG_TOOLBAR   = new JBColor(new Color(235, 237, 240), new Color(55,  58,  60));
-    private static final Color BG_LABEL_BAR = new JBColor(new Color(240, 240, 242), new Color(37,  37,  38));
-    private static final Color BG_STATUS    = new JBColor(new Color(232, 232, 232), new Color(30,  30,  30));
-    private static final Color ACCENT       = new JBColor(new Color(55, 100, 180),  new Color(75, 110, 175));
-    private static final Color ACCENT_HOVER = new JBColor(new Color(70, 120, 210),  new Color(95, 135, 205));
-    private static final Color UTIL_BG      = new JBColor(new Color(212, 214, 216), new Color(70,  73,  75));
-    private static final Color UTIL_HOVER   = new JBColor(new Color(195, 198, 200), new Color(90,  93,  95));
-    private static final Color FORMAT_BG    = new JBColor(new Color(46, 139,  87),  new Color(50, 100,  60));
-    private static final Color FORMAT_HOVER = new JBColor(new Color(56, 160, 100),  new Color(65, 125,  75));
-    private static final Color TEXT_BRIGHT  = new JBColor(new Color(40,  40,  40),  new Color(220, 220, 220));
-    private static final Color TEXT_DIM     = new JBColor(new Color(120, 120, 120), new Color(130, 130, 130));
-    private static final Color OK_COLOR     = new JBColor(new Color(40, 130,  40),  new Color(98,  151,  85));
-    private static final Color WARN_COLOR   = new JBColor(new Color(180, 130,  0),  new Color(222, 166,  62));
-    private static final Color ERR_COLOR    = new JBColor(new Color(200, 50,  50),  new Color(204,  60,  53));
-    private static final Color BORDER       = new JBColor(new Color(210, 210, 210), new Color(25,  25,  25));
-    private static final Color DROPDOWN_BG  = new JBColor(new Color(255, 255, 255), new Color(60,  63,  65));
-    private static final Color BTN_TEXT     = new JBColor(new Color(255, 255, 255), new Color(220, 220, 220));
-    private static final Color UTIL_TEXT    = new JBColor(new Color(50,  50,  50),  new Color(220, 220, 220));
-    private static final Color EDITOR_BG    = new JBColor(new Color(255, 255, 255), new Color(30,  31,  34));
-    private static final Color GUTTER_BG    = new JBColor(new Color(245, 245, 245), new Color(43,  43,  43));
-    private static final Color GUTTER_FG    = new JBColor(new Color(170, 170, 170), new Color(90,  90,  90));
-    private static final Color DIVIDER_BG   = new JBColor(new Color(220, 220, 220), new Color(50,  50,  50));
-    private static final Color DIVIDER_GRIP = new JBColor(new Color(170, 170, 170), new Color(90,  90,  90));
-    private static final Color SELECTION_BG = new JBColor(new Color(173, 214, 255), new Color(33,  66, 131));
 
     static final String FMT_JSON  = "JSON";
     static final String FMT_XML   = "XML";
@@ -147,6 +124,22 @@ public class ConverterPanel implements Disposable {
           new com.fasterxml.jackson.databind.ObjectMapper()
                 .enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT);
 
+    /**
+     * Lenient reader for JSON input: accepts comments, trailing commas,
+     * single quotes and unquoted field names (pasted JS object literals).
+     * Input is normalised through this mapper into strict JSON before it
+     * reaches the downstream converters.
+     */
+    private static final com.fasterxml.jackson.databind.ObjectMapper LENIENT_JSON =
+          com.fasterxml.jackson.databind.json.JsonMapper.builder()
+                .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_JAVA_COMMENTS)
+                .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_YAML_COMMENTS)
+                .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_TRAILING_COMMA)
+                .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_SINGLE_QUOTES)
+                .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNQUOTED_FIELD_NAMES)
+                .enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT)
+                .build();
+
     private static final int BUTTON_ARC = 8;
     private static final int STATUS_MAX_LEN = 120;
     private static final String ACTION_CONVERT = "convert";
@@ -154,6 +147,7 @@ public class ConverterPanel implements Disposable {
     private static final String ACTION_COPY_OUTPUT = "copyOutput";
     private static final String ACTION_OPEN_FILE = "openFile";
     private static final String ACTION_SAVE_FILE = "saveFile";
+    private static final String ACTION_FIND      = "find";
 
     private final JPanel            mainPanel;
     private final RSyntaxTextArea   inputArea;
@@ -179,6 +173,9 @@ public class ConverterPanel implements Disposable {
     private final JSplitPane splitPane;
     private JButton convertBtn;
     private JButton splitToggleBtn;
+    private JPanel     findBar;
+    private JTextField findField;
+    private RSyntaxTextArea findTarget;
 
     private final com.intellij.openapi.project.Project project;
     private final AtomicBoolean converting = new AtomicBoolean(false);
@@ -277,7 +274,7 @@ public class ConverterPanel implements Disposable {
 
         inferTypesCheck = new JCheckBox("Infer types", true);
         inferTypesCheck.setToolTipText(
-              "Convert CSV cells that look like numbers, booleans or null into typed JSON values");
+              "Convert CSV/XML values that look like numbers, booleans or null into typed JSON values");
         inferTypesCheck.setOpaque(false);
         inferTypesCheck.setForeground(TEXT_BRIGHT);
         inferTypesCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
@@ -295,7 +292,7 @@ public class ConverterPanel implements Disposable {
 
         csvInputOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         csvInputOptions.setOpaque(false);
-        csvInputOptions.add(toolbarLabel("CSV input:"));
+        csvInputOptions.add(toolbarLabel("Input:"));
         csvInputOptions.add(inferTypesCheck);
 
         javaOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
@@ -351,6 +348,21 @@ public class ConverterPanel implements Disposable {
         statusBar.add(statusLabel,    BorderLayout.WEST);
         statusBar.add(charCountLabel, BorderLayout.EAST);
 
+        buildFindBar();
+        findTarget = inputArea;
+        FocusAdapter targetTracker = new FocusAdapter() {
+            @Override public void focusGained(FocusEvent e) {
+                findTarget = (RSyntaxTextArea) e.getComponent();
+            }
+        };
+        inputArea.addFocusListener(targetTracker);
+        outputArea.addFocusListener(targetTracker);
+
+        JPanel south = new JPanel(new BorderLayout());
+        south.setOpaque(false);
+        south.add(findBar,   BorderLayout.NORTH);
+        south.add(statusBar, BorderLayout.SOUTH);
+
         JPanel north = new JPanel(new BorderLayout());
         north.setOpaque(false);
         north.add(toolbar,    BorderLayout.NORTH);
@@ -365,7 +377,7 @@ public class ConverterPanel implements Disposable {
 
         mainPanel.add(north,     BorderLayout.NORTH);
         mainPanel.add(splitPane, BorderLayout.CENTER);
-        mainPanel.add(statusBar, BorderLayout.SOUTH);
+        mainPanel.add(south,     BorderLayout.SOUTH);
 
         // ── keyboard shortcuts ───────────────────────────────────────────
         installKeyboardShortcuts();
@@ -425,6 +437,9 @@ public class ConverterPanel implements Disposable {
         }
         if (loadProp(PROP_DETECT_DATES) != null) {
             detectDatesCheck.setSelected("true".equals(loadProp(PROP_DETECT_DATES)));
+        }
+        if ("true".equals(loadProp(PROP_WRAP_LINES))) {
+            setLineWrap(true);
         }
         if ("true".equals(loadProp(PROP_SPLIT_VERTICAL))) {
             splitPane.setOrientation(JSplitPane.VERTICAL_SPLIT);
@@ -492,6 +507,11 @@ public class ConverterPanel implements Disposable {
               InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
               ACTION_SAVE_FILE, new AbstractAction() {
                   @Override public void actionPerformed(ActionEvent e) { doSaveFile(); }
+              });
+
+        bindShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK),
+              ACTION_FIND, new AbstractAction() {
+                  @Override public void actionPerformed(ActionEvent e) { showFindBar(); }
               });
     }
 
@@ -571,12 +591,99 @@ public class ConverterPanel implements Disposable {
         bar.add(makeSep());
         bar.add(buildSplitToggleButton());
 
+        JButton wrapBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.ToggleSoftWrap,
+              "Toggle soft-wrap in both editors");
+        wrapBtn.addActionListener(e -> setLineWrap(!inputArea.getLineWrap()));
+        bar.add(wrapBtn);
+
         JButton historyBtn = buildIconButton(com.intellij.icons.AllIcons.Vcs.History,
               "Conversion history — restore a previous conversion");
         historyBtn.addActionListener(e -> showHistoryPopup(historyBtn));
         bar.add(historyBtn);
 
         return bar;
+    }
+
+    // ── Find bar ──────────────────────────────────────────────────────────
+    private void buildFindBar() {
+        findField = new JTextField(24);
+        findField.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        findField.setBackground(DROPDOWN_BG);
+        findField.setForeground(TEXT_BRIGHT);
+        findField.setCaretColor(TEXT_BRIGHT);
+        findField.setBorder(BorderFactory.createCompoundBorder(
+              BorderFactory.createLineBorder(BORDER, 1), new EmptyBorder(3, 6, 3, 6)));
+
+        findField.addActionListener(e -> findNext(true));
+        findField.getInputMap().put(
+              KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), "findPrev");
+        findField.getActionMap().put("findPrev", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { findNext(false); }
+        });
+        findField.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFind");
+        findField.getActionMap().put("closeFind", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { hideFindBar(); }
+        });
+
+        JButton prevBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.PreviousOccurence,
+              "Previous match (Shift+Enter)");
+        prevBtn.addActionListener(e -> findNext(false));
+        JButton nextBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.NextOccurence,
+              "Next match (Enter)");
+        nextBtn.addActionListener(e -> findNext(true));
+        JButton closeBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.Close,
+              "Close find bar (Esc)");
+        closeBtn.addActionListener(e -> hideFindBar());
+
+        findBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        findBar.setBackground(BG_TOOLBAR);
+        findBar.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, BORDER));
+        findBar.add(toolbarLabel("Find:"));
+        findBar.add(findField);
+        findBar.add(prevBtn);
+        findBar.add(nextBtn);
+        findBar.add(closeBtn);
+        findBar.setVisible(false);
+    }
+
+    private void showFindBar() {
+        findBar.setVisible(true);
+        findBar.revalidate();
+        findField.requestFocusInWindow();
+        findField.selectAll();
+    }
+
+    private void hideFindBar() {
+        findBar.setVisible(false);
+        findBar.revalidate();
+        if (findTarget != null) findTarget.requestFocusInWindow();
+    }
+
+    /** Searches the last-focused editor, wrapping around at the ends. */
+    private void findNext(boolean forward) {
+        String query = findField.getText();
+        if (query.isEmpty() || findTarget == null) return;
+        org.fife.ui.rtextarea.SearchContext ctx = new org.fife.ui.rtextarea.SearchContext(query);
+        ctx.setSearchForward(forward);
+        ctx.setMatchCase(false);
+        ctx.setSearchWrap(true);
+        boolean found = org.fife.ui.rtextarea.SearchEngine.find(findTarget, ctx).wasFound();
+        if (found) {
+            setStatus("Found \"" + query + "\"", true);
+        } else {
+            setStatusWarn("No matches for \"" + query + "\"");
+        }
+    }
+
+    // ── Soft-wrap ─────────────────────────────────────────────────────────
+    private void setLineWrap(boolean wrap) {
+        for (RSyntaxTextArea area : new RSyntaxTextArea[]{inputArea, outputArea}) {
+            area.setLineWrap(wrap);
+            area.setWrapStyleWord(wrap);
+            // Code folding and soft-wrap don't combine well in RSyntaxTextArea.
+            area.setCodeFoldingEnabled(!wrap);
+        }
+        saveProp(PROP_WRAP_LINES, String.valueOf(wrap));
     }
 
     /** Popup listing recent conversions; selecting one restores both editors. */
@@ -609,6 +716,16 @@ public class ConverterPanel implements Disposable {
     }
 
     private void restoreFromHistory(ConversionHistory.Entry entry) {
+        // Restoring overwrites both editors — save the current state first so
+        // a restore can itself be undone from the history menu.
+        String curIn  = inputArea.getText();
+        String curOut = outputArea.getText();
+        if (!curIn.isEmpty() || !curOut.isEmpty()) {
+            history.push(new ConversionHistory.Entry(
+                  inputFormatLabel.getText(), outputFormatLabel.getText(),
+                  curIn, curOut, java.time.LocalTime.now()));
+        }
+
         inputCombo.setSelectedItem(entry.inputFormat());   // updates syntax, badge, output combo
         inputArea.setText(entry.input());
         inputArea.setCaretPosition(0);
@@ -726,13 +843,13 @@ public class ConverterPanel implements Disposable {
     private void updateConversionOptions() {
         String outFmt = (String) outputCombo.getSelectedItem();
         String inFmt  = (String) inputCombo.getSelectedItem();
-        boolean isCsvOut = FMT_CSV.equals(outFmt);
-        boolean isJava   = FMT_JAVA.equals(outFmt);
-        boolean isCsvIn  = FMT_CSV.equals(inFmt);
+        boolean isCsvOut  = FMT_CSV.equals(outFmt);
+        boolean isJava    = FMT_JAVA.equals(outFmt);
+        boolean untypedIn = FMT_CSV.equals(inFmt) || FMT_XML.equals(inFmt);
         csvOptions.setVisible(isCsvOut);
-        csvInputOptions.setVisible(isCsvIn);
+        csvInputOptions.setVisible(untypedIn);
         javaOptions.setVisible(isJava);
-        optionsBar.setVisible(isCsvOut || isJava || isCsvIn);
+        optionsBar.setVisible(isCsvOut || isJava || untypedIn);
         optionsBar.revalidate();
         optionsBar.repaint();
     }
@@ -827,7 +944,7 @@ public class ConverterPanel implements Disposable {
                             boolean huge = result.length() > HIGHLIGHT_LIMIT_CHARS;
                             outputArea.setSyntaxEditingStyle(
                                   huge ? SyntaxConstants.SYNTAX_STYLE_NONE : syntaxFor(outFmt));
-                            outputArea.setCodeFoldingEnabled(!huge);
+                            outputArea.setCodeFoldingEnabled(!huge && !outputArea.getLineWrap());
                             outputArea.setText(result);
                             outputArea.setCaretPosition(0);
                             outputFormatLabel.setText(outFmt);
@@ -848,8 +965,10 @@ public class ConverterPanel implements Disposable {
           throws Exception {
         String input = (inFmt.equals(FMT_JSON)) ? autoClose(rawInput) : rawInput;
         return switch (inFmt) {
-            case FMT_JSON  -> input;
-            case FMT_XML   -> jsonXml.xmlToJson(input);
+            // Lenient parse (comments, trailing commas, single quotes), then
+            // re-serialize so downstream converters always see strict JSON.
+            case FMT_JSON  -> LENIENT_JSON.writeValueAsString(LENIENT_JSON.readTree(input));
+            case FMT_XML   -> jsonXml.xmlToJson(input, inferCsvTypes);
             case FMT_YAML  -> jsonYaml.yamlToJson(input);
             case FMT_CSV   -> csv.csvToJson(input, inferCsvTypes);
             case FMT_TOML  -> toml.tomlToJson(input);
@@ -1085,6 +1204,9 @@ public class ConverterPanel implements Disposable {
     }
 
     private void doClear() {
+        // Clears editors and format selection only. Persisted preferences
+        // (CSV mode, Lombok, inference, …) are deliberately left untouched:
+        // resetting them here would clobber the saved values.
         inputArea.setText("");
         outputArea.setText("");
         inputArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JSON);
@@ -1096,8 +1218,6 @@ public class ConverterPanel implements Disposable {
         inputCombo.setSelectedItem(FMT_JSON);
         rebuildOutputCombo(FMT_JSON);
         outputCombo.setSelectedItem(FMT_XML);
-        csvModeCombo.setSelectedItem(CsvConverter.CsvMode.FLAT_FIRST);
-        lombokCheck.setSelected(false);
         setStatus("Cleared", true);
     }
 
@@ -1131,7 +1251,7 @@ public class ConverterPanel implements Disposable {
 
     // ── Builder helpers ───────────────────────────────────────────────────
     private String prettyJson(String json) throws Exception {
-        return PRETTY_JSON.writeValueAsString(PRETTY_JSON.readTree(json));
+        return LENIENT_JSON.writeValueAsString(LENIENT_JSON.readTree(json));
     }
 
     /**
