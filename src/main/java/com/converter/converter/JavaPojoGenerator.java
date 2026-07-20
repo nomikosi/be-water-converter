@@ -22,6 +22,7 @@ import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * Generates Java POJO class skeletons from a JSON or XML structure.
@@ -46,11 +47,28 @@ public class JavaPojoGenerator {
           "transient", "try", "void", "volatile", "while",
           "var", "yield", "record", "sealed", "permits");
 
+    // ── ISO-8601 date/time detection ──────────────────────────────────────
+    private static final Pattern ISO_DATE =
+          Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
+    private static final Pattern ISO_DATETIME_OFFSET =
+          Pattern.compile("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})");
+    private static final Pattern ISO_DATETIME_LOCAL =
+          Pattern.compile("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?");
+
     public String fromJson(String json) throws Exception {
         return fromJson(json, false);
     }
 
     public String fromJson(String json, boolean useLombok) throws Exception {
+        return fromJson(json, useLombok, true);
+    }
+
+    /**
+     * @param detectDates when true, textual values in ISO-8601 form are typed
+     *                    as {@code LocalDate}, {@code LocalDateTime} or
+     *                    {@code OffsetDateTime} instead of {@code String}.
+     */
+    public String fromJson(String json, boolean useLombok, boolean detectDates) throws Exception {
         if (json == null || json.isBlank())
             throw new IllegalArgumentException("Input must not be null or blank");
         JsonNode root = jsonMapper.readTree(json);
@@ -59,7 +77,7 @@ public class JavaPojoGenerator {
                 throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
             root = root.get(0);
         }
-        return generate(root, "Root", useLombok);
+        return generate(root, "Root", useLombok, detectDates);
     }
 
     public String fromXml(String xml) throws Exception {
@@ -67,6 +85,10 @@ public class JavaPojoGenerator {
     }
 
     public String fromXml(String xml, boolean useLombok) throws Exception {
+        return fromXml(xml, useLombok, true);
+    }
+
+    public String fromXml(String xml, boolean useLombok, boolean detectDates) throws Exception {
         if (xml == null || xml.isBlank())
             throw new IllegalArgumentException("Input XML must not be null or blank");
         JsonNode root = xmlMapper.readTree(xml.getBytes(StandardCharsets.UTF_8));
@@ -75,29 +97,38 @@ public class JavaPojoGenerator {
                 throw new IllegalArgumentException("XML array is empty — nothing to generate.");
             root = root.get(0);
         }
-        return generate(root, "Root", useLombok);
+        return generate(root, "Root", useLombok, detectDates);
     }
 
     // ── Internal generation ───────────────────────────────────────────────
 
-    private String generate(JsonNode root, String rootClassName, boolean useLombok) {
+    private String generate(JsonNode root, String rootClassName, boolean useLombok,
+          boolean detectDates) {
         LinkedHashMap<String, JsonNode> classMap = new LinkedHashMap<>();
         collectClasses(root, rootClassName, classMap, new HashSet<>());
+
+        Set<String> usedTypes = new HashSet<>();
+        StringBuilder body = new StringBuilder();
+        for (Map.Entry<String, JsonNode> entry : classMap.entrySet()) {
+            generateClass(entry.getKey(), entry.getValue(), body, useLombok,
+                  detectDates, usedTypes);
+            body.append("\n");
+        }
+
         StringBuilder sb = new StringBuilder();
         sb.append("import com.fasterxml.jackson.annotation.JsonProperty;\n");
         sb.append("import java.math.BigDecimal;\n");
         sb.append("import java.math.BigInteger;\n");
+        if (usedTypes.contains("LocalDate"))      sb.append("import java.time.LocalDate;\n");
+        if (usedTypes.contains("LocalDateTime"))  sb.append("import java.time.LocalDateTime;\n");
+        if (usedTypes.contains("OffsetDateTime")) sb.append("import java.time.OffsetDateTime;\n");
         sb.append("import java.util.List;\n");
         if (useLombok) {
             sb.append("import lombok.AllArgsConstructor;\n");
             sb.append("import lombok.Data;\n");
             sb.append("import lombok.NoArgsConstructor;\n");
         }
-        sb.append("\n");
-        for (Map.Entry<String, JsonNode> entry : classMap.entrySet()) {
-            generateClass(entry.getKey(), entry.getValue(), sb, useLombok);
-            sb.append("\n");
-        }
+        sb.append("\n").append(body);
         return sb.toString();
     }
 
@@ -124,7 +155,7 @@ public class JavaPojoGenerator {
      * differs from the original JSON key (e.g. first_name -> firstName).
      */
     private void generateClass(String className, JsonNode node, StringBuilder sb,
-          boolean useLombok) {
+          boolean useLombok, boolean detectDates, Set<String> usedTypes) {
         if (useLombok) {
             sb.append("@Data\n");
             sb.append("@NoArgsConstructor\n");
@@ -143,7 +174,7 @@ public class JavaPojoGenerator {
                 while (!usedNames.add(camelName + n)) n++;
                 camelName = camelName + n;
             }
-            String javaType    = resolveJavaType(e.getValue(), originalKey);
+            String javaType    = resolveJavaType(e.getValue(), originalKey, detectDates, usedTypes);
             if (!camelName.equals(originalKey)) {
                 sb.append("    @JsonProperty(\"").append(originalKey).append("\")\n");
             }
@@ -155,7 +186,8 @@ public class JavaPojoGenerator {
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
-    private String resolveJavaType(JsonNode node, String fieldName) {
+    private String resolveJavaType(JsonNode node, String fieldName,
+          boolean detectDates, Set<String> usedTypes) {
         if (node.isInt() || node.isShort())  return "Integer";
         if (node.isLong())                   return "Long";
         if (node.isBigInteger())             return "BigInteger";
@@ -163,14 +195,48 @@ public class JavaPojoGenerator {
         if (node.isDouble())                 return "Double";
         if (node.isBigDecimal())             return "BigDecimal";
         if (node.isBoolean())                return "Boolean";
-        if (node.isTextual())                return "String";
+        if (node.isTextual()) {
+            if (detectDates) {
+                String temporal = temporalTypeFor(node.asText());
+                if (temporal != null) {
+                    usedTypes.add(temporal);
+                    return temporal;
+                }
+            }
+            return "String";
+        }
         if (node.isNull())                   return "Object";
         if (node.isObject())                 return capitalize(toCamelCase(fieldName));
         if (node.isArray()) {
             if (node.size() == 0) return "List<Object>";
-            return "List<" + resolveJavaType(node.get(0), fieldName) + ">";
+            return "List<" + resolveJavaType(node.get(0), fieldName, detectDates, usedTypes) + ">";
         }
         return "Object";
+    }
+
+    /**
+     * Returns the java.time type for an ISO-8601 value, or null when the value
+     * is not a date. Matches are confirmed with an actual java.time parse so
+     * "2025-13-99" is not mistaken for a date.
+     */
+    private String temporalTypeFor(String value) {
+        try {
+            if (ISO_DATETIME_OFFSET.matcher(value).matches()) {
+                java.time.OffsetDateTime.parse(value);
+                return "OffsetDateTime";
+            }
+            if (ISO_DATETIME_LOCAL.matcher(value).matches()) {
+                java.time.LocalDateTime.parse(value);
+                return "LocalDateTime";
+            }
+            if (ISO_DATE.matcher(value).matches()) {
+                java.time.LocalDate.parse(value);
+                return "LocalDate";
+            }
+        } catch (java.time.format.DateTimeParseException notADate) {
+            return null;
+        }
+        return null;
     }
 
     private String capitalize(String s) {

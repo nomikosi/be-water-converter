@@ -86,6 +86,55 @@ class JavaPojoGeneratorEdgeCaseTest {
         assertThat(result).contains("BigInteger id").contains("import java.math.BigInteger;");
     }
 
+    // ── ISO-8601 date detection (v1.4.0) ──────────────────────────────────
+
+    @Test @DisplayName("JSON->POJO: ISO date string maps to LocalDate with import")
+    void isoDateDetected() throws Exception {
+        String result = generator.fromJson("{\"birthday\":\"1990-05-17\"}");
+        assertThat(result).contains("private LocalDate birthday;")
+              .contains("import java.time.LocalDate;");
+    }
+
+    @Test @DisplayName("JSON->POJO: ISO datetime with offset maps to OffsetDateTime")
+    void isoOffsetDateTimeDetected() throws Exception {
+        String result = generator.fromJson("{\"created\":\"2025-01-02T03:04:05Z\"}");
+        assertThat(result).contains("private OffsetDateTime created;")
+              .contains("import java.time.OffsetDateTime;");
+    }
+
+    @Test @DisplayName("JSON->POJO: ISO datetime without offset maps to LocalDateTime")
+    void isoLocalDateTimeDetected() throws Exception {
+        String result = generator.fromJson("{\"updated\":\"2025-01-02T03:04:05\"}");
+        assertThat(result).contains("private LocalDateTime updated;")
+              .contains("import java.time.LocalDateTime;");
+    }
+
+    @Test @DisplayName("JSON->POJO: impossible date like 2025-13-99 stays String")
+    void impossibleDateStaysString() throws Exception {
+        String result = generator.fromJson("{\"code\":\"2025-13-99\"}");
+        assertThat(result).contains("private String code;")
+              .doesNotContain("java.time");
+    }
+
+    @Test @DisplayName("JSON->POJO: date detection can be disabled")
+    void dateDetectionDisabled() throws Exception {
+        String result = generator.fromJson("{\"birthday\":\"1990-05-17\"}", false, false);
+        assertThat(result).contains("private String birthday;")
+              .doesNotContain("LocalDate");
+    }
+
+    @Test @DisplayName("JSON->POJO: no java.time imports when no dates are present")
+    void noDateImportsWithoutDates() throws Exception {
+        String result = generator.fromJson("{\"name\":\"Alice\"}");
+        assertThat(result).doesNotContain("java.time");
+    }
+
+    @Test @DisplayName("JSON->POJO: array of ISO dates maps to List<LocalDate>")
+    void arrayOfDates() throws Exception {
+        String result = generator.fromJson("{\"holidays\":[\"2025-12-25\",\"2026-01-01\"]}");
+        assertThat(result).contains("private List<LocalDate> holidays;");
+    }
+
     // ── Field name transformations ────────────────────────────────────────
 
     @Test @DisplayName("JSON->POJO: kebab-case field converted to camelCase")

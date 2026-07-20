@@ -67,7 +67,12 @@ mode and format badge update automatically after each successful conversion. Con
 run in the background and can be cancelled — the Convert button turns into **Cancel**
 while one is running. Multi-line validation errors are delivered as IDE notification
 balloons (the status bar shows the first line). Very large outputs are rendered with
-syntax highlighting disabled to keep the editor responsive. Swap is
+syntax highlighting disabled to keep the editor responsive.
+
+A **history** toolbar button lists the last 20 successful conversions of the session
+(time, formats, output size); selecting an entry restores both editors and format
+selections. Conversions over ~1 MB of combined text are not recorded, so history never
+holds large payloads in memory. Swap is
 available when the current output format is also a supported input format; generated
 Java POJO output is intentionally output-only.
 
@@ -176,9 +181,13 @@ prod,db2,beta
 Java POJO output is generated from JSON structure and emits field-only class skeletons,
 including `@JsonProperty` annotations where the source key differs from the generated
 camelCase field name. Arrays of objects become `List<...>` fields, nested objects become
-nested class types, and numbers are mapped to `Integer`, `Long`, `Float`, `Double`, or
-`BigDecimal` as appropriate. The optional **Lombok annotations** mode annotates every
-generated class with `@Data`, `@NoArgsConstructor`, and `@AllArgsConstructor`.
+nested class types, and numbers are mapped to `Integer`, `Long`, `BigInteger`, `Float`,
+`Double`, or `BigDecimal` as appropriate. String values in ISO-8601 form are typed as
+`LocalDate`, `LocalDateTime`, or `OffsetDateTime` (validated with a real `java.time`
+parse, so `2025-13-99` stays a `String`); disable this via the **Detect dates** toggle.
+`java.time` imports are emitted only when actually used. The optional **Lombok
+annotations** mode annotates every generated class with `@Data`, `@NoArgsConstructor`,
+and `@AllArgsConstructor`.
 
 ### Protobuf schema generation
 
@@ -316,8 +325,9 @@ against a range of IDE builds before publishing, run `gradle verifyPlugin`.
 
 ## Roadmap ideas
 
-- Conversion history or undo support.
-- Configurable CSV type-inference rules (e.g. date detection).
+- Persist conversion history across IDE restarts.
+- JSON Schema generation and validation.
+- Batch conversion of multiple files.
 
 ## License
 

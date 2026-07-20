@@ -62,6 +62,7 @@ public class ConverterPanel implements Disposable {
     private static final String PROP_ROW_THRESHOLD  = "beWater.rowThreshold";
     private static final String PROP_LOMBOK         = "beWater.lombok";
     private static final String PROP_INFER_TYPES    = "beWater.csvInferTypes";
+    private static final String PROP_DETECT_DATES   = "beWater.detectDates";
     private static final String PROP_SPLIT_VERTICAL = "beWater.splitVertical";
 
     /** Above this output size, syntax highlighting is disabled to keep the EDT responsive. */
@@ -168,7 +169,9 @@ public class ConverterPanel implements Disposable {
     private final JSpinner  rowThresholdSpinner;
     private final JLabel    rowThresholdLabel;
     private final JCheckBox lombokCheck;
+    private final JCheckBox detectDatesCheck;
     private final JCheckBox inferTypesCheck;
+    private final ConversionHistory history = new ConversionHistory();
     private final JPanel    csvOptions;
     private final JPanel    csvInputOptions;
     private final JPanel    javaOptions;
@@ -264,6 +267,14 @@ public class ConverterPanel implements Disposable {
         lombokCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
         lombokCheck.setFocusPainted(false);
 
+        detectDatesCheck = new JCheckBox("Detect dates", true);
+        detectDatesCheck.setToolTipText(
+              "Type ISO-8601 values as LocalDate / LocalDateTime / OffsetDateTime instead of String");
+        detectDatesCheck.setOpaque(false);
+        detectDatesCheck.setForeground(TEXT_BRIGHT);
+        detectDatesCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        detectDatesCheck.setFocusPainted(false);
+
         inferTypesCheck = new JCheckBox("Infer types", true);
         inferTypesCheck.setToolTipText(
               "Convert CSV cells that look like numbers, booleans or null into typed JSON values");
@@ -291,6 +302,7 @@ public class ConverterPanel implements Disposable {
         javaOptions.setOpaque(false);
         javaOptions.add(toolbarLabel("Java POJO:"));
         javaOptions.add(lombokCheck);
+        javaOptions.add(detectDatesCheck);
 
         optionsBar = new JPanel(new WrapLayout(FlowLayout.LEFT, 8, 5));
         optionsBar.setBackground(BG_LABEL_BAR);
@@ -411,6 +423,9 @@ public class ConverterPanel implements Disposable {
         if (loadProp(PROP_INFER_TYPES) != null) {
             inferTypesCheck.setSelected("true".equals(loadProp(PROP_INFER_TYPES)));
         }
+        if (loadProp(PROP_DETECT_DATES) != null) {
+            detectDatesCheck.setSelected("true".equals(loadProp(PROP_DETECT_DATES)));
+        }
         if ("true".equals(loadProp(PROP_SPLIT_VERTICAL))) {
             splitPane.setOrientation(JSplitPane.VERTICAL_SPLIT);
             if (splitToggleBtn != null) {
@@ -429,6 +444,8 @@ public class ConverterPanel implements Disposable {
               saveProp(PROP_LOMBOK, String.valueOf(lombokCheck.isSelected())));
         inferTypesCheck.addActionListener(e ->
               saveProp(PROP_INFER_TYPES, String.valueOf(inferTypesCheck.isSelected())));
+        detectDatesCheck.addActionListener(e ->
+              saveProp(PROP_DETECT_DATES, String.valueOf(detectDatesCheck.isSelected())));
     }
 
     private static String loadProp(String key) {
@@ -554,7 +571,57 @@ public class ConverterPanel implements Disposable {
         bar.add(makeSep());
         bar.add(buildSplitToggleButton());
 
+        JButton historyBtn = buildIconButton(com.intellij.icons.AllIcons.Vcs.History,
+              "Conversion history — restore a previous conversion");
+        historyBtn.addActionListener(e -> showHistoryPopup(historyBtn));
+        bar.add(historyBtn);
+
         return bar;
+    }
+
+    /** Popup listing recent conversions; selecting one restores both editors. */
+    private void showHistoryPopup(JComponent anchor) {
+        JPopupMenu menu = new JPopupMenu();
+        List<ConversionHistory.Entry> entries = history.entries();
+        if (entries.isEmpty()) {
+            JMenuItem empty = new JMenuItem("No conversions yet");
+            empty.setEnabled(false);
+            menu.add(empty);
+        } else {
+            java.time.format.DateTimeFormatter fmt =
+                  java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss");
+            for (ConversionHistory.Entry entry : entries) {
+                JMenuItem item = new JMenuItem(String.format("%s   %s → %s   (%,d chars)",
+                      entry.time().format(fmt), entry.inputFormat(), entry.outputFormat(),
+                      entry.output().length()));
+                item.addActionListener(ev -> restoreFromHistory(entry));
+                menu.add(item);
+            }
+            menu.addSeparator();
+            JMenuItem clear = new JMenuItem("Clear history");
+            clear.addActionListener(ev -> {
+                history.clear();
+                setStatus("History cleared", true);
+            });
+            menu.add(clear);
+        }
+        menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    private void restoreFromHistory(ConversionHistory.Entry entry) {
+        inputCombo.setSelectedItem(entry.inputFormat());   // updates syntax, badge, output combo
+        inputArea.setText(entry.input());
+        inputArea.setCaretPosition(0);
+
+        outputCombo.setSelectedItem(entry.outputFormat());
+        outputArea.setSyntaxEditingStyle(syntaxFor(entry.outputFormat()));
+        outputArea.setText(entry.output());
+        outputArea.setCaretPosition(0);
+        outputFormatLabel.setText(entry.outputFormat());
+        outputFormatLabel.repaint();
+
+        setStatus("Restored " + entry.inputFormat() + " → " + entry.outputFormat()
+              + " from history", true);
     }
 
     /** Compact icon-only button between the From/To combos that swaps the two sides. */
@@ -694,6 +761,7 @@ public class ConverterPanel implements Disposable {
         final long rowWarningThreshold = ((Number) rowThresholdSpinner.getValue()).longValue();
 
         final boolean inferCsvTypes = inferTypesCheck.isSelected();
+        final boolean detectDates   = detectDatesCheck.isSelected();
 
         convertBtn.setText("Cancel");
         convertBtn.setToolTipText("Cancel the running conversion");
@@ -734,7 +802,7 @@ public class ConverterPanel implements Disposable {
                           return csv.jsonToCsv(pivot, csvMode);
                       }
 
-                      return renderFromJson(asJson, outFmt, csvMode, useLombok);
+                      return renderFromJson(asJson, outFmt, csvMode, useLombok, detectDates);
                   } catch (Exception ex) {
                       throw new java.util.concurrent.CompletionException(ex);
                   } finally {
@@ -764,6 +832,8 @@ public class ConverterPanel implements Disposable {
                             outputArea.setCaretPosition(0);
                             outputFormatLabel.setText(outFmt);
                             outputFormatLabel.repaint();
+                            history.push(new ConversionHistory.Entry(
+                                  inFmt, outFmt, rawInput, result, java.time.LocalTime.now()));
                             setStatus("Converted " + inFmt + " \u2192 " + outFmt
                                   + (huge ? "  (syntax highlighting off for large output)" : ""), true);
                         }
@@ -799,7 +869,7 @@ public class ConverterPanel implements Disposable {
 
     /** JSON pivot -> desired output format. */
     private String renderFromJson(String asJson, String outFmt,
-          CsvConverter.CsvMode csvMode, boolean useLombok) throws Exception {
+          CsvConverter.CsvMode csvMode, boolean useLombok, boolean detectDates) throws Exception {
         return switch (outFmt) {
             case FMT_JSON  -> prettyJson(asJson);
             case FMT_XML   -> jsonXml.jsonToXml(asJson);
@@ -807,7 +877,7 @@ public class ConverterPanel implements Disposable {
             case FMT_CSV   -> csv.jsonToCsv(asJson, csvMode);
             case FMT_TOML  -> toml.jsonToToml(asJson);
             case FMT_PROTO -> proto.jsonToProto(asJson);
-            case FMT_JAVA  -> pojo.fromJson(asJson, useLombok);
+            case FMT_JAVA  -> pojo.fromJson(asJson, useLombok, detectDates);
             default -> throw new UnsupportedOperationException("Unknown output: " + outFmt);
         };
     }

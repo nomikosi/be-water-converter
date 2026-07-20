@@ -62,6 +62,11 @@
                 typed JSON values; toggleable via the new <i>Infer types</i> option (leading-zero values
                 like <code>007</code> stay strings).</li>
             <li><b>Cancellable conversions</b> — the Convert button turns into Cancel while a conversion runs.</li>
+            <li><b>Conversion history</b> — a toolbar history button lists the last 20 conversions;
+                selecting one restores both editors and formats.</li>
+            <li><b>Date detection for Java POJOs</b> — ISO-8601 values are typed as
+                <code>LocalDate</code>, <code>LocalDateTime</code> or <code>OffsetDateTime</code>
+                (toggleable via <i>Detect dates</i>); <code>java.time</code> imports are emitted only when used.</li>
             <li><b>Options persist across restarts</b> — CSV mode, row-warning threshold, Lombok toggle,
                 type inference and split orientation are remembered.</li>
             <li><b>Better error reporting</b> — multi-line validation errors are shown as an IDE notification
