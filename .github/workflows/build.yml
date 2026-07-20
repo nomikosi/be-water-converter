@@ -26,7 +26,7 @@ jobs:
         run: ./gradlew check buildPlugin --console=plain
 
       - name: Upload plugin ZIP
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: plugin-distribution
           path: build/distributions/*.zip
@@ -34,7 +34,7 @@ jobs:
 
       - name: Upload test reports on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-reports
           path: build/reports/tests/
