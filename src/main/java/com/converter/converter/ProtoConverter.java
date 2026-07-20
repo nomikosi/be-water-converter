@@ -65,6 +65,10 @@ public class ProtoConverter {
     private static final Pattern IGNORED_STATEMENT = Pattern.compile(
         "^(option|reserved|package|import|syntax)\\b.*", Pattern.DOTALL);
 
+    /** A single enum value statement: {@code NAME = number}. */
+    private static final Pattern ENUM_VALUE_PATTERN = Pattern.compile(
+        "(\\w+)\\s*=\\s*-?\\d+", Pattern.DOTALL);
+
     private static final Set<String> SCALAR_TYPES = Set.of(
         "string", "int32", "sint32", "uint32", "fixed32", "sfixed32",
         "int64", "sint64", "uint64", "fixed64", "sfixed64",
@@ -113,11 +117,13 @@ public class ProtoConverter {
         }
 
         Map<String, Block> registry = new LinkedHashMap<>();
-        for (Block msg : topMessages) registerAll(msg, registry);
+        Map<String, String> enumDefaults = new LinkedHashMap<>();
+        for (Block en : findNamedBlocks(clean, "enum")) registerEnum(en, enumDefaults);
+        for (Block msg : topMessages) registerAll(msg, registry, enumDefaults);
 
         ObjectNode root = jsonMapper.createObjectNode();
         for (Block msg : topMessages) {
-            root.set(msg.name, buildMessageNode(msg, registry, new HashSet<>()));
+            root.set(msg.name, buildMessageNode(msg, registry, enumDefaults, new HashSet<>()));
         }
 
         return jsonMapper.writeValueAsString(root);
@@ -125,17 +131,30 @@ public class ProtoConverter {
 
     // ── Registration ──────────────────────────────────────────────────────
 
-    private void registerAll(Block msg, Map<String, Block> registry) {
+    private void registerAll(Block msg, Map<String, Block> registry, Map<String, String> enums) {
         registry.put(msg.name, msg);
+        for (Block en : findNamedBlocks(msg.body, "enum")) registerEnum(en, enums);
         for (Block nested : findNamedBlocks(msg.body, "message")) {
-            registerAll(nested, registry);
+            registerAll(nested, registry, enums);
         }
+    }
+
+    /** Registers an enum by name with its first declared value (the proto3 default). */
+    private void registerEnum(Block en, Map<String, String> enums) {
+        String first = "";
+        for (String raw : en.body.split(";")) {
+            String stmt = raw.trim();
+            if (stmt.isEmpty() || IGNORED_STATEMENT.matcher(stmt).matches()) continue;
+            Matcher m = ENUM_VALUE_PATTERN.matcher(stmt);
+            if (m.matches()) { first = m.group(1); break; }
+        }
+        enums.putIfAbsent(en.name, first);
     }
 
     // ── JSON node construction ────────────────────────────────────────────
 
     private ObjectNode buildMessageNode(Block msg, Map<String, Block> registry,
-                                        Set<String> resolving) {
+                                        Map<String, String> enums, Set<String> resolving) {
         ObjectNode node = jsonMapper.createObjectNode();
         if (!resolving.add(msg.name)) return node;
 
@@ -146,20 +165,23 @@ public class ProtoConverter {
             List<Block> oneofs = findNamedBlocks(msg.body, "oneof");
 
             String flatBody = stripBlocks(msg.body, "message", "oneof", "enum");
-            validateMessageBody(msg.name, flatBody);
+            Set<String> seenNumbers = new HashSet<>();
+            validateMessageBody(msg.name, flatBody, seenNumbers);
+            for (Block oneof : oneofs)
+                validateMessageBody(msg.name, oneof.body, seenNumbers);
 
-            addFields(flatBody, node, registry, resolving);
+            addFields(flatBody, node, registry, enums, resolving);
 
             for (Block oneof : oneofs)
-                addFields(oneof.body, node, registry, resolving);
+                addFields(oneof.body, node, registry, enums, resolving);
         } finally {
             resolving.remove(msg.name);
         }
         return node;
     }
 
-    private void addFields(String body, ObjectNode node,
-                           Map<String, Block> registry, Set<String> resolving) {
+    private void addFields(String body, ObjectNode node, Map<String, Block> registry,
+                           Map<String, String> enums, Set<String> resolving) {
         Matcher fm = FIELD_PATTERN.matcher(body);
         while (fm.find()) {
             boolean repeated  = fm.group(1) != null && fm.group(1).trim().equals("repeated");
@@ -172,9 +194,11 @@ public class ProtoConverter {
                 node.putObject(fieldName);
             } else if (SCALAR_TYPES.contains(protoType)) {
                 addScalarDefault(node, fieldName, protoType);
+            } else if (enums.containsKey(protoType)) {
+                node.put(fieldName, enums.get(protoType));
             } else if (registry.containsKey(protoType) && !resolving.contains(protoType)) {
                 node.set(fieldName,
-                      buildMessageNode(registry.get(protoType), registry, resolving));
+                      buildMessageNode(registry.get(protoType), registry, enums, resolving));
             } else {
                 node.putObject(fieldName);
             }
@@ -298,10 +322,10 @@ public class ProtoConverter {
     /**
      * Validates each statement inside a message body so malformed fields fail
      * with a precise error instead of being silently skipped.  Also rejects
-     * duplicate field numbers within the same scope.
+     * duplicate field numbers; {@code seenNumbers} is shared across the flat
+     * body and all oneof bodies of the same message.
      */
-    private void validateMessageBody(String messageName, String body) {
-        Set<String> seenNumbers = new HashSet<>();
+    private void validateMessageBody(String messageName, String body, Set<String> seenNumbers) {
         for (String rawStatement : body.split(";")) {
             String stmt = rawStatement.trim();
             if (stmt.isEmpty()
@@ -386,7 +410,7 @@ public class ProtoConverter {
         if (val == null || val.isNull())   return "string";
         if (val.isBoolean())               return "bool";
         if (val.isInt() || val.isShort())  return "int32";
-        if (val.isLong())                  return "int64";
+        if (val.isLong() || val.isBigInteger()) return "int64";
         if (val.isFloat())                 return "float";
         if (val.isDouble())                return "double";
         if (val.isBigDecimal())            return "double";

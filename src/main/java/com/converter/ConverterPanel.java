@@ -17,6 +17,8 @@
 package com.converter;
 
 import com.converter.converter.*;
+import com.intellij.openapi.Disposable;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.ui.JBColor;
 import com.intellij.util.ui.JBUI;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
@@ -33,16 +35,22 @@ import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
+import java.beans.PropertyChangeListener;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.StringReader;
+import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ConverterPanel {
+public class ConverterPanel implements Disposable {
+
+    private static final Logger LOG = Logger.getInstance(ConverterPanel.class);
 
     private static final Color BG_DARK      = new JBColor(new Color(245, 245, 245), new Color(43,  43,  43));
     private static final Color BG_TOOLBAR   = new JBColor(new Color(235, 237, 240), new Color(55,  58,  60));
@@ -115,6 +123,14 @@ public class ConverterPanel {
 
     private static final long DEFAULT_ROW_WARNING_THRESHOLD = 1_000L;
 
+    /** Files larger than this trigger a confirmation before loading (whole pipeline is in-memory). */
+    private static final long LARGE_FILE_WARNING_BYTES = 10L * 1024 * 1024;
+
+    /** Shared, thread-safe mapper for JSON pretty-printing. */
+    private static final com.fasterxml.jackson.databind.ObjectMapper PRETTY_JSON =
+          new com.fasterxml.jackson.databind.ObjectMapper()
+                .enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT);
+
     private static final int BUTTON_ARC = 8;
     private static final int STATUS_MAX_LEN = 120;
     private static final String ACTION_CONVERT = "convert";
@@ -144,6 +160,8 @@ public class ConverterPanel {
     private JButton convertBtn;
 
     private final AtomicBoolean converting = new AtomicBoolean(false);
+    private final PropertyChangeListener lafListener;
+    private volatile boolean disposed;
 
     private final JsonXmlConverter  jsonXml  = new JsonXmlConverter();
     private final JsonYamlConverter jsonYaml = new JsonYamlConverter();
@@ -309,12 +327,21 @@ public class ConverterPanel {
         outputArea.getDocument().addDocumentListener(countUpdater);
 
         // ── re-apply editor theme when IDE L&F changes ───────────────────
-        UIManager.addPropertyChangeListener(evt -> {
+        // UIManager is static: the listener must be removed in dispose() or
+        // every panel instance leaks for the lifetime of the IDE.
+        lafListener = evt -> {
             if ("lookAndFeel".equals(evt.getPropertyName())) {
                 applyEditorTheme(inputArea);
                 applyEditorTheme(outputArea);
             }
-        });
+        };
+        UIManager.addPropertyChangeListener(lafListener);
+    }
+
+    @Override
+    public void dispose() {
+        disposed = true;
+        UIManager.removePropertyChangeListener(lafListener);
     }
 
     private void installKeyboardShortcuts() {
@@ -545,6 +572,11 @@ public class ConverterPanel {
         if (!converting.compareAndSet(false, true)) return;
 
         final String rawInput  = inputArea.getText();
+        if (rawInput.isBlank()) {
+            converting.set(false);
+            setStatus("Input is empty", false);
+            return;
+        }
         final String inFmt     = (String) inputCombo.getSelectedItem();
         final String outFmt    = (String) outputCombo.getSelectedItem();
         final CsvConverter.CsvMode csvMode = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
@@ -574,9 +606,12 @@ public class ConverterPanel {
                                             JOptionPane.WARNING_MESSAGE);
                                       proceed.set(choice == JOptionPane.OK_OPTION);
                                   });
-                              } catch (Exception ignored) {}
+                              } catch (Exception dialogFailure) {
+                                  LOG.warn("Row-explosion confirmation dialog failed; cancelling conversion",
+                                        dialogFailure);
+                              }
                               if (!proceed.get()) {
-                                  throw new IllegalStateException("Cancelled by user");
+                                  throw new CancellationException("Conversion cancelled");
                               }
                           }
                       }
@@ -589,10 +624,15 @@ public class ConverterPanel {
               .whenComplete((result, error) ->
                     com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
                         converting.set(false);
+                        if (disposed) return;
                         convertBtn.setEnabled(true);
                         if (error != null) {
                             Throwable cause = error.getCause() != null ? error.getCause() : error;
-                            setStatus("Error: " + cause.getMessage(), false);
+                            if (cause instanceof CancellationException) {
+                                setStatusWarn("Conversion cancelled");
+                            } else {
+                                setStatus("Error: " + cause.getMessage(), false);
+                            }
                         } else {
                             outputArea.setSyntaxEditingStyle(syntaxFor(outFmt));
                             outputArea.setText(result);
@@ -644,13 +684,7 @@ public class ConverterPanel {
         try {
             String formatted = switch (fmt) {
                 case FMT_JSON -> prettyJson(autoClose(input));
-                case FMT_XML  -> {
-                    com.fasterxml.jackson.dataformat.xml.XmlMapper xm =
-                          new com.fasterxml.jackson.dataformat.xml.XmlMapper();
-                    xm.enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT);
-                    yield xm.writer().withRootName("root")
-                          .writeValueAsString(xm.readTree(input.getBytes(StandardCharsets.UTF_8)));
-                }
+                case FMT_XML  -> prettyXml(input);
                 case FMT_YAML -> jsonYaml.jsonToYaml(jsonYaml.yamlToJson(input));
                 case FMT_TOML -> toml.jsonToToml(toml.tomlToJson(input));
                 case FMT_CSV  -> {
@@ -681,28 +715,51 @@ public class ConverterPanel {
     }
 
     private void loadFile(File file) {
-        try {
-            String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
-            inputArea.setText(content);
-            inputArea.setCaretPosition(0);
-
-            String ext = getExtension(file.getName()).toLowerCase();
-            String fmt = switch (ext) {
-                case "json"          -> FMT_JSON;
-                case "xml"           -> FMT_XML;
-                case "yaml", "yml"   -> FMT_YAML;
-                case "csv"           -> FMT_CSV;
-                case "toml"          -> FMT_TOML;
-                case "proto"         -> FMT_PROTO;
-                default              -> null;
-            };
-            if (fmt != null) {
-                inputCombo.setSelectedItem(fmt);
-            }
-            setStatus("Loaded " + file.getName(), true);
-        } catch (Exception ex) {
-            setStatus("Failed to open file: " + ex.getMessage(), false);
+        long size = file.length();
+        if (size > LARGE_FILE_WARNING_BYTES) {
+            int choice = JOptionPane.showConfirmDialog(mainPanel,
+                  String.format("%s is %,d MB. Loading large files may be slow. Continue?",
+                        file.getName(), size / (1024 * 1024)),
+                  "Large file", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (choice != JOptionPane.OK_OPTION) return;
         }
+
+        setStatus("Loading " + file.getName() + "…", true);
+        // Read off the EDT so a large or slow-network file cannot freeze the IDE.
+        java.util.concurrent.CompletableFuture
+              .supplyAsync(() -> {
+                  try {
+                      return Files.readString(file.toPath(), StandardCharsets.UTF_8);
+                  } catch (IOException ex) {
+                      throw new java.util.concurrent.CompletionException(ex);
+                  }
+              }, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
+              .whenComplete((content, error) ->
+                    com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
+                        if (disposed) return;
+                        if (error != null) {
+                            Throwable cause = error.getCause() != null ? error.getCause() : error;
+                            setStatus("Failed to open file: " + cause.getMessage(), false);
+                            return;
+                        }
+                        inputArea.setText(content);
+                        inputArea.setCaretPosition(0);
+
+                        String ext = getExtension(file.getName()).toLowerCase();
+                        String fmt = switch (ext) {
+                            case "json"          -> FMT_JSON;
+                            case "xml"           -> FMT_XML;
+                            case "yaml", "yml"   -> FMT_YAML;
+                            case "csv"           -> FMT_CSV;
+                            case "toml"          -> FMT_TOML;
+                            case "proto"         -> FMT_PROTO;
+                            default              -> null;
+                        };
+                        if (fmt != null) {
+                            inputCombo.setSelectedItem(fmt);
+                        }
+                        setStatus("Loaded " + file.getName(), true);
+                    }));
     }
 
     private void doSaveFile() {
@@ -711,11 +768,19 @@ public class ConverterPanel {
 
         JFileChooser fc = new JFileChooser();
         fc.setDialogTitle("Save output");
-        String outFmt = (String) outputCombo.getSelectedItem();
+        // The badge reflects the format of the text actually in the output area;
+        // the combo may have been changed since the last conversion.
+        String outFmt = outputFormatLabel.getText();
         String ext = FORMAT_EXTENSIONS.getOrDefault(outFmt, "txt");
         fc.setSelectedFile(new File("output." + ext));
         if (fc.showSaveDialog(mainPanel) != JFileChooser.APPROVE_OPTION) return;
         File file = fc.getSelectedFile();
+        if (file.exists()) {
+            int choice = JOptionPane.showConfirmDialog(mainPanel,
+                  file.getName() + " already exists. Overwrite?",
+                  "Confirm overwrite", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (choice != JOptionPane.OK_OPTION) return;
+        }
         try {
             Files.writeString(file.toPath(), output, StandardCharsets.UTF_8);
             setStatus("Saved to " + file.getName(), true);
@@ -801,8 +866,14 @@ public class ConverterPanel {
     private void doCopy() {
         String text = outputArea.getText();
         if (!text.isEmpty()) {
-            Toolkit.getDefaultToolkit().getSystemClipboard()
-                  .setContents(new StringSelection(text), null);
+            try {
+                com.intellij.openapi.ide.CopyPasteManager.getInstance()
+                      .setContents(new StringSelection(text));
+            } catch (Throwable t) {
+                // Outside a full IDE (tests, standalone), fall back to the AWT clipboard.
+                Toolkit.getDefaultToolkit().getSystemClipboard()
+                      .setContents(new StringSelection(text), null);
+            }
             setStatus("Output copied to clipboard", true);
         }
     }
@@ -850,10 +921,52 @@ public class ConverterPanel {
 
     // ── Builder helpers ───────────────────────────────────────────────────
     private String prettyJson(String json) throws Exception {
-        com.fasterxml.jackson.databind.ObjectMapper m =
-              new com.fasterxml.jackson.databind.ObjectMapper()
-                    .enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT);
-        return m.writeValueAsString(m.readTree(json));
+        return PRETTY_JSON.writeValueAsString(PRETTY_JSON.readTree(json));
+    }
+
+    /**
+     * Pretty-prints XML via DOM + Transformer so the original root element,
+     * attributes and structure are preserved (Jackson's tree model drops the
+     * root element name). External entities and DTDs are disabled.
+     */
+    private String prettyXml(String xml) throws Exception {
+        javax.xml.parsers.DocumentBuilderFactory dbf =
+              javax.xml.parsers.DocumentBuilderFactory.newInstance();
+        dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        dbf.setExpandEntityReferences(false);
+        org.w3c.dom.Document doc = dbf.newDocumentBuilder()
+              .parse(new org.xml.sax.InputSource(new StringReader(xml)));
+        doc.getDocumentElement().normalize();
+        stripWhitespaceNodes(doc.getDocumentElement());
+
+        javax.xml.transform.TransformerFactory tf =
+              javax.xml.transform.TransformerFactory.newInstance();
+        tf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        tf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "");
+        javax.xml.transform.Transformer t = tf.newTransformer();
+        t.setOutputProperty(javax.xml.transform.OutputKeys.INDENT, "yes");
+        t.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "2");
+        t.setOutputProperty(javax.xml.transform.OutputKeys.OMIT_XML_DECLARATION,
+              xml.stripLeading().startsWith("<?xml") ? "no" : "yes");
+
+        StringWriter out = new StringWriter();
+        t.transform(new javax.xml.transform.dom.DOMSource(doc),
+              new javax.xml.transform.stream.StreamResult(out));
+        return out.toString();
+    }
+
+    /** Removes whitespace-only text nodes so re-indenting doesn't stack blank lines. */
+    private void stripWhitespaceNodes(org.w3c.dom.Node node) {
+        org.w3c.dom.NodeList children = node.getChildNodes();
+        for (int i = children.getLength() - 1; i >= 0; i--) {
+            org.w3c.dom.Node child = children.item(i);
+            if (child.getNodeType() == org.w3c.dom.Node.TEXT_NODE
+                  && child.getTextContent().isBlank()) {
+                node.removeChild(child);
+            } else if (child.getNodeType() == org.w3c.dom.Node.ELEMENT_NODE) {
+                stripWhitespaceNodes(child);
+            }
+        }
     }
 
     private RSyntaxTextArea buildEditor() {
@@ -861,12 +974,23 @@ public class ConverterPanel {
         area.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JSON);
         area.setCodeFoldingEnabled(true);
         area.setAntiAliasingEnabled(true);
-        area.setFont(new Font("JetBrains Mono", Font.PLAIN, 13));
+        area.setFont(editorFont());
         area.setTabSize(2);
         area.setBackground(EDITOR_BG);
         area.setCaretColor(TEXT_BRIGHT);
         area.setSelectionColor(SELECTION_BG);
         return area;
+    }
+
+    /** The user's configured IDE editor font, falling back outside a full IDE. */
+    private static Font editorFont() {
+        try {
+            var scheme = com.intellij.openapi.editor.colors.EditorColorsManager
+                  .getInstance().getGlobalScheme();
+            return new Font(scheme.getEditorFontName(), Font.PLAIN, scheme.getEditorFontSize());
+        } catch (Throwable t) {
+            return new Font("JetBrains Mono", Font.PLAIN, 13);
+        }
     }
 
     private void applyEditorTheme(RSyntaxTextArea area) {
@@ -1043,12 +1167,12 @@ public class ConverterPanel {
     }
 
     private void updateCharCount() {
-        String in  = inputArea.getText();
-        String out = outputArea.getText();
-        long inLines  = in.isEmpty()  ? 0 : in.split("\n", -1).length;
-        long outLines = out.isEmpty() ? 0 : out.split("\n", -1).length;
+        int inLen  = inputArea.getDocument().getLength();
+        int outLen = outputArea.getDocument().getLength();
+        int inLines  = inLen  == 0 ? 0 : inputArea.getLineCount();
+        int outLines = outLen == 0 ? 0 : outputArea.getLineCount();
         charCountLabel.setText(String.format("In: %,d lines  |  Out: %,d lines  |  %,d chars",
-              inLines, outLines, (long) in.length() + out.length()));
+              inLines, outLines, (long) inLen + outLen));
     }
 
     public JPanel getContent() { return mainPanel; }

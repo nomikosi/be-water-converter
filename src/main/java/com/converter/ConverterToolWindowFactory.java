@@ -30,6 +30,8 @@ public class ConverterToolWindowFactory implements ToolWindowFactory {
         ConverterPanel panel = new ConverterPanel();
         ContentFactory cf = ContentFactory.getInstance();
         Content content = cf.createContent(panel.getContent(), "Converter", false);
+        // Dispose the panel with its content so its static UIManager listener is removed.
+        content.setDisposer(panel);
         toolWindow.getContentManager().addContent(content);
     }
 }

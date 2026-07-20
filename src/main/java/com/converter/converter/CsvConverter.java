@@ -143,14 +143,11 @@ public class CsvConverter {
     }
 
     private long estimateFlatFirstRows(JsonNode obj) {
-        // Only the first array-of-objects contributes extra rows; each object
-        // element of that array becomes one row candidate.
+        // Only the first container-array contributes extra rows; every element
+        // of that array (object or not) becomes one row candidate.
         for (Map.Entry<String, JsonNode> e : obj.properties()) {
             if (e.getValue().isArray() && hasObjectElements(e.getValue())) {
-                long count = 0;
-                for (JsonNode item : e.getValue())
-                    if (item.isObject()) count++;
-                return Math.max(1, count);
+                return Math.max(1, e.getValue().size());
             }
         }
         return 1;
@@ -216,6 +213,10 @@ public class CsvConverter {
                             Map<String, String> flat = new LinkedHashMap<>();
                             flattenToCells(item, key, flat);
                             candidates.add(flat);
+                        } else {
+                            Map<String, String> m = new LinkedHashMap<>();
+                            m.put(key, cellValue(item));
+                            candidates.add(m);
                         }
                     }
                     result = crossJoin(result, candidates);
@@ -259,7 +260,7 @@ public class CsvConverter {
                         candidates.addAll(expandCrossJoin(item, key));
                     else {
                         Map<String, String> m = new LinkedHashMap<>();
-                        m.put(key, item.isNull() ? "" : item.asText());
+                        m.put(key, cellValue(item));
                         candidates.add(m);
                     }
                 }
@@ -316,6 +317,12 @@ public class CsvConverter {
         } else {
             out.put(prefix, node.isNull() ? "" : node.asText());
         }
+    }
+
+    /** Single-cell rendering of a leaf value: containers as JSON, null as "". */
+    private String cellValue(JsonNode node) {
+        if (node.isNull()) return "";
+        return node.isContainerNode() ? node.toString() : node.asText();
     }
 
     private boolean hasObjectElements(JsonNode array) {

@@ -86,6 +86,7 @@ public class JavaPojoGenerator {
         StringBuilder sb = new StringBuilder();
         sb.append("import com.fasterxml.jackson.annotation.JsonProperty;\n");
         sb.append("import java.math.BigDecimal;\n");
+        sb.append("import java.math.BigInteger;\n");
         sb.append("import java.util.List;\n");
         if (useLombok) {
             sb.append("import lombok.AllArgsConstructor;\n");
@@ -131,9 +132,17 @@ public class JavaPojoGenerator {
         }
         sb.append("public class ").append(className).append(" {\n\n");
 
+        Set<String> usedNames = new HashSet<>();
         for (Map.Entry<String, JsonNode> e : node.properties()) {
             String originalKey = e.getKey();
             String camelName   = toCamelCase(originalKey);
+            // Two keys may normalise to the same Java name (user_name / userName);
+            // suffix a counter so the generated class still compiles.
+            if (!usedNames.add(camelName)) {
+                int n = 2;
+                while (!usedNames.add(camelName + n)) n++;
+                camelName = camelName + n;
+            }
             String javaType    = resolveJavaType(e.getValue(), originalKey);
             if (!camelName.equals(originalKey)) {
                 sb.append("    @JsonProperty(\"").append(originalKey).append("\")\n");
@@ -149,6 +158,7 @@ public class JavaPojoGenerator {
     private String resolveJavaType(JsonNode node, String fieldName) {
         if (node.isInt() || node.isShort())  return "Integer";
         if (node.isLong())                   return "Long";
+        if (node.isBigInteger())             return "BigInteger";
         if (node.isFloat())                  return "Float";
         if (node.isDouble())                 return "Double";
         if (node.isBigDecimal())             return "BigDecimal";
@@ -157,7 +167,7 @@ public class JavaPojoGenerator {
         if (node.isNull())                   return "Object";
         if (node.isObject())                 return capitalize(toCamelCase(fieldName));
         if (node.isArray()) {
-            if (node.size() == 0) return "List<?>";
+            if (node.size() == 0) return "List<Object>";
             return "List<" + resolveJavaType(node.get(0), fieldName) + ">";
         }
         return "Object";
@@ -171,16 +181,22 @@ public class JavaPojoGenerator {
     private String toCamelCase(String s) {
         if (s == null || s.isEmpty()) return s;
         String[] parts = s.split("[_\\-.]+");
-        String first = parts[0];
-        String head  = first.isEmpty() ? first
-              : Character.toLowerCase(first.charAt(0)) + first.substring(1);
-        StringBuilder sb = new StringBuilder(sanitize(head));
-        for (int i = 1; i < parts.length; i++) {
-            if (!parts[i].isEmpty())
-                sb.append(Character.toUpperCase(parts[i].charAt(0)))
-                      .append(parts[i].substring(1).toLowerCase());
+        StringBuilder sb = new StringBuilder();
+        for (String rawPart : parts) {
+            if (rawPart.isEmpty()) continue;
+            String part = sanitize(rawPart);
+            if (sb.isEmpty()) {
+                sb.append(Character.toLowerCase(part.charAt(0))).append(part.substring(1));
+            } else {
+                sb.append(Character.toUpperCase(part.charAt(0)))
+                      .append(part.substring(1).toLowerCase());
+            }
         }
+        if (sb.isEmpty()) sb.append('_');
         String result = sb.toString();
+        if (Character.isDigit(result.charAt(0))) {
+            result = "_" + result;
+        }
         if (JAVA_KEYWORDS.contains(result)) {
             result = result + "Value";
         }
