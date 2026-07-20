@@ -52,6 +52,28 @@
         </ul>
     ]]></description>
     <change-notes><![CDATA[
+        <h3>1.4.0</h3>
+        <ul>
+            <li><b>Fixed: Format no longer corrupts XML input</b> — pretty-printing now preserves the
+                original root element and attributes instead of renaming the root to <code>&lt;root&gt;</code>.</li>
+            <li><b>Fixed: FLAT_FIRST CSV no longer drops data</b> — non-object elements (primitives, nested
+                arrays) of the expanded array now become rows instead of silently disappearing.</li>
+            <li><b>CSV type inference</b> — CSV input cells that look like numbers, booleans or null become
+                typed JSON values; toggleable via the new <i>Infer types</i> option (leading-zero values
+                like <code>007</code> stay strings).</li>
+            <li><b>Cancellable conversions</b> — the Convert button turns into Cancel while a conversion runs.</li>
+            <li><b>Options persist across restarts</b> — CSV mode, row-warning threshold, Lombok toggle,
+                type inference and split orientation are remembered.</li>
+            <li><b>Better error reporting</b> — multi-line validation errors are shown as an IDE notification
+                balloon instead of being cut off in the status bar.</li>
+            <li><b>Protobuf</b> — enum fields resolve to their first declared value; duplicate field numbers
+                are now also rejected across <code>oneof</code> blocks.</li>
+            <li><b>Java POJO generation</b> — colliding field names are deduplicated, all name segments are
+                sanitized, <code>BigInteger</code> is supported, and empty arrays map to <code>List&lt;Object&gt;</code>.</li>
+            <li><b>UI robustness</b> — file loading moved off the UI thread with a large-file guard, save asks
+                before overwriting, syntax highlighting is disabled for very large outputs, actions are
+                registered in the Keymap for custom shortcuts, and the tool window is available during indexing.</li>
+        </ul>
         <h3>1.3.1</h3>
         <ul>
             <li><b>Updated shortcut documentation</b> — only the confirmed <code>Ctrl+Enter</code> conversion shortcut
@@ -88,6 +110,7 @@
                     anchor="right"
                     icon="/icons/beWater.svg"
                     factoryClass="com.converter.ConverterToolWindowFactory"/>
+        <notificationGroup id="Be Water Converter" displayType="BALLOON"/>
     </extensions>
     <actions>
         <action id="BeWaterConverter.Open"
@@ -97,5 +120,28 @@
                 icon="/icons/beWater.svg">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
+        <!-- Keymap-visible panel actions. No default shortcuts (the panel's own
+             Swing bindings are the defaults); users can assign shortcuts in
+             Settings > Keymap. -->
+        <action id="BeWaterConverter.Convert"
+                class="com.converter.ConverterActions$Convert"
+                text="Be Water: Convert"
+                description="Convert the input to the selected output format"/>
+        <action id="BeWaterConverter.FormatInput"
+                class="com.converter.ConverterActions$FormatInput"
+                text="Be Water: Format Input"
+                description="Pretty-print or canonicalize the input editor content"/>
+        <action id="BeWaterConverter.CopyOutput"
+                class="com.converter.ConverterActions$CopyOutput"
+                text="Be Water: Copy Output"
+                description="Copy the converter output to the clipboard"/>
+        <action id="BeWaterConverter.OpenFile"
+                class="com.converter.ConverterActions$OpenFile"
+                text="Be Water: Open File"
+                description="Load a file into the converter input editor"/>
+        <action id="BeWaterConverter.SaveOutput"
+                class="com.converter.ConverterActions$SaveOutput"
+                text="Be Water: Save Output"
+                description="Save the converter output to a file"/>
     </actions>
 </idea-plugin>

@@ -20,10 +20,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MappingIterator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.csv.CsvMapper;
 import com.fasterxml.jackson.dataformat.csv.CsvSchema;
 
 import java.util.*;
+import java.util.concurrent.CancellationException;
+import java.util.regex.Pattern;
 
 public class CsvConverter {
 
@@ -50,13 +54,65 @@ public class CsvConverter {
 
     // ── CSV → JSON ────────────────────────────────────────────────────────────
 
+    /** Integer without leading zeros ("007" stays a string). */
+    private static final Pattern INT_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
+    /** Decimal / scientific notation with a fraction or exponent part. */
+    private static final Pattern DEC_PATTERN =
+          Pattern.compile("-?(0|[1-9]\\d*)(\\.\\d+([eE][+-]?\\d+)?|[eE][+-]?\\d+)");
+
+    /** Convenience overload — infers scalar types by default. */
     public String csvToJson(String csv) throws Exception {
+        return csvToJson(csv, true);
+    }
+
+    /**
+     * Converts CSV to a JSON array of objects. With {@code inferTypes}, cell
+     * values that look like integers, decimals, booleans or {@code null} become
+     * typed JSON values instead of strings; values with leading zeros stay
+     * strings so identifiers like "007" are not mangled.
+     */
+    public String csvToJson(String csv, boolean inferTypes) throws Exception {
         if (csv == null || csv.isBlank())
             throw new IllegalArgumentException("Input CSV must not be empty");
         CsvSchema schema = CsvSchema.emptySchema().withHeader();
         MappingIterator<Map<String, String>> it =
               csvMapper.readerFor(Map.class).with(schema).readValues(csv);
-        return jsonMapper.writeValueAsString(it.readAll());
+        List<Map<String, String>> rows = it.readAll();
+        if (!inferTypes) return jsonMapper.writeValueAsString(rows);
+
+        ArrayNode arr = jsonMapper.createArrayNode();
+        for (Map<String, String> row : rows) {
+            ObjectNode obj = arr.addObject();
+            for (Map.Entry<String, String> e : row.entrySet()) {
+                obj.set(e.getKey(), inferNode(e.getValue()));
+            }
+        }
+        return jsonMapper.writeValueAsString(arr);
+    }
+
+    private JsonNode inferNode(String value) {
+        var nf = jsonMapper.getNodeFactory();
+        if (value == null) return nf.nullNode();
+        if (value.isEmpty()) return nf.textNode("");
+        switch (value) {
+            case "true"  -> { return nf.booleanNode(true); }
+            case "false" -> { return nf.booleanNode(false); }
+            case "null"  -> { return nf.nullNode(); }
+        }
+        if (INT_PATTERN.matcher(value).matches()) {
+            try {
+                long v = Long.parseLong(value);
+                return (v >= Integer.MIN_VALUE && v <= Integer.MAX_VALUE)
+                      ? nf.numberNode((int) v) : nf.numberNode(v);
+            } catch (NumberFormatException overflow) {
+                return nf.textNode(value);
+            }
+        }
+        if (DEC_PATTERN.matcher(value).matches()) {
+            double d = Double.parseDouble(value);
+            if (!Double.isInfinite(d)) return nf.numberNode(d);
+        }
+        return nf.textNode(value);
     }
 
     // ── JSON → CSV (mode-aware) ───────────────────────────────────────────────
@@ -67,11 +123,14 @@ public class CsvConverter {
     }
 
     public String jsonToCsv(String json, CsvMode mode) throws Exception {
-        JsonNode root = jsonMapper.readTree(json);
+        return jsonToCsv(jsonMapper.readTree(json), mode);
+    }
 
+    /** Overload for callers that already hold a parsed tree (avoids re-parsing). */
+    public String jsonToCsv(JsonNode root, CsvMode mode) throws Exception {
         // Normalise: wrap a bare object in a single-element array
         if (root.isObject()) {
-            com.fasterxml.jackson.databind.node.ArrayNode arr = jsonMapper.createArrayNode();
+            ArrayNode arr = jsonMapper.createArrayNode();
             arr.add(root);
             root = arr;
         }
@@ -123,9 +182,13 @@ public class CsvConverter {
      * The result is capped at {@link #ESTIMATE_CAP}.
      */
     public long estimateRowCount(String json, CsvMode mode) throws Exception {
-        JsonNode root = jsonMapper.readTree(json);
+        return estimateRowCount(jsonMapper.readTree(json), mode);
+    }
+
+    /** Overload for callers that already hold a parsed tree (avoids re-parsing). */
+    public long estimateRowCount(JsonNode root, CsvMode mode) {
         if (root.isObject()) {
-            com.fasterxml.jackson.databind.node.ArrayNode arr = jsonMapper.createArrayNode();
+            ArrayNode arr = jsonMapper.createArrayNode();
             arr.add(root);
             root = arr;
         }
@@ -287,6 +350,10 @@ public class CsvConverter {
     private List<Map<String, String>> crossJoin(List<Map<String, String>> left,
           List<Map<String, String>> right) {
         if (right.isEmpty()) return left;
+        // Cross joins are the only unbounded hot path; honour interruption so
+        // the UI's Cancel action can stop a runaway Cartesian product.
+        if (Thread.currentThread().isInterrupted())
+            throw new CancellationException("Conversion cancelled");
         List<Map<String, String>> product = new ArrayList<>();
         for (Map<String, String> l : left)
             for (Map<String, String> r : right) {

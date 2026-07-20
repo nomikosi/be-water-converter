@@ -52,6 +52,21 @@ public class ConverterPanel implements Disposable {
 
     private static final Logger LOG = Logger.getInstance(ConverterPanel.class);
 
+    /** Client-property key under which the panel registers itself on its root component. */
+    public static final String PANEL_CLIENT_PROPERTY = "beWater.converterPanel";
+
+    private static final String NOTIFICATION_GROUP = "Be Water Converter";
+
+    // PropertiesComponent keys for options persisted across IDE restarts.
+    private static final String PROP_CSV_MODE       = "beWater.csvMode";
+    private static final String PROP_ROW_THRESHOLD  = "beWater.rowThreshold";
+    private static final String PROP_LOMBOK         = "beWater.lombok";
+    private static final String PROP_INFER_TYPES    = "beWater.csvInferTypes";
+    private static final String PROP_SPLIT_VERTICAL = "beWater.splitVertical";
+
+    /** Above this output size, syntax highlighting is disabled to keep the EDT responsive. */
+    private static final int HIGHLIGHT_LIMIT_CHARS = 2_000_000;
+
     private static final Color BG_DARK      = new JBColor(new Color(245, 245, 245), new Color(43,  43,  43));
     private static final Color BG_TOOLBAR   = new JBColor(new Color(235, 237, 240), new Color(55,  58,  60));
     private static final Color BG_LABEL_BAR = new JBColor(new Color(240, 240, 242), new Color(37,  37,  38));
@@ -153,15 +168,20 @@ public class ConverterPanel implements Disposable {
     private final JSpinner  rowThresholdSpinner;
     private final JLabel    rowThresholdLabel;
     private final JCheckBox lombokCheck;
+    private final JCheckBox inferTypesCheck;
     private final JPanel    csvOptions;
+    private final JPanel    csvInputOptions;
     private final JPanel    javaOptions;
     private final JPanel    optionsBar;
     private final JSplitPane splitPane;
     private JButton convertBtn;
+    private JButton splitToggleBtn;
 
+    private final com.intellij.openapi.project.Project project;
     private final AtomicBoolean converting = new AtomicBoolean(false);
     private final PropertyChangeListener lafListener;
     private volatile boolean disposed;
+    private volatile Thread convertWorker;
 
     private final JsonXmlConverter  jsonXml  = new JsonXmlConverter();
     private final JsonYamlConverter jsonYaml = new JsonYamlConverter();
@@ -171,8 +191,14 @@ public class ConverterPanel implements Disposable {
     private final JavaPojoGenerator pojo     = new JavaPojoGenerator();
 
     public ConverterPanel() {
+        this(null);
+    }
+
+    public ConverterPanel(com.intellij.openapi.project.Project project) {
+        this.project = project;
         mainPanel = new JPanel(new BorderLayout(0, 0));
         mainPanel.setBackground(BG_DARK);
+        mainPanel.putClientProperty(PANEL_CLIENT_PROPERTY, this);
 
         inputArea  = buildEditor();
         outputArea = buildEditor();
@@ -238,6 +264,14 @@ public class ConverterPanel implements Disposable {
         lombokCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
         lombokCheck.setFocusPainted(false);
 
+        inferTypesCheck = new JCheckBox("Infer types", true);
+        inferTypesCheck.setToolTipText(
+              "Convert CSV cells that look like numbers, booleans or null into typed JSON values");
+        inferTypesCheck.setOpaque(false);
+        inferTypesCheck.setForeground(TEXT_BRIGHT);
+        inferTypesCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        inferTypesCheck.setFocusPainted(false);
+
         csvOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         csvOptions.setOpaque(false);
         csvOptions.add(toolbarLabel("CSV mode:"));
@@ -248,6 +282,11 @@ public class ConverterPanel implements Disposable {
         rowThresholdLabel.setVisible(false);
         rowThresholdSpinner.setVisible(false);
 
+        csvInputOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        csvInputOptions.setOpaque(false);
+        csvInputOptions.add(toolbarLabel("CSV input:"));
+        csvInputOptions.add(inferTypesCheck);
+
         javaOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         javaOptions.setOpaque(false);
         javaOptions.add(toolbarLabel("Java POJO:"));
@@ -257,6 +296,7 @@ public class ConverterPanel implements Disposable {
         optionsBar.setBackground(BG_LABEL_BAR);
         optionsBar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, BORDER));
         optionsBar.add(toolbarLabel("Options:"));
+        optionsBar.add(csvInputOptions);
         optionsBar.add(csvOptions);
         optionsBar.add(javaOptions);
 
@@ -280,6 +320,7 @@ public class ConverterPanel implements Disposable {
         splitPane.setBorder(null);
         splitPane.setBackground(BG_DARK);
         installDividerUI();
+        applyPersistedOptions();
 
         statusLabel = new JLabel("Ready");
         statusLabel.setForeground(TEXT_DIM);
@@ -342,6 +383,68 @@ public class ConverterPanel implements Disposable {
     public void dispose() {
         disposed = true;
         UIManager.removePropertyChangeListener(lafListener);
+    }
+
+    // ── Public entry points for registered IDE actions ───────────────────
+    public void convert()     { doConvert(); }
+    public void formatInput() { doFormat(); }
+    public void copyOutput()  { doCopy(); }
+    public void openFile()    { doOpenFile(); }
+    public void saveOutput()  { doSaveFile(); }
+
+    // ── Option persistence (application-level, survives IDE restarts) ────
+    private void applyPersistedOptions() {
+        String mode = loadProp(PROP_CSV_MODE);
+        if (mode != null) {
+            try {
+                csvModeCombo.setSelectedItem(CsvConverter.CsvMode.valueOf(mode));
+            } catch (IllegalArgumentException ignored) {}
+        }
+        String threshold = loadProp(PROP_ROW_THRESHOLD);
+        if (threshold != null) {
+            try {
+                long v = Long.parseLong(threshold);
+                if (v >= 10L && v <= 10_000_000L) rowThresholdSpinner.setValue(v);
+            } catch (NumberFormatException ignored) {}
+        }
+        lombokCheck.setSelected("true".equals(loadProp(PROP_LOMBOK)));
+        if (loadProp(PROP_INFER_TYPES) != null) {
+            inferTypesCheck.setSelected("true".equals(loadProp(PROP_INFER_TYPES)));
+        }
+        if ("true".equals(loadProp(PROP_SPLIT_VERTICAL))) {
+            splitPane.setOrientation(JSplitPane.VERTICAL_SPLIT);
+            if (splitToggleBtn != null) {
+                splitToggleBtn.setIcon(com.intellij.icons.AllIcons.Actions.SplitHorizontally);
+            }
+            installDividerUI();
+        }
+
+        csvModeCombo.addActionListener(e -> {
+            Object m = csvModeCombo.getSelectedItem();
+            if (m != null) saveProp(PROP_CSV_MODE, m.toString());
+        });
+        rowThresholdSpinner.addChangeListener(e ->
+              saveProp(PROP_ROW_THRESHOLD, rowThresholdSpinner.getValue().toString()));
+        lombokCheck.addActionListener(e ->
+              saveProp(PROP_LOMBOK, String.valueOf(lombokCheck.isSelected())));
+        inferTypesCheck.addActionListener(e ->
+              saveProp(PROP_INFER_TYPES, String.valueOf(inferTypesCheck.isSelected())));
+    }
+
+    private static String loadProp(String key) {
+        try {
+            return com.intellij.ide.util.PropertiesComponent.getInstance().getValue(key);
+        } catch (Throwable outsideIde) {
+            return null;
+        }
+    }
+
+    private static void saveProp(String key, String value) {
+        try {
+            com.intellij.ide.util.PropertiesComponent.getInstance().setValue(key, value);
+        } catch (Throwable outsideIde) {
+            // Outside a full IDE (tests, standalone) options simply aren't persisted.
+        }
     }
 
     private void installKeyboardShortcuts() {
@@ -413,7 +516,9 @@ public class ConverterPanel implements Disposable {
         convertBtn = buildButton("Convert", ACCENT, ACCENT_HOVER, false);
         convertBtn.setFont(new Font("SansSerif", Font.BOLD, 13));
         convertBtn.setToolTipText("Convert (Ctrl+Enter)");
-        convertBtn.addActionListener(e -> doConvert());
+        convertBtn.addActionListener(e -> {
+            if (converting.get()) cancelConvert(); else doConvert();
+        });
         bar.add(convertBtn);
 
         bar.add(makeSep());
@@ -473,7 +578,9 @@ public class ConverterPanel implements Disposable {
                   : com.intellij.icons.AllIcons.Actions.SplitVertically);
             installDividerUI();
             splitPane.setDividerLocation(0.5);
+            saveProp(PROP_SPLIT_VERTICAL, String.valueOf(wasHorizontal));
         });
+        splitToggleBtn = btn;
         return btn;
     }
 
@@ -551,11 +658,14 @@ public class ConverterPanel implements Disposable {
     // ── Conversion-specific options visibility ────────────────────────────
     private void updateConversionOptions() {
         String outFmt = (String) outputCombo.getSelectedItem();
-        boolean isCsv  = FMT_CSV.equals(outFmt);
-        boolean isJava = FMT_JAVA.equals(outFmt);
-        csvOptions.setVisible(isCsv);
+        String inFmt  = (String) inputCombo.getSelectedItem();
+        boolean isCsvOut = FMT_CSV.equals(outFmt);
+        boolean isJava   = FMT_JAVA.equals(outFmt);
+        boolean isCsvIn  = FMT_CSV.equals(inFmt);
+        csvOptions.setVisible(isCsvOut);
+        csvInputOptions.setVisible(isCsvIn);
         javaOptions.setVisible(isJava);
-        optionsBar.setVisible(isCsv || isJava);
+        optionsBar.setVisible(isCsvOut || isJava || isCsvIn);
         optionsBar.revalidate();
         optionsBar.repaint();
     }
@@ -583,16 +693,23 @@ public class ConverterPanel implements Disposable {
         final boolean useLombok = lombokCheck.isSelected();
         final long rowWarningThreshold = ((Number) rowThresholdSpinner.getValue()).longValue();
 
-        convertBtn.setEnabled(false);
+        final boolean inferCsvTypes = inferTypesCheck.isSelected();
+
+        convertBtn.setText("Cancel");
+        convertBtn.setToolTipText("Cancel the running conversion");
         setStatus("Converting\u2026", true);
 
         java.util.concurrent.CompletableFuture
               .supplyAsync(() -> {
+                  convertWorker = Thread.currentThread();
                   try {
-                      String asJson = normalizeToJson(rawInput, inFmt);
+                      String asJson = normalizeToJson(rawInput, inFmt, inferCsvTypes);
+                      if (Thread.currentThread().isInterrupted())
+                          throw new CancellationException("Conversion cancelled");
 
                       if (FMT_CSV.equals(outFmt) && csvMode == CsvConverter.CsvMode.CROSS_JOIN) {
-                          long estimate = csv.estimateRowCount(asJson, csvMode);
+                          com.fasterxml.jackson.databind.JsonNode pivot = PRETTY_JSON.readTree(asJson);
+                          long estimate = csv.estimateRowCount(pivot, csvMode);
                           if (estimate > rowWarningThreshold) {
                               final long est = estimate;
                               java.util.concurrent.atomic.AtomicBoolean proceed =
@@ -614,32 +731,41 @@ public class ConverterPanel implements Disposable {
                                   throw new CancellationException("Conversion cancelled");
                               }
                           }
+                          return csv.jsonToCsv(pivot, csvMode);
                       }
 
                       return renderFromJson(asJson, outFmt, csvMode, useLombok);
                   } catch (Exception ex) {
                       throw new java.util.concurrent.CompletionException(ex);
+                  } finally {
+                      convertWorker = null;
+                      Thread.interrupted(); // clear a late cancel so the pooled thread stays clean
                   }
               }, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
               .whenComplete((result, error) ->
                     com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
                         converting.set(false);
                         if (disposed) return;
-                        convertBtn.setEnabled(true);
+                        convertBtn.setText("Convert");
+                        convertBtn.setToolTipText("Convert (Ctrl+Enter)");
                         if (error != null) {
                             Throwable cause = error.getCause() != null ? error.getCause() : error;
                             if (cause instanceof CancellationException) {
                                 setStatusWarn("Conversion cancelled");
                             } else {
-                                setStatus("Error: " + cause.getMessage(), false);
+                                showError(cause.getMessage());
                             }
                         } else {
-                            outputArea.setSyntaxEditingStyle(syntaxFor(outFmt));
+                            boolean huge = result.length() > HIGHLIGHT_LIMIT_CHARS;
+                            outputArea.setSyntaxEditingStyle(
+                                  huge ? SyntaxConstants.SYNTAX_STYLE_NONE : syntaxFor(outFmt));
+                            outputArea.setCodeFoldingEnabled(!huge);
                             outputArea.setText(result);
                             outputArea.setCaretPosition(0);
                             outputFormatLabel.setText(outFmt);
                             outputFormatLabel.repaint();
-                            setStatus("Converted " + inFmt + " \u2192 " + outFmt, true);
+                            setStatus("Converted " + inFmt + " \u2192 " + outFmt
+                                  + (huge ? "  (syntax highlighting off for large output)" : ""), true);
                         }
                     }));
     }
@@ -648,17 +774,27 @@ public class ConverterPanel implements Disposable {
      * Normalise input to JSON as the internal pivot format.
      * autoClose is applied once for JSON input to repair truncated brackets.
      */
-    private String normalizeToJson(String rawInput, String inFmt) throws Exception {
+    private String normalizeToJson(String rawInput, String inFmt, boolean inferCsvTypes)
+          throws Exception {
         String input = (inFmt.equals(FMT_JSON)) ? autoClose(rawInput) : rawInput;
         return switch (inFmt) {
             case FMT_JSON  -> input;
             case FMT_XML   -> jsonXml.xmlToJson(input);
             case FMT_YAML  -> jsonYaml.yamlToJson(input);
-            case FMT_CSV   -> csv.csvToJson(input);
+            case FMT_CSV   -> csv.csvToJson(input, inferCsvTypes);
             case FMT_TOML  -> toml.tomlToJson(input);
             case FMT_PROTO -> proto.protoToJson(input);
             default -> throw new UnsupportedOperationException("Unknown input: " + inFmt);
         };
+    }
+
+    /** Interrupts the background conversion worker, if any. */
+    private void cancelConvert() {
+        Thread worker = convertWorker;
+        if (worker != null) {
+            worker.interrupt();
+            setStatusWarn("Cancelling…");
+        }
     }
 
     /** JSON pivot -> desired output format. */
@@ -688,7 +824,7 @@ public class ConverterPanel implements Disposable {
                 case FMT_YAML -> jsonYaml.jsonToYaml(jsonYaml.yamlToJson(input));
                 case FMT_TOML -> toml.jsonToToml(toml.tomlToJson(input));
                 case FMT_CSV  -> {
-                    String json = csv.csvToJson(input);
+                    String json = csv.csvToJson(input, inferTypesCheck.isSelected());
                     yield csv.jsonToCsv(json, CsvConverter.CsvMode.FLAT_FIRST);
                 }
                 case FMT_PROTO -> input.replaceAll("[ \t]+\n", "\n")
@@ -699,7 +835,7 @@ public class ConverterPanel implements Disposable {
             inputArea.setCaretPosition(0);
             setStatus("\u2713  Input formatted", true);
         } catch (Exception ex) {
-            setStatus("\u2717  Format failed: " + ex.getMessage(), false);
+            showError("Format failed: " + ex.getMessage());
         }
     }
 
@@ -915,6 +1051,10 @@ public class ConverterPanel implements Disposable {
             else if (c == '}' || c == ']') { if (!stack.isEmpty()) stack.pop(); }
         }
         StringBuilder sb = new StringBuilder(json);
+        // Close a dangling escape and an unterminated string before brackets,
+        // so truncated input like {"name": "Al still becomes parseable.
+        if (escape)   sb.append('\\');
+        if (inString) sb.append('"');
         while (!stack.isEmpty()) sb.append(stack.pop());
         return sb.toString();
     }
@@ -1142,6 +1282,39 @@ public class ConverterPanel implements Disposable {
             case FMT_CSV   -> SyntaxConstants.SYNTAX_STYLE_CSV;
             default        -> SyntaxConstants.SYNTAX_STYLE_NONE;
         };
+    }
+
+    /**
+     * Shows an error in the status bar. Multi-line messages (e.g. Proto
+     * validation errors with examples) don't render in a JLabel, so only the
+     * first line goes to the status bar; the full text is delivered as an IDE
+     * notification balloon and as the status label's tooltip.
+     */
+    private void showError(String message) {
+        if (message == null || message.isBlank()) message = "Unknown error";
+        List<String> lines = message.lines().toList();
+        String first = lines.get(0);
+        setStatus("Error: " + first + (lines.size() > 1 ? " …" : ""), false);
+        if (lines.size() > 1) {
+            statusLabel.setToolTipText("<html>" + escapeHtml(message).replace("\n", "<br>") + "</html>");
+            notifyError(message);
+        }
+    }
+
+    private void notifyError(String message) {
+        try {
+            com.intellij.notification.NotificationGroupManager.getInstance()
+                  .getNotificationGroup(NOTIFICATION_GROUP)
+                  .createNotification("Conversion failed", escapeHtml(message).replace("\n", "<br>"),
+                        com.intellij.notification.NotificationType.ERROR)
+                  .notify(project);
+        } catch (Throwable outsideIde) {
+            LOG.warn("Could not show error notification", outsideIde);
+        }
+    }
+
+    private static String escapeHtml(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private void setStatus(String msg, boolean ok) {

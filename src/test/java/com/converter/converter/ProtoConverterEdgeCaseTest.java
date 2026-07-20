@@ -71,6 +71,37 @@ class ProtoConverterEdgeCaseTest {
         assertThatCode(() -> converter.protoToJson(proto)).doesNotThrowAnyException();
     }
 
+    @Test @DisplayName("Proto->JSON: enum field defaults to its first declared value")
+    void protoEnumFieldDefaultValue() throws Exception {
+        String proto = "enum Status { UNKNOWN = 0; ACTIVE = 1; }\n" +
+            "message User { string name = 1; Status status = 2; }";
+        JsonNode result = json.readTree(converter.protoToJson(proto));
+        assertThat(result.path("User").path("status").asText()).isEqualTo("UNKNOWN");
+    }
+
+    @Test @DisplayName("Proto->JSON: nested enum inside a message also resolves to first value")
+    void protoNestedEnumDefaultValue() throws Exception {
+        String proto = "message Order {\n" +
+            "  enum State { CREATED = 0; SHIPPED = 1; }\n" +
+            "  State state = 1;\n" +
+            "}";
+        JsonNode result = json.readTree(converter.protoToJson(proto));
+        assertThat(result.path("Order").path("state").asText()).isEqualTo("CREATED");
+    }
+
+    @Test @DisplayName("Proto->JSON: duplicate field number across oneof is rejected")
+    void duplicateNumberAcrossOneofRejected() {
+        String proto = "message M {\n" +
+            "  string a = 1;\n" +
+            "  oneof choice {\n" +
+            "    string b = 1;\n" +
+            "  }\n" +
+            "}";
+        assertThatThrownBy(() -> converter.protoToJson(proto))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("Duplicate field number 1");
+    }
+
     @Test @DisplayName("JSON->Proto: integer field that looks like enum produces valid proto")
     void jsonToProtoEnumLike() throws Exception {
         String result = converter.jsonToProto("{\"name\":\"Alice\",\"statusCode\":1}");

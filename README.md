@@ -63,7 +63,11 @@ The plugin is registered through `ConverterToolWindowFactory`, which mounts a
 `ConverterPanel` as tool-window content. The panel contains split editors, format
 selectors, a swap button between the From/To selectors, status feedback, and one-click
 actions for conversion, formatting, file open/save, and more. The output editor's syntax
-mode and format badge update automatically after each successful conversion. Swap is
+mode and format badge update automatically after each successful conversion. Conversions
+run in the background and can be cancelled — the Convert button turns into **Cancel**
+while one is running. Multi-line validation errors are delivered as IDE notification
+balloons (the status bar shows the first line). Very large outputs are rendered with
+syntax highlighting disabled to keep the editor responsive. Swap is
 available when the current output format is also a supported input format; generated
 Java POJO output is intentionally output-only.
 
@@ -74,7 +78,10 @@ Java POJO output is intentionally output-only.
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Convert input to selected output format |
 
 This shortcut is active while focus is inside the Be Water tool window. Other actions are
-available from the toolbar buttons.
+available from the toolbar buttons. The main operations (Convert, Format Input, Copy
+Output, Open File, Save Output) are also registered as IDE actions, so you can find them
+via **Find Action** and assign your own shortcuts in **Settings → Keymap** (search for
+"Be Water").
 
 ### File import and export
 
@@ -93,18 +100,30 @@ recover truncated input during interactive editing.
 
 ### Conversion-specific options bar
 
-When the selected output format has extra settings, a dedicated options bar appears below
-the toolbar. CSV output shows a mode selector with a live hint; Java POJO output shows a
-Lombok toggle. The bar hides itself when the current conversion has no extra settings.
+When the selected input or output format has extra settings, a dedicated options bar
+appears below the toolbar. CSV output shows a mode selector with a live hint; CSV input
+shows an **Infer types** toggle; Java POJO output shows a Lombok toggle. The bar hides
+itself when the current conversion has no extra settings. All option values (CSV mode,
+row-warning threshold, Lombok, type inference, split orientation) are persisted across
+IDE restarts.
+
+### CSV type inference
+
+When CSV is the input format, cell values that look like integers, decimals, booleans, or
+`null` are converted into typed JSON values by default, so `age,30` becomes `"age": 30`
+instead of `"age": "30"`. Values with leading zeros (`007`, `01234`) and integers too
+large for 64 bits stay strings, so identifiers are never mangled. Disable the **Infer
+types** checkbox to keep every cell a string.
 
 ### CSV export modes
 
 CSV generation supports two expansion modes:
 
-- **`FLAT_FIRST`** — expands only the first array-of-objects into rows; later object
-  arrays are serialized into a single JSON string cell. Nested objects are flattened with
-  dot notation and primitive arrays are joined into comma-separated cells. This is the
-  safe default for nested documents.
+- **`FLAT_FIRST`** — expands only the first container array into rows (every element of
+  that array becomes a row: objects are flattened, primitives and nested arrays become
+  single-cell rows); later object arrays are serialized into a single JSON string cell.
+  Nested objects are flattened with dot notation and primitive arrays are joined into
+  comma-separated cells. This is the safe default for nested documents.
 - **`CROSS_JOIN`** — performs a full Cartesian product across all object arrays, so
   arrays of sizes s1 × s2 × … × sN produce that many rows. Useful for fully denormalized
   tabular exports, but row counts can explode; conversions estimated to exceed the
@@ -169,7 +188,10 @@ The Protobuf converter works structurally in both directions without invoking `p
   `message` definitions, `oneof` blocks, and `enum` blocks are handled correctly.
   Fields whose type matches a known message name are resolved to nested JSON objects
   with that message's default structure, rather than producing empty placeholders.
-  `oneof` fields are included alongside regular fields with their typed defaults.
+  Fields typed with a known `enum` resolve to the enum's first declared value (the
+  proto3 default). `oneof` fields are included alongside regular fields with their
+  typed defaults, and duplicate field numbers are rejected across the whole message,
+  including `oneof` blocks.
 - **`jsonToProto`** walks a JSON tree and emits a proto3 schema with inline nested
   messages and repeated fields.
 
@@ -278,7 +300,7 @@ against a range of IDE builds before publishing, run `gradle verifyPlugin`.
 
 | Property | Value |
 |---|---|
-| Plugin version | 1.3.1 |
+| Plugin version | 1.4.0 |
 | Minimum IDE build | 243 (IntelliJ IDEA 2024.3) |
 | Maximum IDE build | Open-ended |
 | Java | 21 |
@@ -294,9 +316,8 @@ against a range of IDE builds before publishing, run `gradle verifyPlugin`.
 
 ## Roadmap ideas
 
-- Remember option selections (CSV mode, Lombok toggle, row threshold) across IDE restarts.
 - Conversion history or undo support.
-- Conversion cancel button for long-running operations.
+- Configurable CSV type-inference rules (e.g. date detection).
 
 ## License
 

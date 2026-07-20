@@ -50,6 +50,42 @@ class JavaPojoGeneratorEdgeCaseTest {
         assertThatCode(() -> generator.fromJson("{\"int\":5}")).doesNotThrowAnyException();
     }
 
+    // ── Name collisions and sanitization (v1.4.0 regressions) ────────────
+
+    @Test @DisplayName("JSON->POJO: keys normalising to the same field name are deduplicated")
+    void collidingFieldNamesDeduplicated() throws Exception {
+        String result = generator.fromJson("{\"user_name\":\"a\",\"userName\":\"b\"}");
+        assertThat(result).contains("private String userName;")
+              .contains("private String userName2;");
+    }
+
+    @Test @DisplayName("JSON->POJO: key starting with a digit becomes a valid identifier")
+    void digitLeadingKey() throws Exception {
+        String result = generator.fromJson("{\"1st_place\":\"gold\"}");
+        assertThat(result).doesNotContain("private String 1st");
+        assertThat(result).contains("private String _1stPlace;");
+    }
+
+    @Test @DisplayName("JSON->POJO: invalid characters in every segment are sanitized")
+    void invalidCharsInLaterSegments() throws Exception {
+        String result = generator.fromJson("{\"foo.bar!\":1}");
+        // The @JsonProperty annotation keeps the original key; the field name must be clean.
+        assertThat(result).contains("private Integer fooBar_;");
+        assertThat(result).contains("@JsonProperty(\"foo.bar!\")");
+    }
+
+    @Test @DisplayName("JSON->POJO: empty array maps to List<Object>, not List<?>")
+    void emptyArrayIsListObject() throws Exception {
+        String result = generator.fromJson("{\"items\":[]}");
+        assertThat(result).contains("List<Object> items").doesNotContain("List<?>");
+    }
+
+    @Test @DisplayName("JSON->POJO: integer beyond Long range maps to BigInteger")
+    void bigIntegerSupported() throws Exception {
+        String result = generator.fromJson("{\"id\":99999999999999999999999999}");
+        assertThat(result).contains("BigInteger id").contains("import java.math.BigInteger;");
+    }
+
     // ── Field name transformations ────────────────────────────────────────
 
     @Test @DisplayName("JSON->POJO: kebab-case field converted to camelCase")

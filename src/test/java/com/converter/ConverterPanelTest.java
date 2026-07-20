@@ -77,6 +77,26 @@ class ConverterPanelTest {
         });
     }
 
+    @Test
+    void autoCloseRepairsUnterminatedStringsAndBrackets() throws Exception {
+        runOnEdt(() -> {
+            ConverterPanel panel = new ConverterPanel();
+            Method autoClose = ConverterPanel.class.getDeclaredMethod("autoClose", String.class);
+            autoClose.setAccessible(true);
+
+            String repaired = (String) autoClose.invoke(panel, "{\"name\": \"Al");
+            assertThat(repaired).isEqualTo("{\"name\": \"Al\"}");
+            // Repaired output must be parseable JSON.
+            new com.fasterxml.jackson.databind.ObjectMapper().readTree(repaired);
+
+            String bracketsOnly = (String) autoClose.invoke(panel, "{\"a\": [1, 2");
+            assertThat(bracketsOnly).isEqualTo("{\"a\": [1, 2]}");
+
+            String danglingEscape = (String) autoClose.invoke(panel, "{\"path\": \"C:\\");
+            new com.fasterxml.jackson.databind.ObjectMapper().readTree(danglingEscape);
+        });
+    }
+
     private static List<Shortcut> documentedShortcuts() {
         return List.of(
               new Shortcut(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK),

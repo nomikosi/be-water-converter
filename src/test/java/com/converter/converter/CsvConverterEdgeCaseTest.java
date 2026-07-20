@@ -115,18 +115,74 @@ class CsvConverterEdgeCaseTest {
 
     // ── Numeric strings ───────────────────────────────────────────────────────
 
-    @Test @DisplayName("CSV->JSON: numeric-looking values preserved")
+    @Test @DisplayName("CSV->JSON: numeric-looking values become typed JSON numbers by default")
     void numericLookingValues() throws Exception {
         String   csv    = "zip,score,price\n10001,99,3.14\n";
         JsonNode result = json.readTree(converter.csvToJson(csv));
-        assertThat(result.get(0).get("zip").asText()).isEqualTo("10001");
+        assertThat(result.get(0).get("zip").intValue()).isEqualTo(10001);
+        assertThat(result.get(0).get("score").isInt()).isTrue();
+        assertThat(result.get(0).get("price").doubleValue()).isEqualTo(3.14);
     }
 
-    @Test @DisplayName("CSV->JSON: leading-zero value not truncated")
+    @Test @DisplayName("CSV->JSON: type inference can be disabled — everything stays a string")
+    void inferenceDisabledKeepsStrings() throws Exception {
+        String   csv    = "zip,score,flag\n10001,99,true\n";
+        JsonNode result = json.readTree(converter.csvToJson(csv, false));
+        assertThat(result.get(0).get("zip").isTextual()).isTrue();
+        assertThat(result.get(0).get("score").isTextual()).isTrue();
+        assertThat(result.get(0).get("flag").isTextual()).isTrue();
+    }
+
+    @Test @DisplayName("CSV->JSON: booleans and null inferred, plain text untouched")
+    void booleanAndNullInference() throws Exception {
+        String   csv    = "active,gone,name\ntrue,null,Alice\n";
+        JsonNode row    = json.readTree(converter.csvToJson(csv)).get(0);
+        assertThat(row.get("active").isBoolean()).isTrue();
+        assertThat(row.get("active").booleanValue()).isTrue();
+        assertThat(row.get("gone").isNull()).isTrue();
+        assertThat(row.get("name").isTextual()).isTrue();
+    }
+
+    @Test @DisplayName("CSV->JSON: leading-zero value stays a string and is not truncated")
     void leadingZeroPreserved() throws Exception {
         String   csv    = "zip,name\n01234,Springfield\n";
         JsonNode result = json.readTree(converter.csvToJson(csv));
+        assertThat(result.get(0).get("zip").isTextual()).isTrue();
         assertThat(result.get(0).get("zip").asText()).isEqualTo("01234");
+    }
+
+    @Test @DisplayName("CSV->JSON: integer larger than Long stays a string")
+    void hugeIntegerStaysString() throws Exception {
+        String   csv    = "id\n99999999999999999999999999\n";
+        JsonNode result = json.readTree(converter.csvToJson(csv));
+        assertThat(result.get(0).get("id").isTextual()).isTrue();
+    }
+
+    // ── FLAT_FIRST mixed-array regression (v1.4.0) ────────────────────────────
+
+    @Test @DisplayName("JSON->CSV FLAT_FIRST: primitive elements of the expanded array become rows")
+    void flatFirstMixedArrayKeepsPrimitives() throws Exception {
+        String input  = "{\"values\":[{\"v\":\"obj1\"},\"primitive\",{\"v\":\"obj2\"}]}";
+        String result = converter.jsonToCsv(input, CsvConverter.CsvMode.FLAT_FIRST);
+        assertThat(result).contains("obj1").contains("primitive").contains("obj2");
+        assertThat(result.trim().split("\n")).hasSize(4); // header + 3 rows
+    }
+
+    @Test @DisplayName("JSON->CSV FLAT_FIRST: array-of-arrays is not silently dropped")
+    void flatFirstArrayOfArraysNotDropped() throws Exception {
+        String input  = "{\"id\":1,\"matrix\":[[1,2],[3,4]]}";
+        String result = converter.jsonToCsv(input, CsvConverter.CsvMode.FLAT_FIRST);
+        assertThat(result).contains("matrix");
+        assertThat(result).contains("[1,2]").contains("[3,4]");
+    }
+
+    @Test @DisplayName("FLAT_FIRST: row estimate matches actual rows for mixed arrays")
+    void flatFirstMixedArrayEstimateMatches() throws Exception {
+        String input = "{\"values\":[{\"v\":\"obj1\"},\"primitive\",{\"v\":\"obj2\"}]}";
+        String csvOut = converter.jsonToCsv(input, CsvConverter.CsvMode.FLAT_FIRST);
+        long actualRows = csvOut.strip().split("\n").length - 1;
+        assertThat(converter.estimateRowCount(input, CsvConverter.CsvMode.FLAT_FIRST))
+              .isEqualTo(actualRows);
     }
 
     // ── Wide table ────────────────────────────────────────────────────────────

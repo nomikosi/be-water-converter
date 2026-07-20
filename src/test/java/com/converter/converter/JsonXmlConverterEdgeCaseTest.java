@@ -142,7 +142,8 @@ class JsonXmlConverterEdgeCaseTest {
         JsonNode result = json.readTree(converter.xmlToJson(xml));
         JsonNode items = result.get("item");
         assertThat(items).isNotNull();
-        assertThat(items.isArray() || items.size() > 0).isTrue();
+        assertThat(items.isArray()).isTrue();
+        assertThat(items).hasSize(3);
     }
 
     // ── XML with declaration ──────────────────────────────────────────────
