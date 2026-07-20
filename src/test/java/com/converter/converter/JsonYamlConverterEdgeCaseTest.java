@@ -272,6 +272,31 @@ class JsonYamlConverterEdgeCaseTest {
         assertThat(result.isObject()).isTrue();
     }
 
+    // ── Security posture (pinned so a SnakeYAML upgrade cannot regress it) ──
+
+    @Test @DisplayName("YAML->JSON: alias-heavy input does not expand exponentially")
+    void aliasBombDoesNotExplode() {
+        // 9 levels, each referencing the previous 9 times — naive expansion
+        // would be 9^9 elements. Must either be rejected or complete quickly
+        // with bounded output.
+        StringBuilder bomb = new StringBuilder("a: &a [\"x\",\"x\",\"x\",\"x\",\"x\",\"x\",\"x\",\"x\",\"x\"]\n");
+        char prev = 'a';
+        for (char c = 'b'; c <= 'j'; c++) {
+            bomb.append(c).append(": &").append(c).append(" [");
+            for (int i = 0; i < 9; i++) bomb.append(i > 0 ? "," : "").append("*").append(prev);
+            bomb.append("]\n");
+            prev = c;
+        }
+        long start = System.currentTimeMillis();
+        try {
+            String result = converter.yamlToJson(bomb.toString());
+            assertThat(result.length()).isLessThan(1_000_000);
+        } catch (Exception rejected) {
+            // Outright rejection is also an acceptable outcome.
+        }
+        assertThat(System.currentTimeMillis() - start).isLessThan(10_000);
+    }
+
 // ── Tab indentation ───────────────────────────────────────────────────
 
     @Test @DisplayName("YAML->JSON: tab-indented YAML throws a descriptive error (tabs not allowed in YAML)")

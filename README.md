@@ -347,6 +347,9 @@ GitHub release. Publishing requires a `PUBLISH_TOKEN` repository secret containi
 
 - Converters are structural rather than semantic: generated Protobuf and Java output is a
   starting point, not a finalized contract or domain model.
+- TOML has no null type: JSON `null` values become empty strings (`''`) in TOML output.
+  Top-level arrays and scalars are wrapped under an `items` / `value` key, since a TOML
+  document must be a table.
 - JSON auto-close is intentionally lenient and may repair malformed JSON into a parseable
   shape that differs from the original intent.
 - `CROSS_JOIN` CSV exports can grow very quickly with multiple nested arrays; prefer

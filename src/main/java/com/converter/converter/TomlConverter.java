@@ -41,6 +41,16 @@ public class TomlConverter {
         if (json == null || json.isBlank())
             throw new IllegalArgumentException("Input JSON must not be empty");
         JsonNode node = jsonMapper.readTree(json);
+
+        // TOML documents are tables: a bare array or scalar root would render
+        // as a key-value pair with an EMPTY key (" = [...]"), which is invalid
+        // TOML. Wrap them under a named key, mirroring the XML converter.
+        if (node.isArray()) {
+            node = jsonMapper.createObjectNode().set("items", node);
+        } else if (!node.isObject()) {
+            node = jsonMapper.createObjectNode().set("value", node);
+        }
+
         return tomlMapper.writeValueAsString(node);
     }
 }

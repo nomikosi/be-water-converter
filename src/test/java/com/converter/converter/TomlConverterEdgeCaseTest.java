@@ -287,22 +287,32 @@ class TomlConverterEdgeCaseTest {
 
 // ── JSON->TOML boundary cases ─────────────────────────────────────────
 
-    @Test @DisplayName("JSON->TOML: null value — throws or is omitted (TOML has no null)")
-    void jsonToTomlNullValue() {
-        assertThatCode(() -> converter.jsonToToml("{\"name\":\"Alice\",\"middle\":null}"))
-              .satisfiesAnyOf(
-                    t -> { /* null field omitted, output still contains name */ },
-                    t -> assertThat(t).isInstanceOf(Exception.class)
-              );
+    @Test @DisplayName("JSON->TOML: null becomes an empty string (TOML has no null) and round-trips")
+    void jsonToTomlNullValue() throws Exception {
+        String toml = converter.jsonToToml("{\"name\":\"Alice\",\"middle\":null}");
+        assertThat(toml).contains("name").contains("Alice");
+        // Pinned: Jackson renders JSON null as '' — a Jackson behavior change
+        // here should be a conscious decision, not a silent one.
+        var back = new com.fasterxml.jackson.databind.ObjectMapper()
+              .readTree(converter.tomlToJson(toml));
+        assertThat(back.get("middle").asText()).isEmpty();
     }
 
-    @Test @DisplayName("JSON->TOML: top-level array — throws descriptively (TOML cannot represent bare array)")
-    void jsonToTomlTopLevelArray() {
-        assertThatCode(() -> converter.jsonToToml("[{\"id\":1},{\"id\":2}]"))
-              .satisfiesAnyOf(
-                    t -> { /* handled gracefully */ },
-                    t -> assertThat(t).isInstanceOf(Exception.class)
-              );
+    @Test @DisplayName("JSON->TOML: top-level array is wrapped under 'items' and round-trips")
+    void jsonToTomlTopLevelArray() throws Exception {
+        String toml = converter.jsonToToml("[{\"id\":1},{\"id\":2}]");
+        assertThat(toml).contains("items");
+        // The unwrapped form ' = [...]' is invalid TOML — parsing back must work.
+        var back = new com.fasterxml.jackson.databind.ObjectMapper()
+              .readTree(converter.tomlToJson(toml));
+        assertThat(back.get("items")).hasSize(2);
+        assertThat(back.get("items").get(0).get("id").asInt()).isEqualTo(1);
+    }
+
+    @Test @DisplayName("JSON->TOML: scalar root is wrapped under 'value' and round-trips")
+    void jsonToTomlScalarRoot() throws Exception {
+        String toml = converter.jsonToToml("42");
+        assertThatCode(() -> converter.tomlToJson(toml)).doesNotThrowAnyException();
     }
 
 // ── Null / blank input ────────────────────────────────────────────────

@@ -108,7 +108,11 @@ class CrossFormatPipelineTest {
     @Test @DisplayName("CSV->TOML: via JSON hub")
     void csvToToml() throws Exception {
         String tomlStr = toml.jsonToToml(csv.csvToJson("key,value\nalpha,1\nbeta,2\n"));
-        assertThat(tomlStr).isNotBlank();
+        // Must be VALID TOML that parses back — CSV yields a top-level array,
+        // which unwrapped would render as invalid ' = [...]' TOML.
+        var back = om.readTree(toml.tomlToJson(tomlStr));
+        assertThat(back.get("items")).hasSize(2);
+        assertThat(tomlStr).contains("alpha").contains("beta");
     }
 
     @Test @DisplayName("TOML->YAML: via JSON hub")

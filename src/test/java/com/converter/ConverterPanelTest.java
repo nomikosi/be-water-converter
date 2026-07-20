@@ -80,7 +80,9 @@ class ConverterPanelTest {
     private static List<Shortcut> documentedShortcuts() {
         return List.of(
               new Shortcut(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK),
-                    "convert")
+                    "convert"),
+              new Shortcut(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK),
+                    "find")
         );
     }
 

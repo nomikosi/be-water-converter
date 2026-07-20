@@ -2,6 +2,7 @@ import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
 
 plugins {
     id 'java'
+    id 'jacoco'
     id 'org.jetbrains.intellij.platform' version '2.16.0'
 }
 
@@ -40,6 +41,9 @@ test {
     useJUnitPlatform()
     jvmArgs '-Dfile.encoding=UTF-8'
     include '**/*Test.class'
+    // No coverage agent on the IntelliJ-platform test JVM; coverage comes
+    // from the plain-JVM unitTest task instead.
+    jacoco { enabled = false }
 }
 
 intellijPlatform {
@@ -85,6 +89,20 @@ tasks.register('unitTest', Test) {
 
     failFast = false
 }
+
+// ── Coverage (pure unit tests only) ────────────────────────────────────────
+tasks.register('jacocoUnitTestReport', JacocoReport) {
+    description = 'Coverage report for the pure unit tests.'
+    group       = 'verification'
+    dependsOn tasks.named('unitTest')
+    executionData tasks.named('unitTest').get()
+    sourceSets sourceSets.main
+    reports {
+        html.required = true
+        xml.required  = true
+    }
+}
+tasks.named('unitTest') { finalizedBy tasks.named('jacocoUnitTestReport') }
 
 // NOTE: 'check' deliberately does NOT depend on unitTest — the 'test' task
 // already runs a superset of it. unitTest exists as the fast local loop.
