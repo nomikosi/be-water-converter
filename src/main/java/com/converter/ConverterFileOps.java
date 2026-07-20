@@ -90,6 +90,10 @@ final class ConverterFileOps {
 
     void saveOutput(String output, String outputFormat) {
         String ext = FORMAT_EXTENSIONS.getOrDefault(outputFormat, "txt");
+        // The varargs constructor is deprecated since 2025.1, but its
+        // replacements don't exist in the 2024.3 baseline this plugin compiles
+        // against — the plugin-verifier "1 usage of deprecated API" note is
+        // expected until sinceBuild moves past 243.
         VirtualFileWrapper wrapper = FileChooserFactory.getInstance()
               .createSaveFileDialog(
                     new FileSaverDescriptor("Save Output", "Save the converter output", ext),
