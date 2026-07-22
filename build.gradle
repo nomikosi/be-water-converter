@@ -27,7 +27,7 @@ dependencies {
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.21.1'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-csv:2.21.1'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-toml:2.21.1'
-    implementation 'com.fifesoft:rsyntaxtextarea:3.5.4'
+    implementation 'com.fifesoft:rsyntaxtextarea:4.0.0'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testImplementation 'org.assertj:assertj-core:3.27.7'
     // JUnit 4 is required at runtime by the IntelliJ platform test executor,
