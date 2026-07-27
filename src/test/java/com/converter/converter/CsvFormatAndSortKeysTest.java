@@ -39,8 +39,10 @@ class CsvFormatAndSortKeysTest {
 
     @Test @DisplayName("semicolon-delimited input parses into the right columns")
     void semicolonInput() throws Exception {
-        String json = csv.csvToJson("name;age\nAda;36\n", true, CsvFormat.SEMICOLON);
-        assertThat(json).contains("\"name\" : \"Ada\"").contains("\"age\" : 36");
+        var row = pipeline.parseJson(
+              csv.csvToJson("name;age\nAda;36\n", true, CsvFormat.SEMICOLON)).get(0);
+        assertThat(row.get("name").asText()).isEqualTo("Ada");
+        assertThat(row.get("age").asInt()).isEqualTo(36);
     }
 
     @Test @DisplayName("comma parsing of semicolon input yields one bogus column")
@@ -53,8 +55,10 @@ class CsvFormatAndSortKeysTest {
 
     @Test @DisplayName("tab-delimited input parses")
     void tabInput() throws Exception {
-        String json = csv.csvToJson("name\tage\nAda\t36\n", true, CsvFormat.TAB);
-        assertThat(json).contains("\"name\" : \"Ada\"").contains("\"age\" : 36");
+        var row = pipeline.parseJson(
+              csv.csvToJson("name\tage\nAda\t36\n", true, CsvFormat.TAB)).get(0);
+        assertThat(row.get("name").asText()).isEqualTo("Ada");
+        assertThat(row.get("age").asInt()).isEqualTo(36);
     }
 
     @Test @DisplayName("output honours the configured delimiter")
@@ -83,7 +87,9 @@ class CsvFormatAndSortKeysTest {
 
     @Test @DisplayName("existing comma behaviour is unchanged by default")
     void defaultsUnchanged() throws Exception {
-        assertThat(csv.csvToJson("a,b\n1,2\n", true)).contains("\"a\" : 1").contains("\"b\" : 2");
+        var row = pipeline.parseJson(csv.csvToJson("a,b\n1,2\n", true)).get(0);
+        assertThat(row.get("a").asInt()).isEqualTo(1);
+        assertThat(row.get("b").asInt()).isEqualTo(2);
     }
 
     // ── Key sorting ──────────────────────────────────────────────────────

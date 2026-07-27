@@ -40,8 +40,8 @@ public class JsonYamlConverter {
     private final YAMLMapper yamlMapper;
 
     public JsonYamlConverter() {
+        // No INDENT_OUTPUT: writes the internal pivot only, which is re-parsed.
         jsonMapper = new ObjectMapper()
-              .enable(SerializationFeature.INDENT_OUTPUT)
               // SnakeYAML resolves YAML timestamps to java.util.Date; without
               // this they would serialise as epoch millis rather than the text
               // the document actually contained.

@@ -58,7 +58,10 @@ public class CsvConverter {
     private final CsvMapper   csvMapper;
 
     public CsvConverter() {
-        jsonMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+        // No INDENT_OUTPUT: this mapper only ever writes the internal JSON
+        // pivot, which the next stage re-parses and nobody reads. Indenting it
+        // measured 1.29-1.45x the compact size for no benefit.
+        jsonMapper = new ObjectMapper();
         csvMapper  = new CsvMapper();
         // Jackson's default quote check is a fast over-approximation whose result
         // depends on the separator: with ';' it quotes numeric-looking cells that

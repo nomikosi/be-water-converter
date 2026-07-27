@@ -61,7 +61,6 @@ public class ConverterPanel implements Disposable {
     private static final String PROP_WRAP_LINES     = "beWater.wrapLines";
     private static final String PROP_SORT_KEYS      = "beWater.sortKeys";
     private static final String PROP_CSV_DELIMITER  = "beWater.csvDelimiter";
-    private static final String PROP_AUTO_DETECT    = "beWater.autoDetectFormat";
 
     /** Above this output size, syntax highlighting is disabled to keep the EDT responsive. */
     private static final int HIGHLIGHT_LIMIT_CHARS = 2_000_000;
@@ -268,8 +267,9 @@ public class ConverterPanel implements Disposable {
         inferTypesCheck.setFocusPainted(false);
 
         sortKeysCheck = new JCheckBox("Sort keys", false);
-        sortKeysCheck.setToolTipText(
-              "Sort object keys alphabetically so output is stable and diffable (array order is kept)");
+        sortKeysCheck.setToolTipText("<html>Sort object keys alphabetically so output is "
+              + "stable and diffable (array order is kept).<br>"
+              + "Applies to conversions; Format sorts JSON only.</html>");
         sortKeysCheck.setOpaque(false);
         sortKeysCheck.setForeground(TEXT_BRIGHT);
         sortKeysCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
@@ -1036,16 +1036,27 @@ public class ConverterPanel implements Disposable {
 
     // ── Format input ──────────────────────────────────────────────────────
     private void doFormat() {
-        String input = inputArea.getText().trim();
-        String fmt   = (String) inputCombo.getSelectedItem();
+        final String input = inputArea.getText().trim();
+        final String fmt   = (String) inputCombo.getSelectedItem();
         if (input.isEmpty()) { setStatus("Input is empty", false); return; }
-        try {
-            setInputTextQuietly(pipeline.formatInput(input, fmt, currentOptions()));
+        final ConversionOptions opts = currentOptions();
+        // Formatting parses and re-serialises the whole document; measured in
+        // the hundreds of milliseconds on multi-megabyte input, so off the EDT.
+        runOffEdt(() -> {
+            try {
+                return pipeline.formatInput(input, fmt, opts);
+            } catch (Exception ex) {
+                throw new java.util.concurrent.CompletionException(ex);
+            }
+        }, (formatted, failure) -> {
+            if (failure != null) {
+                showError("Format failed: " + failure.getMessage());
+                jumpToErrorLocation(failure);
+                return;
+            }
+            setInputTextQuietly(formatted);
             setStatus("\u2713  Input formatted", true);
-        } catch (Exception ex) {
-            showError("Format failed: " + ex.getMessage());
-            jumpToErrorLocation(ex);
-        }
+        });
     }
 
     // ── File I/O (delegated to ConverterFileOps) ─────────────────────────
@@ -1079,21 +1090,53 @@ public class ConverterPanel implements Disposable {
             setStatusWarn(outFmt + " output cannot be parsed back for comparison");
             return;
         }
-        try {
-            ConversionOptions opts = currentOptions();
-            // The output pane has already been filtered, so re-applying the
-            // pointer to it would throw "Path matched nothing".
-            String left  = pipeline.canonicalJson(inputText, inFmt, opts);
-            String right = pipeline.canonicalJson(outputText, outFmt, opts.withFilterPath(""));
-            if (left.equals(right)) {
-                setStatus("Input and output are equivalent", true);
+        final ConversionOptions opts = currentOptions();
+        setStatus("Comparing…", true);
+        // Canonicalising is three parse/serialise passes per side — over a
+        // second on a 10 MB document — so it must not run on the EDT.
+        runOffEdt(() -> {
+            try {
+                // The output pane has already been filtered, so re-applying the
+                // pointer to it would throw "Path matched nothing".
+                return new String[]{
+                      pipeline.canonicalJson(inputText, inFmt, opts),
+                      pipeline.canonicalJson(outputText, outFmt, opts.withFilterPath("")),
+                };
+            } catch (Exception ex) {
+                throw new java.util.concurrent.CompletionException(ex);
             }
-            ConverterDiff.show(project, "Be Water: " + inFmt + " vs " + outFmt,
-                  inFmt + " (input)", left, outFmt + " (output)", right);
-        } catch (Throwable failure) {
-            // Also catches the case where there is no IDE (tests, standalone).
-            showError("Compare failed: " + failure.getMessage());
-        }
+        }, (sides, failure) -> {
+            if (failure != null) {
+                showError("Compare failed: " + failure.getMessage());
+                return;
+            }
+            if (sides[0].equals(sides[1])) setStatus("Input and output are equivalent", true);
+            else setStatus("Comparing " + inFmt + " with " + outFmt, true);
+            try {
+                ConverterDiff.show(project, "Be Water: " + inFmt + " vs " + outFmt,
+                      inFmt + " (input)", sides[0], outFmt + " (output)", sides[1]);
+            } catch (Throwable noIde) {
+                // No running IDE (tests, standalone): the comparison itself still ran.
+                showError("Compare failed: " + noIde.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Runs {@code work} on the shared pool and delivers the result, or the
+     * unwrapped failure, back on the EDT. Skipped entirely once disposed.
+     */
+    private <T> void runOffEdt(java.util.function.Supplier<T> work,
+          java.util.function.BiConsumer<T, Throwable> onDone) {
+        java.util.concurrent.CompletableFuture
+              .supplyAsync(work, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
+              .whenComplete((result, error) ->
+                    com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
+                        if (disposed) return;
+                        Throwable cause = error == null ? null
+                              : (error.getCause() != null ? error.getCause() : error);
+                        onDone.accept(result, cause);
+                    }));
     }
 
     // ── Utility actions ───────────────────────────────────────────────────

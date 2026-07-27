@@ -31,6 +31,9 @@ dependencies {
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-toml:2.21.1'
     implementation 'com.fifesoft:rsyntaxtextarea:3.5.4'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    // Parameterised tests: routing tables are covered per-format rather than by
+    // one test per arm, which is what let several arms go untested.
+    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
     testImplementation 'org.assertj:assertj-core:3.27.7'
     // JUnit 4 is required at runtime by the IntelliJ platform test executor,
     // even though all tests are JUnit 5.
@@ -63,13 +66,23 @@ intellijPlatform {
             // Pinned explicitly rather than left to recommended(): its result
             // depends on the Gradle plugin version (2.16.0 scheduled five IDEs,
             // 2.18.1 only two), so coverage would silently shrink on upgrade.
+            // Split by type rather than listing both across the whole range:
+            // 2025.1 and 2025.2 are published under BOTH codes, so a combined
+            // filter verified those two builds twice — about 6 minutes per
+            // release tag for no extra surface, since the plugin depends only
+            // on com.intellij.modules.platform.
             select { filter ->
-                // 2025.1/2025.2 are listed as Community; from 2025.3 the unified
-                // IntelliJ IDEA distribution is listed under Ultimate only.
-                filter.types.set([IntelliJPlatformType.IntellijIdeaCommunity,
-                                  IntelliJPlatformType.IntellijIdeaUltimate])
+                filter.types.set([IntelliJPlatformType.IntellijIdeaCommunity])
                 filter.channels.set([ProductRelease.Channel.RELEASE])
                 filter.sinceBuild.set('251')
+                filter.untilBuild.set('252.*')
+            }
+            // From 2025.3 IntelliJ IDEA ships as one unified distribution,
+            // listed only under Ultimate.
+            select { filter ->
+                filter.types.set([IntelliJPlatformType.IntellijIdeaUltimate])
+                filter.channels.set([ProductRelease.Channel.RELEASE])
+                filter.sinceBuild.set('253')
                 filter.untilBuild.set('262.*')
             }
         }

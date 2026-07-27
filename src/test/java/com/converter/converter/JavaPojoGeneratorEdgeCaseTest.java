@@ -168,22 +168,37 @@ class JavaPojoGeneratorEdgeCaseTest {
         assertThat(generator.fromJson("{\"meta\":{}}")).contains("meta");
     }
 
-    @Test @DisplayName("JSON->POJO: array of mixed types produces List or safe fallback")
+    @Test @DisplayName("JSON->POJO: a mixed array is typed from its first element")
     void mixedTypeArray() throws Exception {
-        assertThatCode(() -> generator.fromJson("{\"data\":[1,\"two\",true]}")).doesNotThrowAnyException();
+        // Pinning deliberate behaviour, not endorsing it: the POJO generator
+        // samples element 0 while JsonSchemaGenerator emits anyOf for the same
+        // input. Only one of those positions was recorded by a test before.
+        // The generated List<Integer> cannot deserialize the document it came
+        // from; widening it is a behaviour decision, not a bug fix.
+        assertThat(generator.fromJson("{\"data\":[1,\"two\",true]}"))
+              .contains("private List<Integer> data;");
     }
 
-    @Test @DisplayName("JSON->POJO: array containing null values does not throw")
+    @Test @DisplayName("JSON->POJO: an all-null array falls back to List<Object>")
     void arrayWithNulls() throws Exception {
-        assertThatCode(() -> generator.fromJson("{\"items\":[null,null,null]}")).doesNotThrowAnyException();
+        assertThat(generator.fromJson("{\"items\":[null,null,null]}"))
+              .contains("private List<Object> items;");
     }
 
-    @Test @DisplayName("JSON->POJO: sibling nested objects produce independent inner classes")
+    @Test @DisplayName("JSON->POJO: identically-shaped siblings still get their own classes")
     void siblingNestedObjects() throws Exception {
+        // The values must be IDENTICAL for this to be capable of failing: with
+        // differing values the old name-keyed collection produced the right
+        // answer by accident.
         String result = generator.fromJson(
-              "{\"billing\":{\"street\":\"1 Main\"},\"shipping\":{\"street\":\"2 Oak\"}}"
+              "{\"billing\":{\"street\":\"1 Main\"},\"shipping\":{\"street\":\"1 Main\"}}"
         );
-        assertThat(result).contains("public class Root").contains("street");
+        assertThat(result)
+              .contains("public class Root")
+              .contains("private Billing billing;")
+              .contains("private Shipping shipping;")
+              .contains("\nclass Billing")
+              .contains("\nclass Shipping");
     }
 
     // ── Null / blank input ────────────────────────────────────────────────

@@ -121,7 +121,7 @@ An options bar sits below the toolbar. **Sort keys** applies to every conversion
 always shown; the format-specific groups appear only when they are relevant. CSV output
 shows a mode selector with a live hint; CSV on either side shows a **Delimiter** selector;
 CSV or XML input shows an **Infer types** toggle; Java POJO output shows Lombok and date
-toggles. All option values (CSV mode, delimiter, row-warning threshold, Lombok, type
+toggles. The row-warning threshold applies to both CSV modes. All option values (CSV mode, delimiter, row-warning threshold, Lombok, type
 inference, date detection, sort keys, split orientation) are persisted across IDE restarts.
 
 ### CSV delimiter
@@ -145,7 +145,11 @@ so it will not fight a format you selected yourself.
 **Sort keys** orders object keys alphabetically throughout the document, leaving array
 order untouched. Two documents carrying the same data in different key orders canonicalize
 to the same output, which makes conversions diffable across runs and across sources. It is
-applied to the internal JSON pivot, so every target format inherits the ordering.
+applied to the internal JSON pivot, so every *conversion* target inherits the ordering.
+
+The **Format** action is the one exception: sorting is a JSON-tree operation, so Format
+sorts JSON and deliberately leaves XML, YAML, TOML and CSV in document order rather than
+round-tripping them through JSON to reorder them.
 
 ### Using it from the editor and Project view
 

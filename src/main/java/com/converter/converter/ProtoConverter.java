@@ -38,8 +38,8 @@ import java.util.regex.*;
  */
 public class ProtoConverter {
 
-    private final ObjectMapper jsonMapper =
-        new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+    // No INDENT_OUTPUT: writes the internal pivot only, which is re-parsed.
+    private final ObjectMapper jsonMapper = new ObjectMapper();
 
     /**
      * Matches a single proto field statement in a message body.

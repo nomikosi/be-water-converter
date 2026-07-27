@@ -124,15 +124,19 @@ public class ConversionPipeline {
             case FMT_PROTO -> proto.protoToJson(input);
             default -> throw new UnsupportedOperationException("Unknown input: " + inFmt);
         };
-        // Filter before sorting: narrowing first means the sort only walks the
-        // subtree that is actually going to be rendered.
-        if (opts.hasFilter()) {
-            pivot = COMPACT_JSON.writeValueAsString(
-                  JsonPathFilter.apply(COMPACT_JSON.readTree(pivot), opts.filterPath()));
+        // One parse and one serialise however many options are on: applying them
+        // to strings cost a full round trip each, which measured x2.3 on a 2.7 MB
+        // document with both enabled.
+        if (opts.hasFilter() || opts.sortKeys()) {
+            JsonNode tree = COMPACT_JSON.readTree(pivot);
+            // Filter first: narrowing means the sort only walks what will render.
+            if (opts.hasFilter()) tree = JsonPathFilter.apply(tree, opts.filterPath());
+            // Sorting the pivot rather than each renderer's output means every
+            // target format inherits key ordering from one place.
+            if (opts.sortKeys()) tree = sortNode(tree);
+            pivot = COMPACT_JSON.writeValueAsString(tree);
         }
-        // Sorting the pivot rather than each renderer's output means every target
-        // format inherits key ordering from one place.
-        return opts.sortKeys() ? sortKeys(pivot) : pivot;
+        return pivot;
     }
 
     /**
@@ -151,7 +155,11 @@ public class ConversionPipeline {
      *             reported as a wholesale difference.
      */
     public String canonicalJson(String input, String fmt, ConversionOptions opts) throws Exception {
-        return prettyJson(sortKeys(normalizeToJson(input, fmt, opts)));
+        // One parse, one in-memory sort, one serialise — chaining
+        // prettyJson(sortKeys(...)) instead cost three full round trips, which
+        // measured over a second per Compare click on a 10 MB document.
+        JsonNode tree = COMPACT_JSON.readTree(normalizeToJson(input, fmt, opts));
+        return LENIENT_JSON.writeValueAsString(sortNode(tree));
     }
 
     /** JSON pivot -> desired output format. */
@@ -314,13 +322,37 @@ public class ConversionPipeline {
               && TOML_KEY_VALUE.matcher(s.substring(newline)).find();
     }
 
-    /** Header plus at least one row, both with the same number of commas. */
+    /**
+     * Header plus at least one row with a matching column count. Delimiters
+     * inside quoted fields do not count, a third line must agree when present,
+     * and sentence-like first lines are rejected — two lines of prose that
+     * happen to contain one comma each were otherwise detected as CSV.
+     */
     private static boolean looksLikeCsv(String s) {
-        String[] lines = s.split("\r?\n", 3);
-        if (lines.length < 2) return false;
-        long headerCommas = lines[0].chars().filter(c -> c == ',').count();
-        if (headerCommas == 0) return false;
-        return lines[1].chars().filter(c -> c == ',').count() == headerCommas;
+        String[] lines = s.split("\r?\n", 4);
+        if (lines.length < 2 || lines[1].isBlank()) return false;
+
+        String header = lines[0];
+        // ". " or a trailing period is prose punctuation, not a column name.
+        if (header.contains(". ") || header.stripTrailing().endsWith(".")) return false;
+
+        int expected = countDelimitersOutsideQuotes(header);
+        if (expected == 0) return false;
+        if (countDelimitersOutsideQuotes(lines[1]) != expected) return false;
+        if (lines.length > 2 && !lines[2].isBlank()
+              && countDelimitersOutsideQuotes(lines[2]) != expected) return false;
+        return true;
+    }
+
+    private static int countDelimitersOutsideQuotes(String line) {
+        int count = 0;
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '"') inQuotes = !inQuotes;
+            else if (c == ',' && !inQuotes) count++;
+        }
+        return count;
     }
 
     public long estimateCsvRows(JsonNode pivot, CsvConverter.CsvMode mode) {

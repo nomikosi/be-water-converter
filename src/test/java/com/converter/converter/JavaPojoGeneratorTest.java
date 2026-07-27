@@ -175,7 +175,11 @@ class JavaPojoGeneratorTest {
               .contains("\nclass User")
               .contains("\nclass User2")
               .contains("private Integer x")
-              .contains("private String y");
+              .contains("private String y")
+              // The assertion that actually kills the pre-fix behaviour: without
+              // identity-keyed naming, Outer.user was typed User and carried the
+              // wrong shape. Everything above still passed in that state.
+              .contains("private User2 user");
     }
 
     @Test @DisplayName("JSON->POJO: imports are emitted only when used")
