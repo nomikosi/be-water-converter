@@ -24,7 +24,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 public class JsonXmlConverter {
     private final ObjectMapper jsonMapper;
@@ -97,8 +99,13 @@ public class JsonXmlConverter {
     private JsonNode sanitizeKeysForXml(JsonNode node) {
         if (node.isObject()) {
             ObjectNode out = jsonMapper.createObjectNode();
+            // Distinct keys can sanitize to the same element name ("a b" and
+            // "a+b" both become "a_b"); without a counter the second silently
+            // overwrites the first and that value is lost.
+            Set<String> used = new HashSet<>();
             for (Map.Entry<String, JsonNode> e : node.properties()) {
-                out.set(xmlElementName(e.getKey()), sanitizeKeysForXml(e.getValue()));
+                out.set(uniqueElementName(xmlElementName(e.getKey()), used),
+                      sanitizeKeysForXml(e.getValue()));
             }
             return out;
         }
@@ -124,5 +131,13 @@ public class JsonXmlConverter {
             sb.insert(0, '_');
         }
         return sb.toString();
+    }
+
+    /** Suffixes a counter when a sanitized element name is already used by a sibling. */
+    static String uniqueElementName(String name, Set<String> used) {
+        if (used.add(name)) return name;
+        int n = 2;
+        while (!used.add(name + "_" + n)) n++;
+        return name + "_" + n;
     }
 }

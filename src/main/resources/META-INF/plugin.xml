@@ -61,6 +61,23 @@
     <change-notes><![CDATA[
         <h3>1.4.1</h3>
         <ul>
+            <li><b>Fixed: generated Java POJOs now compile</b> — the output declared every class
+                <code>public</code>, which is illegal for more than one top-level type in a single
+                file. Only the root class is public now.</li>
+            <li><b>Fixed: JSON→XML no longer drops values on key collisions</b> — keys that sanitize
+                to the same element name (<code>"a b"</code> and <code>"a+b"</code>) are numbered
+                instead of silently overwriting each other.</li>
+            <li><b>Fixed: colliding POJO class names</b> — two differently-shaped objects that map to
+                the same class name each get their own class instead of the second being typed with
+                the first one's fields.</li>
+            <li><b>Fixed: saving output no longer freezes the IDE</b> — writes moved off the UI
+                thread, matching how files are read.</li>
+            <li><b>Cancel is now reliable</b> — cancelling before the conversion starts is honoured,
+                and row expansion checks for cancellation as it runs.</li>
+            <li><b>Row-count warning now covers FLAT_FIRST</b>, not just CROSS_JOIN.</li>
+            <li><b>Generated POJO imports are emitted only when used</b> — <code>List</code>,
+                <code>BigDecimal</code>, <code>BigInteger</code> and <code>@JsonProperty</code> are
+                no longer added unconditionally.</li>
             <li><b>Minimum IDE version is now 2025.1</b> — the save-file dialog moved to the
                 current <code>FileSaverDescriptor</code> API, which removes the last deprecated
                 platform API usage. Users on 2024.3 should stay on 1.4.0.</li>

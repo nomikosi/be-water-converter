@@ -70,13 +70,13 @@ final class FindBar extends JPanel {
             @Override public void actionPerformed(ActionEvent e) { close(); }
         });
 
-        JButton prevBtn = ConverterPanel.iconButton(
+        JButton prevBtn = ConverterWidgets.iconButton(
               com.intellij.icons.AllIcons.Actions.PreviousOccurence, "Previous match (Shift+Enter)");
         prevBtn.addActionListener(e -> find(false));
-        JButton nextBtn = ConverterPanel.iconButton(
+        JButton nextBtn = ConverterWidgets.iconButton(
               com.intellij.icons.AllIcons.Actions.NextOccurence, "Next match (Enter)");
         nextBtn.addActionListener(e -> find(true));
-        JButton closeBtn = ConverterPanel.iconButton(
+        JButton closeBtn = ConverterWidgets.iconButton(
               com.intellij.icons.AllIcons.Actions.Close, "Close find bar (Esc)");
         closeBtn.addActionListener(e -> close());
 

@@ -44,7 +44,7 @@ class JavaPojoGeneratorLombokTest {
         String result = generator.fromJson("{\"user\":{\"id\":1,\"email\":\"a@b.com\"}}", true);
         long annotated = result.lines().filter(l -> l.equals("@Data")).count();
         assertThat(annotated).isEqualTo(2); // Root + User
-        assertThat(result).contains("public class Root").contains("public class User");
+        assertThat(result).contains("public class Root").contains("\nclass User");
     }
 
     @Test @DisplayName("Default mode emits no Lombok annotations or imports")

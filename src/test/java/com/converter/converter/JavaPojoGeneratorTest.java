@@ -42,7 +42,9 @@ class JavaPojoGeneratorTest {
         String result = generator.fromJson("{\"user\":{\"id\":1,\"email\":\"a@b.com\"}}");
         assertThat(result)
               .contains("public class Root")
-              .contains("public class User")
+              // Only the root may be public — all classes share one output blob.
+              .contains("\nclass User")
+              .doesNotContain("public class User")
               .contains("private User user")
               .contains("private Integer id")
               .contains("private String email");
@@ -82,8 +84,8 @@ class JavaPojoGeneratorTest {
         String result = generator.fromJson(input);
         assertThat(result)
               .contains("public class Root")
-              .contains("public class Menu")
-              .contains("public class Popup")
+              .contains("\nclass Menu")
+              .contains("\nclass Popup")
               .contains("private String id")
               .contains("private String value")
               .contains("private String onclick");
@@ -123,9 +125,9 @@ class JavaPojoGeneratorTest {
         String result = generator.fromJson(input);
         assertThat(result)
               .contains("public class Root")
-              .contains("public class Level1")
-              .contains("public class Level2")
-              .contains("public class Level3")
+              .contains("\nclass Level1")
+              .contains("\nclass Level2")
+              .contains("\nclass Level3")
               .contains("private String value");
     }
 
@@ -147,7 +149,46 @@ class JavaPojoGeneratorTest {
         String result = generator.fromXml("<root><user><id>1</id><email>a@b.com</email></user></root>");
         assertThat(result)
               .contains("public class Root")
-              .contains("public class User")
+              .contains("\nclass User")
               .contains("private String email");
+    }
+
+    // ── Single-file validity (one public top-level type per file) ─────────
+
+    @Test @DisplayName("JSON->POJO: output declares exactly one public class")
+    void singlePublicClass() throws Exception {
+        String result = generator.fromJson(
+              "{\"id\":1,\"owner\":{\"name\":\"a\"},\"tags\":[{\"k\":1}]}");
+        long publicClasses = result.lines().filter(l -> l.startsWith("public class")).count();
+        long allClasses    = result.lines().filter(l -> l.contains("class ")).count();
+        assertThat(allClasses).isEqualTo(3);
+        assertThat(publicClasses).isEqualTo(1);
+    }
+
+    @Test @DisplayName("JSON->POJO: colliding class names get distinct classes")
+    void collidingClassNames() throws Exception {
+        // Both objects want to be called "User" but have different shapes; the
+        // second must not be silently dropped and typed with the first's fields.
+        String result = generator.fromJson(
+              "{\"user\":{\"x\":1},\"outer\":{\"user\":{\"y\":\"s\"}}}");
+        assertThat(result)
+              .contains("\nclass User")
+              .contains("\nclass User2")
+              .contains("private Integer x")
+              .contains("private String y");
+    }
+
+    @Test @DisplayName("JSON->POJO: imports are emitted only when used")
+    void importsOnlyWhenUsed() throws Exception {
+        String plain = generator.fromJson("{\"n\":\"x\"}");
+        assertThat(plain)
+              .doesNotContain("import java.util.List;")
+              .doesNotContain("import java.math.BigDecimal;")
+              .doesNotContain("import java.math.BigInteger;")
+              .doesNotContain("import com.fasterxml.jackson.annotation.JsonProperty;");
+
+        assertThat(generator.fromJson("{\"xs\":[1,2]}")).contains("import java.util.List;");
+        assertThat(generator.fromJson("{\"first_name\":\"a\"}"))
+              .contains("import com.fasterxml.jackson.annotation.JsonProperty;");
     }
 }

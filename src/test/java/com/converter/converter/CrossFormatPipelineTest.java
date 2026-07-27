@@ -229,7 +229,7 @@ class CrossFormatPipelineTest {
         String input = "[{\n  \"menu\" : {\n    \"id\" : \"file\",\n    \"value\" : \"File\",\n    \"popup\" : {\n      \"menuitem\" : [ {\n        \"value\" : \"New\",\n        \"onclick\" : \"CreateNewDoc()\"\n      }, {\n        \"value\" : \"Open\",\n        \"onclick\" : \"OpenDoc()\"\n      }, {\n        \"value\" : \"Close\",\n        \"onclick\" : \"CloseDoc()\"\n      } ]\n    }\n  }";
         String fixed = autoClose(input);
         String pojoResult = pojo.fromJson(fixed);
-        assertThat(pojoResult).contains("public class Root").contains("public class Menu");
+        assertThat(pojoResult).contains("public class Root").contains("\nclass Menu");
         String protoResult = proto.jsonToProto(fixed);
         assertThat(protoResult).contains("syntax = \"proto3\"").contains("message Root");
     }

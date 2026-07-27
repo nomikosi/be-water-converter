@@ -151,6 +151,24 @@ class JsonXmlConverterEdgeCaseTest {
         assertThatCode(() -> converter.xmlToJson(xml)).doesNotThrowAnyException();
     }
 
+    @Test @DisplayName("JSON->XML: keys colliding after sanitization keep both values")
+    void collidingSanitizedKeysKeepBothValues() throws Exception {
+        // "a b" and "a+b" both sanitize to "a_b"; without deduplication the
+        // second silently overwrote the first and that value was lost.
+        String xml = converter.jsonToXml("{\"a b\":1,\"a+b\":2}");
+        assertThat(xml).contains("<a_b>1</a_b>").contains("<a_b_2>2</a_b_2>");
+        assertThatCode(() -> converter.xmlToJson(xml)).doesNotThrowAnyException();
+    }
+
+    @Test @DisplayName("JSON->XML: collision counter also applies to nested objects")
+    void collidingSanitizedKeysNested() throws Exception {
+        String xml = converter.jsonToXml("{\"outer\":{\"x y\":1,\"x-y\":2,\"x@y\":3}}");
+        // "x y" and "x@y" collide on "x_y"; "x-y" is already valid and distinct.
+        assertThat(xml).contains("<x_y>1</x_y>").contains("<x-y>2</x-y>")
+              .contains("<x_y_2>3</x_y_2>");
+        assertThatCode(() -> converter.xmlToJson(xml)).doesNotThrowAnyException();
+    }
+
     // ── Type inference (v1.4.0) ──────────────────────────────────────────
 
     @Test @DisplayName("XML->JSON: values stay strings by default")

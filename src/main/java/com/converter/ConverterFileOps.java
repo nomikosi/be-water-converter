@@ -34,9 +34,12 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /**
  * File open/save/drag-and-drop operations for the converter, using the IDE's
@@ -83,7 +86,8 @@ final class ConverterFileOps {
               new FileChooserDescriptor(true, false, false, false, false, false)
                     .withTitle("Open Input File")
                     .withFileFilter(vf -> vf.getExtension() != null
-                          && SUPPORTED_EXTENSIONS.contains(vf.getExtension().toLowerCase()));
+                          && SUPPORTED_EXTENSIONS.contains(
+                                vf.getExtension().toLowerCase(Locale.ROOT)));
         VirtualFile chosen = FileChooser.chooseFile(descriptor, project, null);
         if (chosen != null) loadFile(new File(chosen.getPath()));
     }
@@ -99,12 +103,20 @@ final class ConverterFileOps {
               .save((java.nio.file.Path) null, "output." + ext);
         if (wrapper == null) return;
         File file = wrapper.getFile();
-        try {
-            Files.writeString(file.toPath(), output, StandardCharsets.UTF_8);
-            host.status("Saved to " + file.getName(), true);
-        } catch (Exception ex) {
-            host.status("Failed to save: " + ex.getMessage(), false);
-        }
+        host.status("Saving " + file.getName() + "…", true);
+        // Written off the EDT for the same reason reads are: a large output or a
+        // slow network target would otherwise freeze the IDE.
+        runOffEdt(() -> {
+            try {
+                Files.writeString(file.toPath(), output, StandardCharsets.UTF_8);
+                return null;
+            } catch (IOException ex) {
+                throw new java.util.concurrent.CompletionException(ex);
+            }
+        }, (ignored, cause) -> {
+            if (cause != null) host.status("Failed to save: " + cause.getMessage(), false);
+            else               host.status("Saved to " + file.getName(), true);
+        });
     }
 
     void loadFile(File file) {
@@ -119,23 +131,35 @@ final class ConverterFileOps {
 
         host.status("Loading " + file.getName() + "…", true);
         // Read off the EDT so a large or slow-network file cannot freeze the IDE.
+        runOffEdt(() -> {
+            try {
+                return Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            } catch (IOException ex) {
+                throw new java.util.concurrent.CompletionException(ex);
+            }
+        }, (content, cause) -> {
+            if (cause != null) {
+                host.status("Failed to open file: " + cause.getMessage(), false);
+                return;
+            }
+            host.loaded(content, detectFormat(file.getName()), file.getName());
+        });
+    }
+
+    /**
+     * Runs {@code work} on the shared application pool and delivers its result —
+     * or the unwrapped failure — to {@code onDone} on the EDT. Nothing is
+     * delivered once the owning panel has been disposed.
+     */
+    private <T> void runOffEdt(Supplier<T> work, BiConsumer<T, Throwable> onDone) {
         java.util.concurrent.CompletableFuture
-              .supplyAsync(() -> {
-                  try {
-                      return Files.readString(file.toPath(), StandardCharsets.UTF_8);
-                  } catch (IOException ex) {
-                      throw new java.util.concurrent.CompletionException(ex);
-                  }
-              }, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
-              .whenComplete((content, error) ->
+              .supplyAsync(work, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
+              .whenComplete((result, error) ->
                     com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
                         if (disposed.getAsBoolean()) return;
-                        if (error != null) {
-                            Throwable cause = error.getCause() != null ? error.getCause() : error;
-                            host.status("Failed to open file: " + cause.getMessage(), false);
-                            return;
-                        }
-                        host.loaded(content, detectFormat(file.getName()), file.getName());
+                        Throwable cause = error == null ? null
+                              : (error.getCause() != null ? error.getCause() : error);
+                        onDone.accept(result, cause);
                     }));
     }
 
@@ -169,7 +193,7 @@ final class ConverterFileOps {
 
     private static String detectFormat(String fileName) {
         int dot = fileName.lastIndexOf('.');
-        String ext = dot >= 0 ? fileName.substring(dot + 1).toLowerCase() : "";
+        String ext = dot >= 0 ? fileName.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
         return switch (ext) {
             case "json"        -> ConversionPipeline.FMT_JSON;
             case "xml"         -> ConversionPipeline.FMT_XML;

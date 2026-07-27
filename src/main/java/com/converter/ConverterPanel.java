@@ -27,7 +27,6 @@ import org.fife.ui.rsyntaxtextarea.Theme;
 import org.fife.ui.rtextarea.RTextScrollPane;
 
 import javax.swing.*;
-import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
@@ -99,7 +98,6 @@ public class ConverterPanel implements Disposable {
     private static final long DEFAULT_ROW_WARNING_THRESHOLD = 1_000L;
 
 
-    private static final int BUTTON_ARC = 8;
     private static final int STATUS_MAX_LEN = 120;
     private static final String ACTION_CONVERT = "convert";
     private static final String ACTION_FORMAT = "format";
@@ -138,6 +136,8 @@ public class ConverterPanel implements Disposable {
 
     private final com.intellij.openapi.project.Project project;
     private final AtomicBoolean converting = new AtomicBoolean(false);
+    /** Set by Cancel; also covers the window before the pooled task starts running. */
+    private final AtomicBoolean cancelRequested = new AtomicBoolean(false);
     private final PropertyChangeListener lafListener;
     private volatile boolean disposed;
     private volatile Thread convertWorker;
@@ -181,23 +181,8 @@ public class ConverterPanel implements Disposable {
         outputCombo.setSelectedItem(FMT_XML);
 
         // ── conversion-specific option controls ──────────────────────────
-        csvModeCombo = new JComboBox<>(CsvConverter.CsvMode.values());
-        csvModeCombo.setBackground(DROPDOWN_BG);
-        csvModeCombo.setForeground(TEXT_BRIGHT);
-        csvModeCombo.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        csvModeCombo.setBorder(BorderFactory.createLineBorder(BORDER, 1));
+        csvModeCombo = ConverterWidgets.combo(CsvConverter.CsvMode.values());
         csvModeCombo.setToolTipText("How arrays of objects are expanded into CSV rows");
-        csvModeCombo.setRenderer(new DefaultListCellRenderer() {
-            @Override
-            public Component getListCellRendererComponent(JList<?> list, Object value,
-                  int index, boolean isSelected, boolean hasFocus) {
-                super.getListCellRendererComponent(list, value, index, isSelected, hasFocus);
-                setBackground(isSelected ? ACCENT : DROPDOWN_BG);
-                setForeground(TEXT_BRIGHT);
-                setBorder(new EmptyBorder(4, 10, 4, 10));
-                return this;
-            }
-        });
 
         csvModeHint = new JLabel(csvModeHintFor(CsvConverter.CsvMode.FLAT_FIRST));
         csvModeHint.setForeground(TEXT_DIM);
@@ -670,32 +655,7 @@ public class ConverterPanel implements Disposable {
     }
 
     private JButton buildIconButton(Icon icon, String tooltip) {
-        return iconButton(icon, tooltip);
-    }
-
-    /** Shared flat icon button with hover highlight (also used by FindBar). */
-    static JButton iconButton(Icon icon, String tooltip) {
-        JButton btn = new JButton(icon);
-        btn.setToolTipText(tooltip);
-        btn.setOpaque(false);
-        btn.setContentAreaFilled(false);
-        btn.setBorderPainted(false);
-        btn.setBorder(JBUI.Borders.empty(4, 6));
-        btn.setFocusPainted(false);
-        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.getAccessibleContext().setAccessibleName(tooltip);
-        btn.addMouseListener(new MouseAdapter() {
-            public void mouseEntered(MouseEvent e) {
-                btn.setContentAreaFilled(true);
-                btn.setBackground(UTIL_HOVER);
-                btn.setOpaque(true);
-            }
-            public void mouseExited(MouseEvent e) {
-                btn.setContentAreaFilled(false);
-                btn.setOpaque(false);
-            }
-        });
-        return btn;
+        return ConverterWidgets.iconButton(icon, tooltip);
     }
 
     // ── Custom split-pane divider with grip dots ─────────────────────────
@@ -786,6 +746,7 @@ public class ConverterPanel implements Disposable {
         final boolean inferCsvTypes = inferTypesCheck.isSelected();
         final boolean detectDates   = detectDatesCheck.isSelected();
 
+        cancelRequested.set(false);
         convertBtn.setText("Cancel");
         convertBtn.setToolTipText("Cancel the running conversion");
         setStatus("Converting\u2026", true);
@@ -794,11 +755,13 @@ public class ConverterPanel implements Disposable {
               .supplyAsync(() -> {
                   convertWorker = Thread.currentThread();
                   try {
+                      // Cancel may have been pressed while this task was still queued,
+                      // in which case there was no thread to interrupt.
+                      checkCancelled();
                       String asJson = pipeline.normalizeToJson(rawInput, inFmt, inferCsvTypes);
-                      if (Thread.currentThread().isInterrupted())
-                          throw new CancellationException("Conversion cancelled");
+                      checkCancelled();
 
-                      if (FMT_CSV.equals(outFmt) && csvMode == CsvConverter.CsvMode.CROSS_JOIN) {
+                      if (FMT_CSV.equals(outFmt)) {
                           com.fasterxml.jackson.databind.JsonNode pivot = pipeline.parseJson(asJson);
                           long estimate = pipeline.estimateCsvRows(pivot, csvMode);
                           if (estimate > rowWarningThreshold) {
@@ -807,10 +770,11 @@ public class ConverterPanel implements Disposable {
                                     new java.util.concurrent.atomic.AtomicBoolean(false);
                               try {
                                   SwingUtilities.invokeAndWait(() -> proceed.set(confirmWarning(
-                                        "Row explosion warning",
-                                        String.format("CROSS_JOIN will produce ~%,d rows. Continue?", est))));
+                                        "Row count warning",
+                                        String.format("%s will produce ~%,d rows. Continue?",
+                                              csvMode, est))));
                               } catch (Exception dialogFailure) {
-                                  LOG.warn("Row-explosion confirmation dialog failed; cancelling conversion",
+                                  LOG.warn("Row-count confirmation dialog failed; cancelling conversion",
                                         dialogFailure);
                               }
                               if (!proceed.get()) {
@@ -858,13 +822,23 @@ public class ConverterPanel implements Disposable {
                     }));
     }
 
-    /** Interrupts the background conversion worker, if any. */
+    /** Throws if Cancel was pressed, whether or not the worker thread was interrupted. */
+    private void checkCancelled() {
+        if (cancelRequested.get() || Thread.currentThread().isInterrupted())
+            throw new CancellationException("Conversion cancelled");
+    }
+
+    /**
+     * Requests cancellation of the running conversion. The flag is what makes a
+     * cancel pressed before the pooled task starts running take effect; the
+     * interrupt is what unblocks a task already in a long loop.
+     */
     private void cancelConvert() {
+        if (!converting.get()) return;
+        cancelRequested.set(true);
         Thread worker = convertWorker;
-        if (worker != null) {
-            worker.interrupt();
-            setStatusWarn("Cancelling…");
-        }
+        if (worker != null) worker.interrupt();
+        setStatusWarn("Cancelling…");
     }
 
     /** Shared OK/Cancel warning dialog; returns true when the user confirms. */
@@ -999,11 +973,10 @@ public class ConverterPanel implements Disposable {
     }
 
     private void applyEditorTheme(RSyntaxTextArea area) {
-        try {
-            String path = JBColor.isBright()
-                  ? "/org/fife/ui/rsyntaxtextarea/themes/default.xml"
-                  : "/org/fife/ui/rsyntaxtextarea/themes/dark.xml";
-            InputStream is = getClass().getResourceAsStream(path);
+        String path = JBColor.isBright()
+              ? "/org/fife/ui/rsyntaxtextarea/themes/default.xml"
+              : "/org/fife/ui/rsyntaxtextarea/themes/dark.xml";
+        try (InputStream is = getClass().getResourceAsStream(path)) {
             if (is != null) Theme.load(is).apply(area);
         } catch (IOException ignored) {}
     }
@@ -1037,103 +1010,24 @@ public class ConverterPanel implements Disposable {
         return wrapper;
     }
 
-    /** Color-coded pill badge showing the current format name. */
     private JLabel buildFormatBadge(String text) {
-        JLabel lbl = new JLabel(text) {
-            @Override
-            protected void paintComponent(Graphics g) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                      RenderingHints.VALUE_ANTIALIAS_ON);
-                Color pill = FORMAT_COLORS.getOrDefault(getText(), ACCENT);
-                g2.setColor(pill);
-                g2.fillRoundRect(0, 0, getWidth(), getHeight(),
-                      JBUI.scale(10), JBUI.scale(10));
-
-                FontMetrics fm = g2.getFontMetrics(getFont());
-                g2.setColor(Color.WHITE);
-                int x = (getWidth()  - fm.stringWidth(getText())) / 2;
-                int y = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
-                g2.drawString(getText(), x, y);
-                g2.dispose();
-            }
-        };
-        lbl.setOpaque(false);
-        lbl.setForeground(Color.WHITE);
-        lbl.setFont(new Font("SansSerif", Font.BOLD, 11));
-        lbl.setBorder(JBUI.Borders.empty(3, 10));
-        return lbl;
+        return ConverterWidgets.formatBadge(text, FORMAT_COLORS);
     }
 
     private JComboBox<String> buildCombo(String[] items) {
-        JComboBox<String> combo = new JComboBox<>(items);
-        combo.setBackground(DROPDOWN_BG);
-        combo.setForeground(TEXT_BRIGHT);
-        combo.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        combo.setBorder(BorderFactory.createLineBorder(BORDER, 1));
-        combo.setRenderer(new DefaultListCellRenderer() {
-            @Override
-            public Component getListCellRendererComponent(JList<?> list, Object value,
-                  int index, boolean isSelected, boolean hasFocus) {
-                super.getListCellRendererComponent(list, value, index, isSelected, hasFocus);
-                setBackground(isSelected ? ACCENT : DROPDOWN_BG);
-                setForeground(TEXT_BRIGHT);
-                setBorder(new EmptyBorder(4, 10, 4, 10));
-                return this;
-            }
-        });
-        return combo;
+        return ConverterWidgets.combo(items);
     }
 
-    /** Rounded-corner button with hover effect. {@code utilStyle} gives theme-aware dark/light text. */
     private JButton buildButton(String label, Color bg, Color hover, boolean utilStyle) {
-        JButton btn = new JButton(label) {
-            @Override
-            protected void paintComponent(Graphics g) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                      RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(isEnabled() ? getBackground() : UTIL_BG);
-                g2.fillRoundRect(0, 0, getWidth(), getHeight(), BUTTON_ARC, BUTTON_ARC);
-
-                FontMetrics fm = g2.getFontMetrics(getFont());
-                g2.setColor(isEnabled() ? getForeground() : TEXT_DIM);
-                int x = (getWidth()  - fm.stringWidth(getText())) / 2;
-                int y = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
-                g2.drawString(getText(), x, y);
-                g2.dispose();
-            }
-
-            @Override protected void paintBorder(Graphics g) { /* rounded rect is the border */ }
-        };
-        btn.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        btn.setForeground(utilStyle ? UTIL_TEXT : BTN_TEXT);
-        btn.setBackground(bg);
-        btn.setOpaque(false);
-        btn.setContentAreaFilled(false);
-        btn.setBorderPainted(false);
-        btn.setFocusPainted(false);
-        btn.setBorder(JBUI.Borders.empty(5, 14));
-        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.addMouseListener(new MouseAdapter() {
-            public void mouseEntered(MouseEvent e) { if (btn.isEnabled()) btn.setBackground(hover); }
-            public void mouseExited(MouseEvent e)  { if (btn.isEnabled()) btn.setBackground(bg);    }
-        });
-        return btn;
+        return ConverterWidgets.button(label, bg, hover, utilStyle);
     }
 
     private JLabel toolbarLabel(String text) {
-        JLabel lbl = new JLabel(text);
-        lbl.setForeground(TEXT_DIM);
-        lbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        return lbl;
+        return ConverterWidgets.toolbarLabel(text);
     }
 
     private JSeparator makeSep() {
-        JSeparator sep = new JSeparator(SwingConstants.VERTICAL);
-        sep.setPreferredSize(new Dimension(1, 24));
-        sep.setForeground(new JBColor(new Color(200, 200, 200), new Color(80, 80, 80)));
-        return sep;
+        return ConverterWidgets.separator();
     }
 
     private String syntaxFor(String fmt) {
@@ -1183,17 +1077,15 @@ public class ConverterPanel implements Disposable {
     }
 
     private void setStatus(String msg, boolean ok) {
-        if (msg.length() > STATUS_MAX_LEN) {
-            statusLabel.setToolTipText(msg);
-            msg = msg.substring(0, STATUS_MAX_LEN) + "\u2026";
-        } else {
-            statusLabel.setToolTipText(null);
-        }
-        statusLabel.setText(msg);
-        statusLabel.setForeground(ok ? OK_COLOR : ERR_COLOR);
+        showStatus(msg, ok ? OK_COLOR : ERR_COLOR);
     }
 
     private void setStatusWarn(String msg) {
+        showStatus(msg, WARN_COLOR);
+    }
+
+    /** Sets the status text in the given colour, eliding over-long messages into the tooltip. */
+    private void showStatus(String msg, Color color) {
         if (msg.length() > STATUS_MAX_LEN) {
             statusLabel.setToolTipText(msg);
             msg = msg.substring(0, STATUS_MAX_LEN) + "\u2026";
@@ -1201,7 +1093,7 @@ public class ConverterPanel implements Disposable {
             statusLabel.setToolTipText(null);
         }
         statusLabel.setText(msg);
-        statusLabel.setForeground(WARN_COLOR);
+        statusLabel.setForeground(color);
     }
 
     private void updateCharCount() {

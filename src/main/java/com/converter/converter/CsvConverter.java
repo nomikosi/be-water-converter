@@ -111,6 +111,7 @@ public class CsvConverter {
         // Expand every top-level element according to the chosen mode
         List<Map<String, String>> rows = new ArrayList<>();
         for (JsonNode element : root) {
+            checkInterrupted();
             if (!element.isObject()) continue;
             List<Map<String, String>> expanded =
                   (mode == CsvMode.CROSS_JOIN)
@@ -217,6 +218,7 @@ public class CsvConverter {
     // ── FLAT_FIRST ────────────────────────────────────────────────────────────
 
     private List<Map<String, String>> expandFlatFirst(JsonNode obj, String prefix) {
+        checkInterrupted();
         String firstArrayField = null;
         for (Map.Entry<String, JsonNode> e : obj.properties()) {
             if (e.getValue().isArray() && hasObjectElements(e.getValue())) {
@@ -253,20 +255,11 @@ public class CsvConverter {
                     }
                     result = crossJoin(result, candidates);
                 } else {
-                    for (Map<String, String> row : result) row.put(key, val.toString());
+                    putInAllRows(result, key, val.toString());
                 }
-
-            } else if (val.isArray()) {
-                StringBuilder cell = new StringBuilder();
-                for (int i = 0; i < val.size(); i++) {
-                    if (i > 0) cell.append(",");
-                    cell.append(val.get(i).isNull() ? "" : val.get(i).asText());
-                }
-                for (Map<String, String> row : result) row.put(key, cell.toString());
 
             } else {
-                String text = val.isNull() ? "" : val.asText();
-                for (Map<String, String> row : result) row.put(key, text);
+                putInAllRows(result, key, scalarCell(val));
             }
         }
         return result;
@@ -275,6 +268,7 @@ public class CsvConverter {
     // ── CROSS_JOIN ────────────────────────────────────────────────────────────
 
     private List<Map<String, String>> expandCrossJoin(JsonNode obj, String prefix) {
+        checkInterrupted();
         List<Map<String, String>> result = new ArrayList<>();
         result.add(new LinkedHashMap<>());
 
@@ -298,17 +292,8 @@ public class CsvConverter {
                 }
                 result = crossJoin(result, candidates);
 
-            } else if (val.isArray()) {
-                StringBuilder cell = new StringBuilder();
-                for (int i = 0; i < val.size(); i++) {
-                    if (i > 0) cell.append(",");
-                    cell.append(val.get(i).isNull() ? "" : val.get(i).asText());
-                }
-                for (Map<String, String> row : result) row.put(key, cell.toString());
-
             } else {
-                String text = val.isNull() ? "" : val.asText();
-                for (Map<String, String> row : result) row.put(key, text);
+                putInAllRows(result, key, scalarCell(val));
             }
         }
         return result;
@@ -319,18 +304,43 @@ public class CsvConverter {
     private List<Map<String, String>> crossJoin(List<Map<String, String>> left,
           List<Map<String, String>> right) {
         if (right.isEmpty()) return left;
-        // Cross joins are the only unbounded hot path; honour interruption so
-        // the UI's Cancel action can stop a runaway Cartesian product.
-        if (Thread.currentThread().isInterrupted())
-            throw new CancellationException("Conversion cancelled");
+        checkInterrupted();
         List<Map<String, String>> product = new ArrayList<>();
-        for (Map<String, String> l : left)
+        for (Map<String, String> l : left) {
+            // A single join can itself be the runaway step, so poll per outer row
+            // rather than only on entry.
+            checkInterrupted();
             for (Map<String, String> r : right) {
                 Map<String, String> merged = new LinkedHashMap<>(l);
                 merged.putAll(r);
                 product.add(merged);
             }
+        }
         return product;
+    }
+
+    /**
+     * Row expansion is the unbounded hot path; honouring interruption is what
+     * lets the UI's Cancel action stop a runaway conversion.
+     */
+    private void checkInterrupted() {
+        if (Thread.currentThread().isInterrupted())
+            throw new CancellationException("Conversion cancelled");
+    }
+
+    private void putInAllRows(List<Map<String, String>> rows, String key, String value) {
+        for (Map<String, String> row : rows) row.put(key, value);
+    }
+
+    /** Renders a non-object value as one cell: scalar arrays join with commas, null becomes "". */
+    private String scalarCell(JsonNode val) {
+        if (!val.isArray()) return val.isNull() ? "" : val.asText();
+        StringBuilder cell = new StringBuilder();
+        for (int i = 0; i < val.size(); i++) {
+            if (i > 0) cell.append(",");
+            cell.append(val.get(i).isNull() ? "" : val.get(i).asText());
+        }
+        return cell.toString();
     }
 
     private void flattenToCells(JsonNode node, String prefix, Map<String, String> out) {
@@ -339,19 +349,10 @@ public class CsvConverter {
                 flattenToCells(e.getValue(),
                       prefix.isEmpty() ? e.getKey() : prefix + "." + e.getKey(), out);
             }
-        } else if (node.isArray()) {
-            if (hasObjectElements(node)) {
-                out.put(prefix, node.toString());
-            } else {
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < node.size(); i++) {
-                    if (i > 0) sb.append(",");
-                    sb.append(node.get(i).isNull() ? "" : node.get(i).asText());
-                }
-                out.put(prefix, sb.toString());
-            }
+        } else if (node.isArray() && hasObjectElements(node)) {
+            out.put(prefix, node.toString());
         } else {
-            out.put(prefix, node.isNull() ? "" : node.asText());
+            out.put(prefix, scalarCell(node));
         }
     }
 

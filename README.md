@@ -193,9 +193,14 @@ nested class types, and numbers are mapped to `Integer`, `Long`, `BigInteger`, `
 `Double`, or `BigDecimal` as appropriate. String values in ISO-8601 form are typed as
 `LocalDate`, `LocalDateTime`, or `OffsetDateTime` (validated with a real `java.time`
 parse, so `2025-13-99` stays a `String`); disable this via the **Detect dates** toggle.
-`java.time` imports are emitted only when actually used. The optional **Lombok
+Imports are emitted only when actually used. The optional **Lombok
 annotations** mode annotates every generated class with `@Data`, `@NoArgsConstructor`,
 and `@AllArgsConstructor`.
+
+All classes are emitted into a single block that pastes into one `.java` file, so only
+the root class is declared `public` — Java permits at most one public top-level type per
+file. Two nested objects that would claim the same class name each get their own class
+(`User`, `User2`) rather than sharing the first one's fields.
 
 ### Protobuf schema generation
 

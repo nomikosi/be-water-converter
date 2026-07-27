@@ -1,9 +1,11 @@
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
+import org.jetbrains.intellij.platform.gradle.models.ProductRelease
 import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
 
 plugins {
     id 'java'
     id 'jacoco'
-    id 'org.jetbrains.intellij.platform' version '2.16.0'
+    id 'org.jetbrains.intellij.platform' version '2.18.1'
 }
 
 group = 'com.converter'
@@ -58,7 +60,18 @@ intellijPlatform {
     }
     pluginVerification {
         ides {
-            recommended()
+            // Pinned explicitly rather than left to recommended(): its result
+            // depends on the Gradle plugin version (2.16.0 scheduled five IDEs,
+            // 2.18.1 only two), so coverage would silently shrink on upgrade.
+            select { filter ->
+                // 2025.1/2025.2 are listed as Community; from 2025.3 the unified
+                // IntelliJ IDEA distribution is listed under Ultimate only.
+                filter.types.set([IntelliJPlatformType.IntellijIdeaCommunity,
+                                  IntelliJPlatformType.IntellijIdeaUltimate])
+                filter.channels.set([ProductRelease.Channel.RELEASE])
+                filter.sinceBuild.set('251')
+                filter.untilBuild.set('262.*')
+            }
         }
     }
     publishing {
