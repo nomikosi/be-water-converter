@@ -19,7 +19,7 @@ package com.converter;
 import com.converter.converter.ConversionFileNames;
 import com.intellij.ide.scratch.ScratchRootType;
 import com.intellij.lang.Language;
-import com.intellij.openapi.command.WriteCommandAction;
+
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.fileTypes.FileTypeManager;
@@ -46,14 +46,15 @@ final class ConverterScratchFiles {
     static VirtualFile openAsScratch(Project project, String sourceName, String format, String text) {
         String name = ConversionFileNames.nameFor(sourceName, format);
         Language language = languageForExtension(ConversionFileNames.extensionFor(format));
-        return WriteCommandAction.writeCommandAction(project)
-              .withName("Be Water: Open Conversion Result")
-              .compute(() -> {
-                  VirtualFile file = ScratchRootType.getInstance()
-                        .createScratchFile(project, name, language, text);
-                  if (file != null) FileEditorManager.getInstance(project).openFile(file, true);
-                  return file;
-              });
+        // createScratchFile runs its own write command action, so wrapping it in
+        // another added no locking — it only held the exclusive write lock across
+        // the editor open and the platform's own IOException dialog. Opening
+        // outside any write action lets openFile use its WriteIntentReadAction
+        // mode, which still permits concurrent background reads.
+        VirtualFile file = ScratchRootType.getInstance()
+              .createScratchFile(project, name, language, text);
+        if (file != null) FileEditorManager.getInstance(project).openFile(file, true);
+        return file;
     }
 
     /**

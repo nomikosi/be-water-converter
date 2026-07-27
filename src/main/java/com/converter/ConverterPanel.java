@@ -234,18 +234,13 @@ public class ConverterPanel implements Disposable {
               new SpinnerNumberModel(
                     (Number) DEFAULT_ROW_WARNING_THRESHOLD, 10L, 10_000_000L, 100L));
         rowThresholdSpinner.setToolTipText(
-              "CROSS_JOIN conversions estimated to exceed this row count trigger a confirmation");
+              "CSV conversions estimated to exceed this row count trigger a confirmation");
         rowThresholdSpinner.setFont(new Font("SansSerif", Font.PLAIN, 13));
         rowThresholdSpinner.setPreferredSize(new Dimension(90, 26));
 
         csvModeCombo.addActionListener(e -> {
             CsvConverter.CsvMode m = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
-            if (m != null) {
-                csvModeHint.setText(csvModeHintFor(m));
-                boolean isCross = m == CsvConverter.CsvMode.CROSS_JOIN;
-                rowThresholdLabel.setVisible(isCross);
-                rowThresholdSpinner.setVisible(isCross);
-            }
+            if (m != null) csvModeHint.setText(csvModeHintFor(m));
         });
 
         lombokCheck = new JCheckBox("Lombok annotations");
@@ -291,8 +286,9 @@ public class ConverterPanel implements Disposable {
         csvOptions.add(csvModeHint);
         csvOptions.add(rowThresholdLabel);
         csvOptions.add(rowThresholdSpinner);
-        rowThresholdLabel.setVisible(false);
-        rowThresholdSpinner.setVisible(false);
+        // Visible for both CSV modes: the warning it governs fires for both, so
+        // hiding it under FLAT_FIRST left the default 1,000-row modal with no
+        // visible way to change the limit.
 
         csvInputOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         csvInputOptions.setOpaque(false);
@@ -446,6 +442,12 @@ public class ConverterPanel implements Disposable {
     @Override
     public void dispose() {
         disposed = true;
+        // Without this a conversion in flight when the project closes runs to
+        // completion on a pooled thread, and the CSV row-warning path could put
+        // up an application-modal dialog owned by the shared frame.
+        cancelRequested.set(true);
+        Thread worker = convertWorker;
+        if (worker != null) worker.interrupt();
         UIManager.removePropertyChangeListener(lafListener);
     }
 
@@ -946,7 +948,9 @@ public class ConverterPanel implements Disposable {
                       if (FMT_CSV.equals(outFmt)) {
                           com.fasterxml.jackson.databind.JsonNode pivot = pipeline.parseJson(asJson);
                           long estimate = pipeline.estimateCsvRows(pivot, csvMode);
-                          if (estimate > rowWarningThreshold) {
+                          // A disposed panel must not raise a modal dialog: there
+                          // is no window left to parent it to.
+                          if (estimate > rowWarningThreshold && !disposed) {
                               final long est = estimate;
                               java.util.concurrent.atomic.AtomicBoolean proceed =
                                     new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -1076,8 +1080,11 @@ public class ConverterPanel implements Disposable {
             return;
         }
         try {
-            String left  = pipeline.canonicalJson(inputText, inFmt);
-            String right = pipeline.canonicalJson(outputText, outFmt);
+            ConversionOptions opts = currentOptions();
+            // The output pane has already been filtered, so re-applying the
+            // pointer to it would throw "Path matched nothing".
+            String left  = pipeline.canonicalJson(inputText, inFmt, opts);
+            String right = pipeline.canonicalJson(outputText, outFmt, opts.withFilterPath(""));
             if (left.equals(right)) {
                 setStatus("Input and output are equivalent", true);
             }

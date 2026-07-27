@@ -67,10 +67,24 @@ public final class ConverterContextActions {
             return text != null ? text.length() : file.getLength();
         }
 
-        /** Resolves the text. Must not be called on the EDT when backed by a file. */
-        String resolve() throws Exception {
+        /**
+         * Resolves the text. Must not be called on the EDT when backed by a file.
+         *
+         * <p>An unsaved editor Document wins over the bytes on disk: autosave is
+         * off by default and does not fire when focus moves to the Project view,
+         * so reading the file directly produced a silently stale conversion with
+         * an unbounded staleness window. {@code LoadTextUtil} is used for the
+         * on-disk case so the file's own charset is honoured rather than assumed
+         * to be UTF-8.
+         */
+        String resolve() {
             if (text != null) return text;
-            return new String(file.contentsToByteArray(), StandardCharsets.UTF_8);
+            return com.intellij.openapi.application.ReadAction.compute(() -> {
+                var document = com.intellij.openapi.fileEditor.FileDocumentManager
+                      .getInstance().getCachedDocument(file);
+                if (document != null) return document.getText();
+                return com.intellij.openapi.fileEditor.impl.LoadTextUtil.loadText(file).toString();
+            });
         }
     }
 
@@ -96,14 +110,31 @@ public final class ConverterContextActions {
         return null;
     }
 
-    /** True when the file extension or content suggests something the plugin can read. */
+    /** Prefix of an editor document sniffed when the file name says nothing. */
+    private static final int SNIFF_PREFIX_CHARS = 4_096;
+
+    /**
+     * True when the context is something the plugin can actually read. A bare
+     * "is there an editor" check put both entries in every popup, so a .java
+     * file (detected as Protobuf via {@code package x.y;}) or gradle.properties
+     * (detected as TOML) offered a conversion that could only fail — and prose
+     * detected as YAML silently produced a junk scratch file.
+     */
     private static boolean isConvertible(AnActionEvent e) {
         VirtualFile file = e.getData(CommonDataKeys.VIRTUAL_FILE);
         if (file != null && !file.isDirectory()) {
             String ext = file.getExtension();
             if (ext != null && SUPPORTED_EXTENSIONS.contains(ext.toLowerCase(Locale.ROOT))) return true;
         }
-        return e.getData(CommonDataKeys.EDITOR) != null;
+        Editor editor = e.getData(CommonDataKeys.EDITOR);
+        if (editor == null) return false;
+        // No usable extension: only offer when the content itself is recognisable.
+        // A bounded prefix keeps update() cheap on a large document.
+        String selected = editor.getSelectionModel().getSelectedText();
+        String sample = selected != null && !selected.isBlank() ? selected
+              : editor.getDocument().getText(new com.intellij.openapi.util.TextRange(0,
+                    Math.min(SNIFF_PREFIX_CHARS, editor.getDocument().getTextLength())));
+        return ConversionPipeline.detectFormat(sample) != null;
     }
 
     private static final java.util.Set<String> SUPPORTED_EXTENSIONS =
@@ -197,12 +228,14 @@ public final class ConverterContextActions {
                 try {
                     text = source.resolve();
                 } catch (Exception unreadable) {
-                    ApplicationManager.getApplication().invokeLater(() ->
-                          notifyError(project, "Could not read " + describe(source) + ": "
-                                + unreadable.getMessage()));
+                    ApplicationManager.getApplication().invokeLater(
+                          () -> notifyError(project, "Could not read " + describe(source) + ": "
+                                + unreadable.getMessage()),
+                          project.getDisposed());
                     return;
                 }
-                ApplicationManager.getApplication().invokeLater(() -> onText.accept(text));
+                ApplicationManager.getApplication().invokeLater(
+                      () -> onText.accept(text), project.getDisposed());
             }
         });
     }
@@ -294,12 +327,17 @@ public final class ConverterContextActions {
                 String message = failure.getMessage() == null
                       ? failure.getClass().getSimpleName() : failure.getMessage();
                 ApplicationManager.getApplication().invokeLater(
-                      () -> notifyError(project, message));
+                      () -> notifyError(project, message), project.getDisposed());
                 return;
             }
             String finalResult = result;
-            ApplicationManager.getApplication().invokeLater(() ->
-                  ConverterScratchFiles.openAsScratch(project, sourceName, target, finalResult));
+            // Guarded on the project, not the application: closing the project
+            // mid-conversion otherwise reached CommandProcessor with a disposed
+            // project, which surfaces as an IDE internal-error report while the
+            // scratch file is never created.
+            ApplicationManager.getApplication().invokeLater(
+                  () -> ConverterScratchFiles.openAsScratch(project, sourceName, target, finalResult),
+                  project.getDisposed());
         }
     }
 }

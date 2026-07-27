@@ -36,7 +36,7 @@ final class ConverterToolWindowAccess {
 
     private ConverterToolWindowAccess() {}
 
-    /** The panel if the tool window is already open, otherwise null. */
+    /** The panel if the tool window's content already exists, otherwise null. */
     static ConverterPanel findPanel(Project project) {
         if (project == null) return null;
         ToolWindow tw = ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW_ID);
@@ -58,8 +58,16 @@ final class ConverterToolWindowAccess {
         }, true, true);
     }
 
+    /**
+     * Never calls {@code getContentManager()}: that method creates the content
+     * if it does not exist, which made {@link #findPanel} construct the whole
+     * panel on the EDT just to answer whether one was open — and made the keymap
+     * actions report themselves enabled while driving an invisible panel.
+     */
     private static ConverterPanel panelOf(ToolWindow toolWindow) {
-        for (Content content : toolWindow.getContentManager().getContents()) {
+        var manager = toolWindow.getContentManagerIfCreated();
+        if (manager == null) return null;
+        for (Content content : manager.getContents()) {
             if (content.getComponent() instanceof JComponent c
                   && c.getClientProperty(ConverterPanel.PANEL_CLIENT_PROPERTY)
                         instanceof ConverterPanel panel) {

@@ -192,6 +192,13 @@ public class CsvConverter {
         LinkedHashSet<String> headers = new LinkedHashSet<>();
         for (Map<String, String> row : rows) headers.addAll(row.keySet());
 
+        // Rows can exist while contributing no columns at all ([{}], or a filter
+        // that narrows to empty objects). Jackson's own message for that case
+        // leaks its internals, so say what actually happened.
+        if (headers.isEmpty())
+            throw new IllegalArgumentException(
+                  "Input has no columns to write: the objects being converted are empty.");
+
         CsvSchema.Builder sb = CsvSchema.builder().setUseHeader(true)
               .setColumnSeparator(format.delimiter())
               .setQuoteChar(format.quote());

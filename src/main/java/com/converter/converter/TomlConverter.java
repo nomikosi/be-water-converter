@@ -51,6 +51,11 @@ public class TomlConverter {
             node = jsonMapper.createObjectNode().set("value", node);
         }
 
+        // An empty table serialises to " = {}", which is not valid TOML — and
+        // Format turned a comment-only file into exactly that. A comment round
+        // trips, whereas "" does not: tomlToJson rejects blank input.
+        if (node.isEmpty()) return "# empty document\n";
+
         return tomlMapper.writeValueAsString(node);
     }
 }

@@ -95,18 +95,58 @@ public class JsonSchemaGenerator {
      * uniform arrays collapse to a single subschema, mixed arrays become anyOf.
      */
     private JsonNode describeItems(JsonNode array, boolean requireAllKeys) {
-        // LinkedHashSet over the serialized subschemas both de-duplicates and
-        // preserves first-seen order, so output is stable for a given input.
+        // De-duplicate on a canonical (key-sorted) rendering, but emit the
+        // subschema in its first-seen order. Comparing raw toString() meant
+        // {"a":1,"b":2} and {"b":3,"a":4} produced two anyOf branches that
+        // accept exactly the same documents.
         Set<String> seen = new LinkedHashSet<>();
         ArrayNode variants = jsonMapper.createArrayNode();
         for (JsonNode item : array) {
             ObjectNode itemSchema = describe(item, requireAllKeys);
-            if (seen.add(itemSchema.toString())) variants.add(itemSchema);
+            if (seen.add(canonicalKey(itemSchema))) variants.add(itemSchema);
         }
         if (variants.size() == 1) return variants.get(0);
         ObjectNode anyOf = jsonMapper.createObjectNode();
         anyOf.set("anyOf", variants);
         return anyOf;
+    }
+
+    /**
+     * Order-independent identity for a subschema: object keys sorted recursively
+     * and {@code required} sorted, so two schemas that accept the same documents
+     * render identically.
+     */
+    private String canonicalKey(JsonNode schema) {
+        if (schema.isObject()) {
+            java.util.List<String> names = new java.util.ArrayList<>();
+            schema.fieldNames().forEachRemaining(names::add);
+            java.util.Collections.sort(names);
+            StringBuilder sb = new StringBuilder("{");
+            for (String name : names) {
+                if (sb.length() > 1) sb.append(',');
+                sb.append('"').append(name).append("\":");
+                JsonNode value = schema.get(name);
+                // 'required' is a set, not a sequence: its order is not meaningful.
+                if ("required".equals(name) && value.isArray()) {
+                    java.util.List<String> req = new java.util.ArrayList<>();
+                    value.forEach(v -> req.add(v.asText()));
+                    java.util.Collections.sort(req);
+                    sb.append(req);
+                } else {
+                    sb.append(canonicalKey(value));
+                }
+            }
+            return sb.append('}').toString();
+        }
+        if (schema.isArray()) {
+            StringBuilder sb = new StringBuilder("[");
+            for (JsonNode item : schema) {
+                if (sb.length() > 1) sb.append(',');
+                sb.append(canonicalKey(item));
+            }
+            return sb.append(']').toString();
+        }
+        return schema.toString();
     }
 
     private String scalarType(JsonNode node) {

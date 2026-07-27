@@ -141,7 +141,17 @@ public class ConversionPipeline {
      * formats or different key orders.
      */
     public String canonicalJson(String input, String fmt) throws Exception {
-        return prettyJson(sortKeys(normalizeToJson(input, fmt, ConversionOptions.DEFAULTS)));
+        return canonicalJson(input, fmt, ConversionOptions.DEFAULTS);
+    }
+
+    /**
+     * @param opts the user's own settings. Passing defaults here made Compare
+     *             read a semicolon- or tab-delimited CSV as a single column named
+     *             after the whole header line, so a byte-perfect conversion was
+     *             reported as a wholesale difference.
+     */
+    public String canonicalJson(String input, String fmt, ConversionOptions opts) throws Exception {
+        return prettyJson(sortKeys(normalizeToJson(input, fmt, opts)));
     }
 
     /** JSON pivot -> desired output format. */
@@ -248,11 +258,18 @@ public class ConversionPipeline {
         // Proto needs a keyword: 'syntax = "proto3";' or a message/enum block.
         if (PROTO_MARKER.matcher(s).find()) return FMT_PROTO;
 
-        // TOML tables ([section]) and key = value. Checked before YAML because
-        // 'key = value' is not valid YAML mapping syntax, while 'key: value' is.
-        if (TOML_MARKER.matcher(s).find()) return FMT_TOML;
+        // TOML vs YAML is decided from the FIRST significant line, not a
+        // document-wide search. Searching the whole document meant one indented
+        // KEY=value anywhere — a shell assignment inside a `run: |` block —
+        // classified an entire GitHub Actions or k8s file as TOML.
+        String firstLine = firstSignificantLine(s);
+        if (firstLine != null) {
+            if (YAML_MARKER.matcher(firstLine).find()) return FMT_YAML;
+            if (TOML_MARKER.matcher(firstLine).find()) return FMT_TOML;
+        }
 
-        // A YAML mapping or list at the top level.
+        // Nothing decisive on line one: fall back to the document-wide scan.
+        if (TOML_MARKER.matcher(s).find()) return FMT_TOML;
         if (YAML_MARKER.matcher(s).find()) return FMT_YAML;
 
         // CSV last: it is the weakest signal, so require a delimiter in the
@@ -268,6 +285,20 @@ public class ConversionPipeline {
           "(?m)^\\s*(\\[[^]]+]\\s*$|[A-Za-z_][\\w.-]*\\s*=)");
     private static final java.util.regex.Pattern YAML_MARKER = java.util.regex.Pattern.compile(
           "(?m)^\\s*(-\\s+\\S|[A-Za-z_][\\w.-]*\\s*:(\\s|$))");
+
+    /**
+     * First line that is neither blank nor a comment. {@code #} introduces a
+     * comment in both YAML and TOML, so a leading comment block must not decide
+     * the format.
+     */
+    private static String firstSignificantLine(String s) {
+        for (String line : s.split("\r?\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) continue;
+            return line;
+        }
+        return null;
+    }
 
     /** A lone [table] or [[array.of.tables]] header on line 1, plus a later 'key =' line. */
     private static final java.util.regex.Pattern TOML_TABLE_HEADER =

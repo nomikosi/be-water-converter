@@ -46,11 +46,19 @@ public class ProtoConverter {
      * Groups: (1) repeated/optional prefix  (2) type (dotted / generic)
      *         (3) field name  (4) field number.
      */
+    /**
+     * Optional trailing field-option list, e.g. {@code [deprecated = true]}.
+     * Standard proto3 and common in real schemas; without it a single annotated
+     * field made the whole enclosing message fail to parse.
+     */
+    private static final String FIELD_OPTIONS = "(?:\\s*\\[[^\\]]*\\])?";
+
     private static final Pattern FIELD_PATTERN = Pattern.compile(
         "(repeated\\s+|optional\\s+)?" +
         "([\\w.]+(?:\\s*<[^>]+>)?)" +
         "\\s+(\\w+)" +
         "\\s*=\\s*(\\d+)" +
+        FIELD_OPTIONS +
         "\\s*;");
 
     /**
@@ -58,7 +66,8 @@ public class ProtoConverter {
      * types (google.protobuf.Timestamp) and generic types (map&lt;k, v&gt;).
      */
     private static final Pattern STATEMENT_PATTERN = Pattern.compile(
-        "(?:repeated\\s+|optional\\s+|required\\s+)?[\\w.]+(?:\\s*<[^>]*>)?\\s+(\\w+)\\s*=\\s*(\\d+)",
+        "(?:repeated\\s+|optional\\s+|required\\s+)?[\\w.]+(?:\\s*<[^>]*>)?\\s+(\\w+)\\s*=\\s*(\\d+)"
+              + FIELD_OPTIONS,
         Pattern.DOTALL);
 
     /** Statements that are legal proto3 but irrelevant for structural conversion. */
@@ -67,7 +76,7 @@ public class ProtoConverter {
 
     /** A single enum value statement: {@code NAME = number}. */
     private static final Pattern ENUM_VALUE_PATTERN = Pattern.compile(
-        "(\\w+)\\s*=\\s*-?\\d+", Pattern.DOTALL);
+        "(\\w+)\\s*=\\s*-?\\d+" + FIELD_OPTIONS, Pattern.DOTALL);
 
     private static final Set<String> SCALAR_TYPES = Set.of(
         "string", "int32", "sint32", "uint32", "fixed32", "sfixed32",
