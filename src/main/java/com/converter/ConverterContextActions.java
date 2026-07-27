@@ -79,12 +79,16 @@ public final class ConverterContextActions {
          */
         String resolve() {
             if (text != null) return text;
-            return com.intellij.openapi.application.ReadAction.compute(() -> {
-                var document = com.intellij.openapi.fileEditor.FileDocumentManager
-                      .getInstance().getCachedDocument(file);
-                if (document != null) return document.getText();
-                return com.intellij.openapi.fileEditor.impl.LoadTextUtil.loadText(file).toString();
-            });
+            // runReadAction(Computable), not ReadAction.compute(ThrowableComputable):
+            // the latter is deprecated as of 2026.2 and the verifier flags it.
+            return ApplicationManager.getApplication().runReadAction(
+                  (com.intellij.openapi.util.Computable<String>) () -> {
+                      var document = com.intellij.openapi.fileEditor.FileDocumentManager
+                            .getInstance().getCachedDocument(file);
+                      if (document != null) return document.getText();
+                      return com.intellij.openapi.fileEditor.impl.LoadTextUtil
+                            .loadText(file).toString();
+                  });
         }
     }
 
