@@ -6,7 +6,8 @@
   *Be water, my friend — let your data flow between formats.*
 
   An IntelliJ IDEA plugin that converts data between JSON, XML, YAML, CSV, TOML and
-  Protobuf, and generates Java POJOs — all inside a syntax-highlighted tool window.
+  Protobuf, and generates Java POJOs and JSON Schema — all inside a syntax-highlighted
+  tool window.
 
   [![Build](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml/badge.svg)](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml)
   [![Java 21](https://img.shields.io/badge/Java-21-blue)](https://openjdk.org/projects/jdk/21/)
@@ -45,12 +46,15 @@ Once installed, open the **Be Water** tool window from the right side bar, or vi
 
 | Input | Supported outputs |
 |---|---|
-| JSON | XML, YAML, CSV, TOML, Protobuf, Java POJO |
-| XML | JSON, YAML, CSV, TOML, Protobuf, Java POJO |
-| YAML | JSON, XML, CSV, TOML, Protobuf, Java POJO |
-| CSV | JSON, XML, YAML, TOML, Protobuf, Java POJO |
-| TOML | JSON, XML, YAML, CSV, Protobuf, Java POJO |
-| Protobuf | JSON, XML, YAML, CSV, TOML, Java POJO |
+| JSON | XML, YAML, CSV, TOML, Protobuf, Java POJO, JSON Schema |
+| XML | JSON, YAML, CSV, TOML, Protobuf, Java POJO, JSON Schema |
+| YAML | JSON, XML, CSV, TOML, Protobuf, Java POJO, JSON Schema |
+| CSV | JSON, XML, YAML, TOML, Protobuf, Java POJO, JSON Schema |
+| TOML | JSON, XML, YAML, CSV, Protobuf, Java POJO, JSON Schema |
+| Protobuf | JSON, XML, YAML, CSV, TOML, Java POJO, JSON Schema |
+
+`Java POJO` and `JSON Schema` are output-only: neither is accepted as an input format,
+so **Swap** refuses to move them to the input side.
 
 Most conversions follow a two-step flow: input is first normalized to JSON, then JSON is
 rendered to the requested target format. JSON input is parsed leniently — comments,
@@ -113,12 +117,35 @@ recover truncated input during interactive editing.
 
 ### Conversion-specific options bar
 
-When the selected input or output format has extra settings, a dedicated options bar
-appears below the toolbar. CSV output shows a mode selector with a live hint; CSV input
-shows an **Infer types** toggle; Java POJO output shows a Lombok toggle. The bar hides
-itself when the current conversion has no extra settings. All option values (CSV mode,
-row-warning threshold, Lombok, type inference, split orientation) are persisted across
-IDE restarts.
+An options bar sits below the toolbar. **Sort keys** applies to every conversion and is
+always shown; the format-specific groups appear only when they are relevant. CSV output
+shows a mode selector with a live hint; CSV on either side shows a **Delimiter** selector;
+CSV or XML input shows an **Infer types** toggle; Java POJO output shows Lombok and date
+toggles. All option values (CSV mode, delimiter, row-warning threshold, Lombok, type
+inference, date detection, sort keys, split orientation) are persisted across IDE restarts.
+
+### CSV delimiter
+
+Comma, semicolon, and tab are supported for both reading and writing. Semicolon-separated
+CSV is the norm across much of Europe, where the comma is the decimal separator; before
+this option such a file parsed as a single column. The delimiter applies to whichever side
+of the conversion is CSV.
+
+### Automatic format detection
+
+Pasting or dropping content into the input editor sets the input format automatically:
+JSON, XML, YAML, TOML, Protobuf, and CSV are recognized from the content itself. A leading
+`[` is genuinely ambiguous — it opens both a JSON array and a TOML `[table]` header — so
+detection looks for a following `key = value` line before deciding. Detection only ever
+fires on a paste-sized insertion, never on typing, and stays silent when it cannot tell,
+so it will not fight a format you selected yourself.
+
+### Sort keys
+
+**Sort keys** orders object keys alphabetically throughout the document, leaving array
+order untouched. Two documents carrying the same data in different key orders canonicalize
+to the same output, which makes conversions diffable across runs and across sources. It is
+applied to the internal JSON pivot, so every target format inherits the ordering.
 
 ### CSV / XML type inference
 
@@ -201,6 +228,16 @@ All classes are emitted into a single block that pastes into one `.java` file, s
 the root class is declared `public` — Java permits at most one public top-level type per
 file. Two nested objects that would claim the same class name each get their own class
 (`User`, `User2`) rather than sharing the first one's fields.
+
+### JSON Schema generation
+
+`JSON Schema` output infers a [draft 2020-12](https://json-schema.org/draft/2020-12/schema)
+schema from the input document. Every key that appears in the example is listed as
+`required` — an example can only show what *is* present, never what is optional. Array
+elements are merged rather than sampled, so a heterogeneous array yields an `anyOf` of the
+distinct element schemas instead of silently adopting the first element's shape; an empty
+array places no constraint on its items. Integral numbers map to `integer` and other
+numbers to `number`.
 
 ### Protobuf schema generation
 
@@ -343,7 +380,7 @@ GitHub release. Publishing requires a `PUBLISH_TOKEN` repository secret containi
 
 | Property | Value |
 |---|---|
-| Plugin version | 1.4.1 |
+| Plugin version | 1.5.0 |
 | Minimum IDE build | 251 (IntelliJ IDEA 2025.1) |
 | Maximum IDE build | Open-ended |
 | Java | 21 |

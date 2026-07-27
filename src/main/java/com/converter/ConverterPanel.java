@@ -59,17 +59,27 @@ public class ConverterPanel implements Disposable {
     private static final String PROP_DETECT_DATES   = "beWater.detectDates";
     private static final String PROP_SPLIT_VERTICAL = "beWater.splitVertical";
     private static final String PROP_WRAP_LINES     = "beWater.wrapLines";
+    private static final String PROP_SORT_KEYS      = "beWater.sortKeys";
+    private static final String PROP_CSV_DELIMITER  = "beWater.csvDelimiter";
+    private static final String PROP_AUTO_DETECT    = "beWater.autoDetectFormat";
 
     /** Above this output size, syntax highlighting is disabled to keep the EDT responsive. */
     private static final int HIGHLIGHT_LIMIT_CHARS = 2_000_000;
+
+    /**
+     * A single insertion of at least this many characters is treated as a paste
+     * or drop rather than typing, and triggers input-format detection.
+     */
+    private static final int PASTE_MIN_CHARS = 12;
 
     static final String FMT_JSON  = ConversionPipeline.FMT_JSON;
     static final String FMT_XML   = ConversionPipeline.FMT_XML;
     static final String FMT_YAML  = ConversionPipeline.FMT_YAML;
     static final String FMT_CSV   = ConversionPipeline.FMT_CSV;
     static final String FMT_TOML  = ConversionPipeline.FMT_TOML;
-    static final String FMT_PROTO = ConversionPipeline.FMT_PROTO;
-    static final String FMT_JAVA  = ConversionPipeline.FMT_JAVA;
+    static final String FMT_PROTO  = ConversionPipeline.FMT_PROTO;
+    static final String FMT_JAVA   = ConversionPipeline.FMT_JAVA;
+    static final String FMT_SCHEMA = ConversionPipeline.FMT_SCHEMA;
 
     private static final Map<String, Color> FORMAT_COLORS = new LinkedHashMap<>();
     static {
@@ -80,20 +90,38 @@ public class ConverterPanel implements Disposable {
         FORMAT_COLORS.put(FMT_TOML,  new JBColor(new Color(44,  62,  80), new Color(149, 165, 166)));
         FORMAT_COLORS.put(FMT_PROTO, new JBColor(new Color(192, 57,  43), new Color(231, 76,  60)));
         FORMAT_COLORS.put(FMT_JAVA,  new JBColor(new Color(142, 110, 45), new Color(243, 196, 66)));
+        FORMAT_COLORS.put(FMT_SCHEMA, new JBColor(new Color(0, 121, 107), new Color(38, 166, 154)));
     }
 
     private static final Map<String, String[]> VALID_OUTPUTS = new LinkedHashMap<>();
     static {
-        VALID_OUTPUTS.put(FMT_JSON,  new String[]{FMT_XML,  FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA});
-        VALID_OUTPUTS.put(FMT_XML,   new String[]{FMT_JSON, FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA});
-        VALID_OUTPUTS.put(FMT_YAML,  new String[]{FMT_JSON, FMT_XML,  FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA});
-        VALID_OUTPUTS.put(FMT_CSV,   new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_TOML, FMT_PROTO, FMT_JAVA});
-        VALID_OUTPUTS.put(FMT_TOML,  new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_CSV,  FMT_PROTO, FMT_JAVA});
-        VALID_OUTPUTS.put(FMT_PROTO, new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_CSV,  FMT_TOML,  FMT_JAVA});
+        VALID_OUTPUTS.put(FMT_JSON,  new String[]{FMT_XML,  FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_SCHEMA});
+        VALID_OUTPUTS.put(FMT_XML,   new String[]{FMT_JSON, FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_SCHEMA});
+        VALID_OUTPUTS.put(FMT_YAML,  new String[]{FMT_JSON, FMT_XML,  FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_SCHEMA});
+        VALID_OUTPUTS.put(FMT_CSV,   new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_SCHEMA});
+        VALID_OUTPUTS.put(FMT_TOML,  new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_CSV,  FMT_PROTO, FMT_JAVA, FMT_SCHEMA});
+        VALID_OUTPUTS.put(FMT_PROTO, new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_CSV,  FMT_TOML,  FMT_JAVA, FMT_SCHEMA});
     }
 
     private static final String[] ALL_INPUTS =
           {FMT_JSON, FMT_XML, FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO};
+
+    /** Delimiter choices offered in the options bar, with their converter format. */
+    enum CsvDelimiter {
+        COMMA("Comma  ,",     CsvConverter.CsvFormat.DEFAULT),
+        SEMICOLON("Semicolon  ;", CsvConverter.CsvFormat.SEMICOLON),
+        TAB("Tab",            CsvConverter.CsvFormat.TAB);
+
+        private final String label;
+        final CsvConverter.CsvFormat format;
+
+        CsvDelimiter(String label, CsvConverter.CsvFormat format) {
+            this.label = label;
+            this.format = format;
+        }
+
+        @Override public String toString() { return label; }
+    }
 
     private static final long DEFAULT_ROW_WARNING_THRESHOLD = 1_000L;
 
@@ -122,10 +150,14 @@ public class ConverterPanel implements Disposable {
     private final JCheckBox lombokCheck;
     private final JCheckBox detectDatesCheck;
     private final JCheckBox inferTypesCheck;
+    private final JCheckBox sortKeysCheck;
+    private final JComboBox<CsvDelimiter> csvDelimiterCombo;
     private final ConversionHistory history = new ConversionHistory();
     private final JPanel    csvOptions;
     private final JPanel    csvInputOptions;
+    private final JPanel    csvDelimiterOptions;
     private final JPanel    javaOptions;
+    private final JPanel    generalOptions;
     private final JPanel    optionsBar;
     private final JSplitPane splitPane;
     private JButton convertBtn;
@@ -141,6 +173,8 @@ public class ConverterPanel implements Disposable {
     private final PropertyChangeListener lafListener;
     private volatile boolean disposed;
     private volatile Thread convertWorker;
+    /** Suppressed while the panel itself replaces the input (file load, history restore). */
+    private boolean autoDetectFormat = true;
 
     private final ConversionPipeline pipeline = new ConversionPipeline();
 
@@ -165,9 +199,15 @@ public class ConverterPanel implements Disposable {
                       setStatus(message, ok);
                   }
                   @Override public void loaded(String content, String detectedFormat, String fileName) {
-                      inputArea.setText(content);
-                      inputArea.setCaretPosition(0);
-                      if (detectedFormat != null) inputCombo.setSelectedItem(detectedFormat);
+                      // A known extension beats content sniffing; without one, let
+                      // the content detector have its say instead of suppressing it.
+                      if (detectedFormat != null) {
+                          setInputTextQuietly(content);
+                          inputCombo.setSelectedItem(detectedFormat);
+                      } else {
+                          inputArea.setText(content);
+                          inputArea.setCaretPosition(0);
+                      }
                       setStatus("Loaded " + fileName, true);
                   }
               });
@@ -231,6 +271,18 @@ public class ConverterPanel implements Disposable {
         inferTypesCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
         inferTypesCheck.setFocusPainted(false);
 
+        sortKeysCheck = new JCheckBox("Sort keys", false);
+        sortKeysCheck.setToolTipText(
+              "Sort object keys alphabetically so output is stable and diffable (array order is kept)");
+        sortKeysCheck.setOpaque(false);
+        sortKeysCheck.setForeground(TEXT_BRIGHT);
+        sortKeysCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        sortKeysCheck.setFocusPainted(false);
+
+        csvDelimiterCombo = ConverterWidgets.combo(CsvDelimiter.values());
+        csvDelimiterCombo.setToolTipText(
+              "Delimiter used when reading and writing CSV (semicolon is common in Europe)");
+
         csvOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         csvOptions.setOpaque(false);
         csvOptions.add(toolbarLabel("CSV mode:"));
@@ -246,17 +298,30 @@ public class ConverterPanel implements Disposable {
         csvInputOptions.add(toolbarLabel("Input:"));
         csvInputOptions.add(inferTypesCheck);
 
+        // Shown whenever CSV is on either side — the delimiter applies to both.
+        csvDelimiterOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        csvDelimiterOptions.setOpaque(false);
+        csvDelimiterOptions.add(toolbarLabel("Delimiter:"));
+        csvDelimiterOptions.add(csvDelimiterCombo);
+
         javaOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         javaOptions.setOpaque(false);
         javaOptions.add(toolbarLabel("Java POJO:"));
         javaOptions.add(lombokCheck);
         javaOptions.add(detectDatesCheck);
 
+        // Applies to every conversion, so it is always visible.
+        generalOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        generalOptions.setOpaque(false);
+        generalOptions.add(sortKeysCheck);
+
         optionsBar = new JPanel(new WrapLayout(FlowLayout.LEFT, 8, 5));
         optionsBar.setBackground(BG_LABEL_BAR);
         optionsBar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, BORDER));
         optionsBar.add(toolbarLabel("Options:"));
+        optionsBar.add(generalOptions);
         optionsBar.add(csvInputOptions);
+        optionsBar.add(csvDelimiterOptions);
         optionsBar.add(csvOptions);
         optionsBar.add(javaOptions);
 
@@ -345,6 +410,8 @@ public class ConverterPanel implements Disposable {
         inputArea.getDocument().addDocumentListener(countUpdater);
         outputArea.getDocument().addDocumentListener(countUpdater);
 
+        installPasteDetection();
+
         // ── re-apply editor theme when IDE L&F changes ───────────────────
         // UIManager is static: the listener must be removed in dispose() or
         // every panel instance leaks for the lifetime of the IDE.
@@ -395,6 +462,13 @@ public class ConverterPanel implements Disposable {
         if (loadProp(PROP_DETECT_DATES) != null) {
             detectDatesCheck.setSelected("true".equals(loadProp(PROP_DETECT_DATES)));
         }
+        sortKeysCheck.setSelected("true".equals(loadProp(PROP_SORT_KEYS)));
+        String delimiter = loadProp(PROP_CSV_DELIMITER);
+        if (delimiter != null) {
+            try {
+                csvDelimiterCombo.setSelectedItem(CsvDelimiter.valueOf(delimiter));
+            } catch (IllegalArgumentException ignored) {}
+        }
         if ("true".equals(loadProp(PROP_WRAP_LINES))) {
             setLineWrap(true);
         }
@@ -418,6 +492,12 @@ public class ConverterPanel implements Disposable {
               saveProp(PROP_INFER_TYPES, String.valueOf(inferTypesCheck.isSelected())));
         detectDatesCheck.addActionListener(e ->
               saveProp(PROP_DETECT_DATES, String.valueOf(detectDatesCheck.isSelected())));
+        sortKeysCheck.addActionListener(e ->
+              saveProp(PROP_SORT_KEYS, String.valueOf(sortKeysCheck.isSelected())));
+        csvDelimiterCombo.addActionListener(e -> {
+            Object d = csvDelimiterCombo.getSelectedItem();
+            if (d != null) saveProp(PROP_CSV_DELIMITER, ((CsvDelimiter) d).name());
+        });
     }
 
     private static String loadProp(String key) {
@@ -561,6 +641,42 @@ public class ConverterPanel implements Disposable {
         return bar;
     }
 
+    /**
+     * Replaces the input text without triggering paste detection, for the cases
+     * where the panel already knows the format. Detection is deferred through
+     * invokeLater, so re-enabling through the same queue lands after it.
+     */
+    private void setInputTextQuietly(String text) {
+        autoDetectFormat = false;
+        inputArea.setText(text);
+        inputArea.setCaretPosition(0);
+        SwingUtilities.invokeLater(() -> autoDetectFormat = true);
+    }
+
+    /**
+     * Switches the input format to match pasted content. Only large single
+     * insertions are considered a paste — reacting to ordinary typing would
+     * fight the user as a document takes shape mid-keystroke. A detection that
+     * matches the current selection, or that returns null, changes nothing.
+     */
+    private void installPasteDetection() {
+        inputArea.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent e) {
+                if (e.getLength() < PASTE_MIN_CHARS) return;
+                // The document is locked during the event; defer the combo change.
+                SwingUtilities.invokeLater(() -> {
+                    if (disposed || !autoDetectFormat) return;
+                    String detected = ConversionPipeline.detectFormat(inputArea.getText());
+                    if (detected == null || detected.equals(inputCombo.getSelectedItem())) return;
+                    inputCombo.setSelectedItem(detected);
+                    setStatus("Detected " + detected + " input", true);
+                });
+            }
+            @Override public void removeUpdate(DocumentEvent e)  { }
+            @Override public void changedUpdate(DocumentEvent e) { }
+        });
+    }
+
     // ── Soft-wrap ─────────────────────────────────────────────────────────
     private void setLineWrap(boolean wrap) {
         for (RSyntaxTextArea area : new RSyntaxTextArea[]{inputArea, outputArea}) {
@@ -616,8 +732,7 @@ public class ConverterPanel implements Disposable {
         }
 
         inputCombo.setSelectedItem(entry.inputFormat());   // updates syntax, badge, output combo
-        inputArea.setText(entry.input());
-        inputArea.setCaretPosition(0);
+        setInputTextQuietly(entry.input());
 
         outputCombo.setSelectedItem(entry.outputFormat());
         outputArea.setSyntaxEditingStyle(syntaxFor(entry.outputFormat()));
@@ -718,14 +833,30 @@ public class ConverterPanel implements Disposable {
         String outFmt = (String) outputCombo.getSelectedItem();
         String inFmt  = (String) inputCombo.getSelectedItem();
         boolean isCsvOut  = FMT_CSV.equals(outFmt);
+        boolean isCsvIn   = FMT_CSV.equals(inFmt);
         boolean isJava    = FMT_JAVA.equals(outFmt);
-        boolean untypedIn = FMT_CSV.equals(inFmt) || FMT_XML.equals(inFmt);
+        boolean untypedIn = isCsvIn || FMT_XML.equals(inFmt);
         csvOptions.setVisible(isCsvOut);
         csvInputOptions.setVisible(untypedIn);
+        csvDelimiterOptions.setVisible(isCsvIn || isCsvOut);
         javaOptions.setVisible(isJava);
-        optionsBar.setVisible(isCsvOut || isJava || untypedIn);
+        // generalOptions (sort keys) applies to everything, so the bar is always shown.
+        optionsBar.setVisible(true);
         optionsBar.revalidate();
         optionsBar.repaint();
+    }
+
+    /** Snapshot of every option control. Must be called on the EDT. */
+    private ConversionOptions currentOptions() {
+        CsvDelimiter delimiter = (CsvDelimiter) csvDelimiterCombo.getSelectedItem();
+        CsvConverter.CsvMode mode = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
+        return new ConversionOptions(
+              mode == null ? CsvConverter.CsvMode.FLAT_FIRST : mode,
+              delimiter == null ? CsvConverter.CsvFormat.DEFAULT : delimiter.format,
+              lombokCheck.isSelected(),
+              detectDatesCheck.isSelected(),
+              inferTypesCheck.isSelected(),
+              sortKeysCheck.isSelected());
     }
 
     private static String csvModeHintFor(CsvConverter.CsvMode mode) {
@@ -748,11 +879,9 @@ public class ConverterPanel implements Disposable {
         final String inFmt     = (String) inputCombo.getSelectedItem();
         final String outFmt    = (String) outputCombo.getSelectedItem();
         final CsvConverter.CsvMode csvMode = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
-        final boolean useLombok = lombokCheck.isSelected();
         final long rowWarningThreshold = ((Number) rowThresholdSpinner.getValue()).longValue();
-
-        final boolean inferCsvTypes = inferTypesCheck.isSelected();
-        final boolean detectDates   = detectDatesCheck.isSelected();
+        // Snapshot every option on the EDT: the worker must not read Swing state.
+        final ConversionOptions opts = currentOptions();
 
         cancelRequested.set(false);
         convertBtn.setText("Cancel");
@@ -766,7 +895,7 @@ public class ConverterPanel implements Disposable {
                       // Cancel may have been pressed while this task was still queued,
                       // in which case there was no thread to interrupt.
                       checkCancelled();
-                      String asJson = pipeline.normalizeToJson(rawInput, inFmt, inferCsvTypes);
+                      String asJson = pipeline.normalizeToJson(rawInput, inFmt, opts);
                       checkCancelled();
 
                       if (FMT_CSV.equals(outFmt)) {
@@ -789,10 +918,10 @@ public class ConverterPanel implements Disposable {
                                   throw new CancellationException("Conversion cancelled");
                               }
                           }
-                          return pipeline.renderCsv(pivot, csvMode);
+                          return pipeline.renderCsv(pivot, csvMode, opts.csvFormat());
                       }
 
-                      return pipeline.renderFromJson(asJson, outFmt, csvMode, useLombok, detectDates);
+                      return pipeline.renderFromJson(asJson, outFmt, opts);
                   } catch (Exception ex) {
                       throw new java.util.concurrent.CompletionException(ex);
                   } finally {
@@ -861,8 +990,7 @@ public class ConverterPanel implements Disposable {
         String fmt   = (String) inputCombo.getSelectedItem();
         if (input.isEmpty()) { setStatus("Input is empty", false); return; }
         try {
-            inputArea.setText(pipeline.formatInput(input, fmt, inferTypesCheck.isSelected()));
-            inputArea.setCaretPosition(0);
+            setInputTextQuietly(pipeline.formatInput(input, fmt, currentOptions()));
             setStatus("\u2713  Input formatted", true);
         } catch (Exception ex) {
             showError("Format failed: " + ex.getMessage());
@@ -895,7 +1023,7 @@ public class ConverterPanel implements Disposable {
         String tmpSyntax = inputArea.getSyntaxEditingStyle();
 
         inputArea.setSyntaxEditingStyle(outputArea.getSyntaxEditingStyle());
-        inputArea.setText(outputArea.getText());
+        setInputTextQuietly(outputArea.getText());
         outputArea.setSyntaxEditingStyle(tmpSyntax);
         outputArea.setText(tmpText);
 
@@ -1041,7 +1169,7 @@ public class ConverterPanel implements Disposable {
     private String syntaxFor(String fmt) {
         if (fmt == null) return SyntaxConstants.SYNTAX_STYLE_NONE;
         return switch (fmt) {
-            case FMT_JSON  -> SyntaxConstants.SYNTAX_STYLE_JSON;
+            case FMT_JSON, FMT_SCHEMA -> SyntaxConstants.SYNTAX_STYLE_JSON;
             case FMT_XML   -> SyntaxConstants.SYNTAX_STYLE_XML;
             case FMT_YAML  -> SyntaxConstants.SYNTAX_STYLE_YAML;
             case FMT_JAVA  -> SyntaxConstants.SYNTAX_STYLE_JAVA;

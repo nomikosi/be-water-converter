@@ -55,6 +55,7 @@ final class ConverterFileOps {
           Set.of("json", "xml", "yaml", "yml", "csv", "toml", "proto");
 
     private static final Map<String, String> FORMAT_EXTENSIONS = Map.of(
+          ConversionPipeline.FMT_SCHEMA, "json",
           ConversionPipeline.FMT_JSON,  "json",
           ConversionPipeline.FMT_XML,   "xml",
           ConversionPipeline.FMT_YAML,  "yaml",

@@ -39,8 +39,9 @@ public class ConversionPipeline {
     public static final String FMT_YAML  = "YAML";
     public static final String FMT_CSV   = "CSV";
     public static final String FMT_TOML  = "TOML";
-    public static final String FMT_PROTO = "Protobuf";
-    public static final String FMT_JAVA  = "Java POJO";
+    public static final String FMT_PROTO  = "Protobuf";
+    public static final String FMT_JAVA   = "Java POJO";
+    public static final String FMT_SCHEMA = "JSON Schema";
 
     /**
      * Lenient read settings for JSON input: accepts comments, trailing commas,
@@ -74,6 +75,7 @@ public class ConversionPipeline {
     private final TomlConverter     toml     = new TomlConverter();
     private final ProtoConverter    proto    = new ProtoConverter();
     private final JavaPojoGenerator pojo     = new JavaPojoGenerator();
+    private final JsonSchemaGenerator schema = new JsonSchemaGenerator();
 
     /**
      * Normalise input to JSON as the internal pivot format.
@@ -81,49 +83,101 @@ public class ConversionPipeline {
      */
     public String normalizeToJson(String rawInput, String inFmt, boolean inferTypes)
           throws Exception {
+        return normalizeToJson(rawInput, inFmt, ConversionOptions.DEFAULTS.withInferTypes(inferTypes));
+    }
+
+    public String normalizeToJson(String rawInput, String inFmt, ConversionOptions opts)
+          throws Exception {
         String input = FMT_JSON.equals(inFmt) ? autoClose(rawInput) : rawInput;
-        return switch (inFmt) {
+        boolean inferTypes = opts.inferTypes();
+        String pivot = switch (inFmt) {
             // Lenient parse (comments, trailing commas, single quotes), then
             // re-serialize compactly so downstream converters always see strict
             // JSON without paying to indent a string nobody reads.
             case FMT_JSON  -> COMPACT_JSON.writeValueAsString(COMPACT_JSON.readTree(input));
             case FMT_XML   -> jsonXml.xmlToJson(input, inferTypes);
             case FMT_YAML  -> jsonYaml.yamlToJson(input);
-            case FMT_CSV   -> csv.csvToJson(input, inferTypes);
+            case FMT_CSV   -> csv.csvToJson(input, inferTypes, opts.csvFormat());
             case FMT_TOML  -> toml.tomlToJson(input);
             case FMT_PROTO -> proto.protoToJson(input);
             default -> throw new UnsupportedOperationException("Unknown input: " + inFmt);
         };
+        // Sorting the pivot rather than each renderer's output means every target
+        // format inherits key ordering from one place.
+        return opts.sortKeys() ? sortKeys(pivot) : pivot;
     }
 
     /** JSON pivot -> desired output format. */
     public String renderFromJson(String asJson, String outFmt, CsvConverter.CsvMode csvMode,
           boolean useLombok, boolean detectDates) throws Exception {
+        return renderFromJson(asJson, outFmt, ConversionOptions.DEFAULTS
+              .withCsvMode(csvMode).withLombok(useLombok).withDetectDates(detectDates));
+    }
+
+    public String renderFromJson(String asJson, String outFmt, ConversionOptions opts)
+          throws Exception {
         return switch (outFmt) {
-            case FMT_JSON  -> prettyJson(asJson);
-            case FMT_XML   -> jsonXml.jsonToXml(asJson);
-            case FMT_YAML  -> jsonYaml.jsonToYaml(asJson);
-            case FMT_CSV   -> csv.jsonToCsv(asJson, csvMode);
-            case FMT_TOML  -> toml.jsonToToml(asJson);
-            case FMT_PROTO -> proto.jsonToProto(asJson);
-            case FMT_JAVA  -> pojo.fromJson(asJson, useLombok, detectDates);
+            case FMT_JSON   -> prettyJson(asJson);
+            case FMT_XML    -> jsonXml.jsonToXml(asJson);
+            case FMT_YAML   -> jsonYaml.jsonToYaml(asJson);
+            case FMT_CSV    -> csv.jsonToCsv(parseJson(asJson), opts.csvMode(), opts.csvFormat());
+            case FMT_TOML   -> toml.jsonToToml(asJson);
+            case FMT_PROTO  -> proto.jsonToProto(asJson);
+            case FMT_JAVA   -> pojo.fromJson(asJson, opts.useLombok(), opts.detectDates());
+            case FMT_SCHEMA -> schema.fromJson(asJson);
             default -> throw new UnsupportedOperationException("Unknown output: " + outFmt);
         };
     }
 
+    /**
+     * Recursively sorts object keys alphabetically, leaving array order intact.
+     * Makes output diffable across runs and across sources that emit the same
+     * data in different key orders.
+     */
+    public String sortKeys(String json) throws Exception {
+        return COMPACT_JSON.writeValueAsString(sortNode(COMPACT_JSON.readTree(json)));
+    }
+
+    private JsonNode sortNode(JsonNode node) {
+        if (node.isObject()) {
+            java.util.List<String> names = new java.util.ArrayList<>();
+            node.fieldNames().forEachRemaining(names::add);
+            names.sort(String::compareTo);
+            com.fasterxml.jackson.databind.node.ObjectNode out = COMPACT_JSON.createObjectNode();
+            for (String name : names) out.set(name, sortNode(node.get(name)));
+            return out;
+        }
+        if (node.isArray()) {
+            com.fasterxml.jackson.databind.node.ArrayNode out = COMPACT_JSON.createArrayNode();
+            for (JsonNode item : node) out.add(sortNode(item));
+            return out;
+        }
+        return node;
+    }
+
     /** Pretty-prints or canonicalizes input in its own format (the Format action). */
     public String formatInput(String input, String fmt, boolean inferTypes) throws Exception {
-        return switch (fmt) {
+        return formatInput(input, fmt, ConversionOptions.DEFAULTS.withInferTypes(inferTypes));
+    }
+
+    public String formatInput(String input, String fmt, ConversionOptions opts) throws Exception {
+        boolean inferTypes = opts.inferTypes();
+        String formatted = switch (fmt) {
             case FMT_JSON  -> prettyJson(autoClose(input));
             case FMT_XML   -> prettyXml(input);
             case FMT_YAML  -> jsonYaml.jsonToYaml(jsonYaml.yamlToJson(input));
             case FMT_TOML  -> toml.jsonToToml(toml.tomlToJson(input));
-            case FMT_CSV   -> csv.jsonToCsv(csv.csvToJson(input, inferTypes),
-                                            CsvConverter.CsvMode.FLAT_FIRST);
+            case FMT_CSV   -> csv.jsonToCsv(
+                                    parseJson(csv.csvToJson(input, inferTypes, opts.csvFormat())),
+                                    CsvConverter.CsvMode.FLAT_FIRST, opts.csvFormat());
             case FMT_PROTO -> input.replaceAll("[ \t]+\n", "\n")
                                    .replaceAll("\n{3,}", "\n\n").trim();
             default        -> input;
         };
+        // Key sorting is a JSON-tree operation; only the tree-backed formats can
+        // honour it without a lossy round-trip through their own syntax.
+        if (opts.sortKeys() && FMT_JSON.equals(fmt)) return prettyJson(sortKeys(formatted));
+        return formatted;
     }
 
     /** Parses the JSON pivot once for callers that need the tree (row estimates). */
@@ -131,8 +185,80 @@ public class ConversionPipeline {
         return LENIENT_JSON.readTree(json);
     }
 
+    /**
+     * Guesses the input format from the content itself, for text that arrives
+     * without a filename (paste, or a file with no useful extension). Returns
+     * null when nothing matches confidently — the caller keeps its current
+     * selection rather than guessing wrong.
+     */
+    public static String detectFormat(String text) {
+        if (text == null) return null;
+        String s = text.strip();
+        if (s.isEmpty()) return null;
+
+        // Structural markers first: these are unambiguous.
+        char first = s.charAt(0);
+        if (first == '{') return FMT_JSON;
+        if (first == '<') return FMT_XML;
+        if (s.startsWith("---")) return FMT_YAML;
+        // '[' is genuinely ambiguous: a JSON array and a TOML [table] header
+        // open the same way. Only a following 'key =' line settles it.
+        if (first == '[') return looksLikeTomlTable(s) ? FMT_TOML : FMT_JSON;
+
+        // Proto needs a keyword: 'syntax = "proto3";' or a message/enum block.
+        if (PROTO_MARKER.matcher(s).find()) return FMT_PROTO;
+
+        // TOML tables ([section]) and key = value. Checked before YAML because
+        // 'key = value' is not valid YAML mapping syntax, while 'key: value' is.
+        if (TOML_MARKER.matcher(s).find()) return FMT_TOML;
+
+        // A YAML mapping or list at the top level.
+        if (YAML_MARKER.matcher(s).find()) return FMT_YAML;
+
+        // CSV last: it is the weakest signal, so require a delimiter in the
+        // header line and a consistent column count on the following line.
+        if (looksLikeCsv(s)) return FMT_CSV;
+
+        return null;
+    }
+
+    private static final java.util.regex.Pattern PROTO_MARKER = java.util.regex.Pattern.compile(
+          "(?m)^\\s*(syntax\\s*=|message\\s+\\w+\\s*\\{|enum\\s+\\w+\\s*\\{|package\\s+[\\w.]+\\s*;)");
+    private static final java.util.regex.Pattern TOML_MARKER = java.util.regex.Pattern.compile(
+          "(?m)^\\s*(\\[[^]]+]\\s*$|[A-Za-z_][\\w.-]*\\s*=)");
+    private static final java.util.regex.Pattern YAML_MARKER = java.util.regex.Pattern.compile(
+          "(?m)^\\s*(-\\s+\\S|[A-Za-z_][\\w.-]*\\s*:(\\s|$))");
+
+    /** A lone [table] or [[array.of.tables]] header on line 1, plus a later 'key =' line. */
+    private static final java.util.regex.Pattern TOML_TABLE_HEADER =
+          java.util.regex.Pattern.compile("^\\[\\[?[^\\[\\]]+]]?$");
+    private static final java.util.regex.Pattern TOML_KEY_VALUE =
+          java.util.regex.Pattern.compile("(?m)^\\s*[A-Za-z_\"'][\\w.\\-\"']*\\s*=");
+
+    private static boolean looksLikeTomlTable(String s) {
+        int newline = s.indexOf('\n');
+        if (newline < 0) return false;                       // single line: a JSON array
+        String firstLine = s.substring(0, newline).stripTrailing();
+        return TOML_TABLE_HEADER.matcher(firstLine).matches()
+              && TOML_KEY_VALUE.matcher(s.substring(newline)).find();
+    }
+
+    /** Header plus at least one row, both with the same number of commas. */
+    private static boolean looksLikeCsv(String s) {
+        String[] lines = s.split("\r?\n", 3);
+        if (lines.length < 2) return false;
+        long headerCommas = lines[0].chars().filter(c -> c == ',').count();
+        if (headerCommas == 0) return false;
+        return lines[1].chars().filter(c -> c == ',').count() == headerCommas;
+    }
+
     public long estimateCsvRows(JsonNode pivot, CsvConverter.CsvMode mode) {
         return csv.estimateRowCount(pivot, mode);
+    }
+
+    public String renderCsv(JsonNode pivot, CsvConverter.CsvMode mode,
+          CsvConverter.CsvFormat format) throws Exception {
+        return csv.jsonToCsv(pivot, mode, format);
     }
 
     public String renderCsv(JsonNode pivot, CsvConverter.CsvMode mode) throws Exception {

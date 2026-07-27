@@ -43,12 +43,29 @@ public class CsvConverter {
         CROSS_JOIN
     }
 
+    /**
+     * Delimiter and quote character for reading and writing CSV. Comma-separated
+     * is only one convention: semicolon is the norm across much of Europe (where
+     * the comma is the decimal separator) and tab-separated files are common too.
+     */
+    public record CsvFormat(char delimiter, char quote) {
+        public static final CsvFormat DEFAULT = new CsvFormat(',', '"');
+        public static final CsvFormat SEMICOLON = new CsvFormat(';', '"');
+        public static final CsvFormat TAB = new CsvFormat('\t', '"');
+    }
+
     private final ObjectMapper jsonMapper;
     private final CsvMapper   csvMapper;
 
     public CsvConverter() {
         jsonMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
         csvMapper  = new CsvMapper();
+        // Jackson's default quote check is a fast over-approximation whose result
+        // depends on the separator: with ';' it quotes numeric-looking cells that
+        // it leaves bare with ','. The strict check quotes only what genuinely
+        // needs it, so output is consistent whichever delimiter is chosen.
+        csvMapper.enable(com.fasterxml.jackson.dataformat.csv.CsvGenerator.Feature
+              .STRICT_CHECK_FOR_QUOTING);
     }
 
     // ── CSV → JSON ────────────────────────────────────────────────────────────
@@ -65,9 +82,16 @@ public class CsvConverter {
      * strings so identifiers like "007" are not mangled.
      */
     public String csvToJson(String csv, boolean inferTypes) throws Exception {
+        return csvToJson(csv, inferTypes, CsvFormat.DEFAULT);
+    }
+
+    /** @param format delimiter and quote character to parse with. */
+    public String csvToJson(String csv, boolean inferTypes, CsvFormat format) throws Exception {
         if (csv == null || csv.isBlank())
             throw new IllegalArgumentException("Input CSV must not be empty");
-        CsvSchema schema = CsvSchema.emptySchema().withHeader();
+        CsvSchema schema = CsvSchema.emptySchema().withHeader()
+              .withColumnSeparator(format.delimiter())
+              .withQuoteChar(format.quote());
         MappingIterator<Map<String, String>> it =
               csvMapper.readerFor(Map.class).with(schema).readValues(csv);
         List<Map<String, String>> rows = it.readAll();
@@ -97,6 +121,11 @@ public class CsvConverter {
 
     /** Overload for callers that already hold a parsed tree (avoids re-parsing). */
     public String jsonToCsv(JsonNode root, CsvMode mode) throws Exception {
+        return jsonToCsv(root, mode, CsvFormat.DEFAULT);
+    }
+
+    /** @param format delimiter and quote character to write with. */
+    public String jsonToCsv(JsonNode root, CsvMode mode, CsvFormat format) throws Exception {
         // Normalise: wrap a bare object in a single-element array
         if (root.isObject()) {
             ArrayNode arr = jsonMapper.createArrayNode();
@@ -126,7 +155,9 @@ public class CsvConverter {
         LinkedHashSet<String> headers = new LinkedHashSet<>();
         for (Map<String, String> row : rows) headers.addAll(row.keySet());
 
-        CsvSchema.Builder sb = CsvSchema.builder().setUseHeader(true);
+        CsvSchema.Builder sb = CsvSchema.builder().setUseHeader(true)
+              .setColumnSeparator(format.delimiter())
+              .setQuoteChar(format.quote());
         for (String h : headers) sb.addColumn(h);
 
         // The schema drives column order and emits an empty cell for any header a
