@@ -74,6 +74,10 @@
     <change-notes><![CDATA[
         <h3>1.5.0</h3>
         <ul>
+            <li><b>Open in editor</b> — a toolbar button sends the output to a scratch file, so you
+                get the IDE's own highlighting, folding and keymap on a result.</li>
+            <li><b>TOML is syntax-highlighted</b> in the panel; it was the one supported format
+                being shown as plain text.</li>
             <li><b>Kotlin data class output</b> — <code>data class</code> declarations with
                 <code>val</code> properties, <code>@JsonProperty</code> where the key differs, and
                 the same nested-class and name-collision handling as the Java generator.</li>

@@ -676,6 +676,11 @@ public class ConverterPanel implements Disposable {
         wrapBtn.addActionListener(e -> setLineWrap(!inputArea.getLineWrap()));
         bar.add(wrapBtn);
 
+        JButton openInEditorBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.MoveTo2,
+              "Open the output in a real IDE editor (scratch file)");
+        openInEditorBtn.addActionListener(e -> doOpenInEditor());
+        bar.add(openInEditorBtn);
+
         JButton compareBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.Diff,
               "Compare input and output as canonical JSON");
         compareBtn.addActionListener(e -> doCompare());
@@ -1075,6 +1080,33 @@ public class ConverterPanel implements Disposable {
     }
 
     /**
+     * Hands the current output to a scratch file, so it opens in a real IDE
+     * editor with proper highlighting, folding, the user's own keymap and Save As.
+     *
+     * <p>This is the cheap way to get what replacing the embedded editor would
+     * have bought. The machinery already existed for context-menu conversions;
+     * the tool window simply never called it.
+     */
+    private void doOpenInEditor() {
+        String output = outputArea.getText();
+        if (output.isEmpty()) { setStatus("Nothing to open", false); return; }
+        if (project == null) {
+            setStatusWarn("Open in editor needs a project");
+            return;
+        }
+        // The badge reflects what is actually in the pane; the combo may have
+        // moved on since the last conversion.
+        String format = outputFormatLabel.getText();
+        try {
+            var file = ConverterScratchFiles.openAsScratch(project, null, format, output);
+            setStatus(file != null ? "Opened " + file.getName() + " in the editor"
+                  : "Could not create a scratch file", file != null);
+        } catch (Throwable failure) {
+            showError("Open in editor failed: " + failure.getMessage());
+        }
+    }
+
+    /**
      * Opens the IDE diff viewer on the two editors, each normalised to canonical
      * JSON. Comparing the canonical forms rather than the raw text is what lets a
      * YAML input and a JSON output be recognised as carrying the same data.
@@ -1307,6 +1339,10 @@ public class ConverterPanel implements Disposable {
             case FMT_KOTLIN -> SyntaxConstants.SYNTAX_STYLE_KOTLIN;
             case FMT_PROTO -> SyntaxConstants.SYNTAX_STYLE_PROTO;
             case FMT_CSV   -> SyntaxConstants.SYNTAX_STYLE_CSV;
+            // INI rather than PROPERTIES_FILE: both parse TOML, but only INI
+            // colours [table] headers. TOML had no arm at all and fell through
+            // to NONE, so it was the one supported format shown unhighlighted.
+            case FMT_TOML  -> SyntaxConstants.SYNTAX_STYLE_INI;
             default        -> SyntaxConstants.SYNTAX_STYLE_NONE;
         };
     }

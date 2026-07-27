@@ -175,6 +175,13 @@ Bracket-quoting reaches keys that contain dots or slashes: `['odd.key'].a`. A pa
 matches nothing is reported as an error rather than silently converting an empty document.
 This is deliberately selection only, not a query language, and adds no dependency.
 
+### Open in editor
+
+The output pane is a lightweight embedded editor, not an IDE editor. The **Open in editor**
+toolbar button writes the current output to a scratch file and opens it, which gives you the
+IDE's own highlighting, folding, keymap and Save As without leaving the workflow. Context-menu
+conversions (*Convert with Be Water*) already land there directly.
+
 ### Compare
 
 The **Compare** toolbar button opens the IDE's diff viewer on the two editors. Each side is
