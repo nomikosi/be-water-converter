@@ -43,6 +43,7 @@ public class ConversionPipeline {
     public static final String FMT_PROTO  = "Protobuf";
     public static final String FMT_JAVA   = "Java POJO";
     public static final String FMT_SCHEMA = "JSON Schema";
+    public static final String FMT_KOTLIN = "Kotlin";
 
     /**
      * Lenient read settings for JSON input: accepts comments, trailing commas,
@@ -97,6 +98,7 @@ public class ConversionPipeline {
     private final ProtoConverter    proto    = new ProtoConverter();
     private final JavaPojoGenerator pojo     = new JavaPojoGenerator();
     private final JsonSchemaGenerator schema = new JsonSchemaGenerator();
+    private final KotlinDataClassGenerator kotlin = new KotlinDataClassGenerator();
 
     /**
      * Normalise input to JSON as the internal pivot format.
@@ -180,6 +182,7 @@ public class ConversionPipeline {
             case FMT_PROTO  -> proto.jsonToProto(asJson);
             case FMT_JAVA   -> pojo.fromJson(asJson, opts.useLombok(), opts.detectDates());
             case FMT_SCHEMA -> schema.fromJson(asJson);
+            case FMT_KOTLIN -> kotlin.fromJson(asJson, opts.detectDates());
             default -> throw new UnsupportedOperationException("Unknown output: " + outFmt);
         };
     }

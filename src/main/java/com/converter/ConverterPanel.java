@@ -79,6 +79,7 @@ public class ConverterPanel implements Disposable {
     static final String FMT_PROTO  = ConversionPipeline.FMT_PROTO;
     static final String FMT_JAVA   = ConversionPipeline.FMT_JAVA;
     static final String FMT_SCHEMA = ConversionPipeline.FMT_SCHEMA;
+    static final String FMT_KOTLIN = ConversionPipeline.FMT_KOTLIN;
 
     private static final Map<String, Color> FORMAT_COLORS = new LinkedHashMap<>();
     static {
@@ -90,16 +91,17 @@ public class ConverterPanel implements Disposable {
         FORMAT_COLORS.put(FMT_PROTO, new JBColor(new Color(192, 57,  43), new Color(231, 76,  60)));
         FORMAT_COLORS.put(FMT_JAVA,  new JBColor(new Color(142, 110, 45), new Color(243, 196, 66)));
         FORMAT_COLORS.put(FMT_SCHEMA, new JBColor(new Color(0, 121, 107), new Color(38, 166, 154)));
+        FORMAT_COLORS.put(FMT_KOTLIN, new JBColor(new Color(103, 58, 183), new Color(149, 117, 205)));
     }
 
     private static final Map<String, String[]> VALID_OUTPUTS = new LinkedHashMap<>();
     static {
-        VALID_OUTPUTS.put(FMT_JSON,  new String[]{FMT_XML,  FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_SCHEMA});
-        VALID_OUTPUTS.put(FMT_XML,   new String[]{FMT_JSON, FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_SCHEMA});
-        VALID_OUTPUTS.put(FMT_YAML,  new String[]{FMT_JSON, FMT_XML,  FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_SCHEMA});
-        VALID_OUTPUTS.put(FMT_CSV,   new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_SCHEMA});
-        VALID_OUTPUTS.put(FMT_TOML,  new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_CSV,  FMT_PROTO, FMT_JAVA, FMT_SCHEMA});
-        VALID_OUTPUTS.put(FMT_PROTO, new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_CSV,  FMT_TOML,  FMT_JAVA, FMT_SCHEMA});
+        VALID_OUTPUTS.put(FMT_JSON,  new String[]{FMT_XML,  FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
+        VALID_OUTPUTS.put(FMT_XML,   new String[]{FMT_JSON, FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
+        VALID_OUTPUTS.put(FMT_YAML,  new String[]{FMT_JSON, FMT_XML,  FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
+        VALID_OUTPUTS.put(FMT_CSV,   new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
+        VALID_OUTPUTS.put(FMT_TOML,  new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_CSV,  FMT_PROTO, FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
+        VALID_OUTPUTS.put(FMT_PROTO, new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_CSV,  FMT_TOML,  FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
     }
 
     private static final String[] ALL_INPUTS =
@@ -880,7 +882,7 @@ public class ConverterPanel implements Disposable {
         String inFmt  = (String) inputCombo.getSelectedItem();
         boolean isCsvOut  = FMT_CSV.equals(outFmt);
         boolean isCsvIn   = FMT_CSV.equals(inFmt);
-        boolean isJava    = FMT_JAVA.equals(outFmt);
+        boolean isJava    = FMT_JAVA.equals(outFmt) || FMT_KOTLIN.equals(outFmt);
         boolean untypedIn = isCsvIn || FMT_XML.equals(inFmt);
         csvOptions.setVisible(isCsvOut);
         csvInputOptions.setVisible(untypedIn);
@@ -1302,6 +1304,7 @@ public class ConverterPanel implements Disposable {
             case FMT_XML   -> SyntaxConstants.SYNTAX_STYLE_XML;
             case FMT_YAML  -> SyntaxConstants.SYNTAX_STYLE_YAML;
             case FMT_JAVA  -> SyntaxConstants.SYNTAX_STYLE_JAVA;
+            case FMT_KOTLIN -> SyntaxConstants.SYNTAX_STYLE_KOTLIN;
             case FMT_PROTO -> SyntaxConstants.SYNTAX_STYLE_PROTO;
             case FMT_CSV   -> SyntaxConstants.SYNTAX_STYLE_CSV;
             default        -> SyntaxConstants.SYNTAX_STYLE_NONE;

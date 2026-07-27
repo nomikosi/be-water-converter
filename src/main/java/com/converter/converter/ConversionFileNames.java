@@ -38,7 +38,8 @@ public final class ConversionFileNames {
           ConversionPipeline.FMT_CSV,    "csv",
           ConversionPipeline.FMT_TOML,   "toml",
           ConversionPipeline.FMT_PROTO,  "proto",
-          ConversionPipeline.FMT_JAVA,   "java");
+          ConversionPipeline.FMT_JAVA,   "java",
+          ConversionPipeline.FMT_KOTLIN, "kt");
 
     /** File extension a conversion result should carry. */
     public static String extensionFor(String format) {
@@ -57,6 +58,11 @@ public final class ConversionFileNames {
         String ext = extensionFor(format);
         if (ConversionPipeline.FMT_JAVA.equals(format)) {
             return JavaPojoGenerator.ROOT_CLASS_NAME + "." + ext;
+        }
+        // Kotlin allows several top-level classes per file, so the file name is
+        // free — but matching the root class keeps results tellable apart.
+        if (ConversionPipeline.FMT_KOTLIN.equals(format) && (sourceName == null || sourceName.isBlank())) {
+            return KotlinDataClassGenerator.ROOT_CLASS_NAME + "." + ext;
         }
         if (sourceName == null || sourceName.isBlank()) return "converted." + ext;
         int dot = sourceName.lastIndexOf('.');

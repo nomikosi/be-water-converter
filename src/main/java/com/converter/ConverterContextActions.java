@@ -256,7 +256,8 @@ public final class ConverterContextActions {
               ConversionPipeline.FMT_JSON, ConversionPipeline.FMT_XML,
               ConversionPipeline.FMT_YAML, ConversionPipeline.FMT_CSV,
               ConversionPipeline.FMT_TOML, ConversionPipeline.FMT_PROTO,
-              ConversionPipeline.FMT_JAVA, ConversionPipeline.FMT_SCHEMA,
+              ConversionPipeline.FMT_JAVA, ConversionPipeline.FMT_KOTLIN,
+              ConversionPipeline.FMT_SCHEMA,
         };
 
         public ConvertToGroup() {

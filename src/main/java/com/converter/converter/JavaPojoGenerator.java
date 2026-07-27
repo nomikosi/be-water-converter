@@ -107,19 +107,15 @@ public class JavaPojoGenerator {
 
     private String generate(JsonNode root, String rootClassName, boolean useLombok,
           boolean detectDates) {
-        LinkedHashMap<String, JsonNode> classMap = new LinkedHashMap<>();
-        // Identity-keyed: two structurally different objects that want the same
-        // class name must each get their own class, or fields end up typed with
-        // the wrong shape.
-        Map<JsonNode, String> classNames = new IdentityHashMap<>();
-        collectClasses(root, rootClassName, classMap, classNames);
+        StructureModel model = StructureModel.from(root, rootClassName,
+              key -> capitalize(toCamelCase(key)));
 
         Set<String> usedTypes = new HashSet<>();
         StringBuilder body = new StringBuilder();
         boolean isFirst = true;
-        for (Map.Entry<String, JsonNode> entry : classMap.entrySet()) {
+        for (Map.Entry<String, JsonNode> entry : model.types().entrySet()) {
             generateClass(entry.getKey(), entry.getValue(), body, useLombok,
-                  detectDates, usedTypes, classNames, isFirst);
+                  detectDates, usedTypes, model, isFirst);
             body.append("\n");
             isFirst = false;
         }
@@ -143,33 +139,6 @@ public class JavaPojoGenerator {
         return sb.toString();
     }
 
-    private void collectClasses(JsonNode node, String desiredName,
-          LinkedHashMap<String, JsonNode> classMap,
-          Map<JsonNode, String> classNames) {
-        if (!node.isObject() || classNames.containsKey(node)) return;
-        String className = uniqueClassName(desiredName, classMap.keySet());
-        classNames.put(node, className);
-        classMap.put(className, node);
-        for (Map.Entry<String, JsonNode> entry : node.properties()) {
-            String childName = capitalize(toCamelCase(entry.getKey()));
-            JsonNode child = entry.getValue();
-            if (child.isObject()) {
-                collectClasses(child, childName, classMap, classNames);
-            } else if (child.isArray() && !child.isEmpty() && child.get(0).isObject()) {
-                collectClasses(child.get(0), childName, classMap, classNames);
-            }
-        }
-    }
-
-    /** Suffixes a counter when the desired class name is already taken. */
-    private String uniqueClassName(String desired, Set<String> taken) {
-        String base = (desired == null || desired.isEmpty()) ? "Type" : desired;
-        if (!taken.contains(base)) return base;
-        int n = 2;
-        while (taken.contains(base + n)) n++;
-        return base + n;
-    }
-
     /**
      * Emits only the class declaration and field list.
      * @JsonProperty("originalKey") is added when the Java field name
@@ -181,7 +150,7 @@ public class JavaPojoGenerator {
      */
     private void generateClass(String className, JsonNode node, StringBuilder sb,
           boolean useLombok, boolean detectDates, Set<String> usedTypes,
-          Map<JsonNode, String> classNames, boolean isPublic) {
+          StructureModel model, boolean isPublic) {
         if (useLombok) {
             sb.append("@Data\n");
             sb.append("@NoArgsConstructor\n");
@@ -201,7 +170,7 @@ public class JavaPojoGenerator {
                 camelName = camelName + n;
             }
             String javaType = resolveJavaType(e.getValue(), originalKey, detectDates,
-                  usedTypes, classNames);
+                  usedTypes, model);
             if (!camelName.equals(originalKey)) {
                 usedTypes.add("JsonProperty");
                 sb.append("    @JsonProperty(\"").append(originalKey).append("\")\n");
@@ -215,7 +184,7 @@ public class JavaPojoGenerator {
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private String resolveJavaType(JsonNode node, String fieldName, boolean detectDates,
-          Set<String> usedTypes, Map<JsonNode, String> classNames) {
+          Set<String> usedTypes, StructureModel model) {
         if (node.isInt() || node.isShort())  return "Integer";
         if (node.isLong())                   return "Long";
         if (node.isBigInteger())             { usedTypes.add("BigInteger"); return "BigInteger"; }
@@ -237,14 +206,14 @@ public class JavaPojoGenerator {
         if (node.isObject()) {
             // The name assigned during collection — not a recomputation, which
             // would silently point at another object's class on a collision.
-            String assigned = classNames.get(node);
+            String assigned = model.nameOf(node);
             return assigned != null ? assigned : capitalize(toCamelCase(fieldName));
         }
         if (node.isArray()) {
             usedTypes.add("List");
             if (node.isEmpty()) return "List<Object>";
             return "List<" + resolveJavaType(node.get(0), fieldName, detectDates,
-                  usedTypes, classNames) + ">";
+                  usedTypes, model) + ">";
         }
         return "Object";
     }
