@@ -29,6 +29,7 @@
         <ul>
             <li>Bidirectional conversion between <b>JSON, XML, YAML, CSV, TOML and Protobuf</b></li>
             <li><b>Java POJO generation</b> from any supported input, with optional Lombok annotations</li>
+            <li><b>Kotlin data class generation</b> from any supported input</li>
             <li><b>JSON Schema generation</b> (draft 2020-12) from any supported input</li>
         </ul>
 
@@ -73,6 +74,9 @@
     <change-notes><![CDATA[
         <h3>1.5.0</h3>
         <ul>
+            <li><b>Kotlin data class output</b> — <code>data class</code> declarations with
+                <code>val</code> properties, <code>@JsonProperty</code> where the key differs, and
+                the same nested-class and name-collision handling as the Java generator.</li>
             <li><b>Fixed several ways input could be silently mangled</b> — JSONL and any
                 content after the first JSON value were truncated without warning; YAML anchors
                 resolved to the anchor <i>name</i> and <code>&lt;&lt;:</code> merge keys were

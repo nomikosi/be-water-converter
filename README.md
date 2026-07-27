@@ -6,8 +6,8 @@
   *Be water, my friend — let your data flow between formats.*
 
   An IntelliJ IDEA plugin that converts data between JSON, XML, YAML, CSV, TOML and
-  Protobuf, and generates Java POJOs and JSON Schema — all inside a syntax-highlighted
-  tool window.
+  Protobuf, and generates Java POJOs, Kotlin data classes and JSON Schema — all inside a
+  syntax-highlighted tool window.
 
   [![Build](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml/badge.svg)](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml)
   [![Java 21](https://img.shields.io/badge/Java-21-blue)](https://openjdk.org/projects/jdk/21/)
@@ -46,15 +46,15 @@ Once installed, open the **Be Water** tool window from the right side bar, or vi
 
 | Input | Supported outputs |
 |---|---|
-| JSON | XML, YAML, CSV, TOML, Protobuf, Java POJO, JSON Schema |
-| XML | JSON, YAML, CSV, TOML, Protobuf, Java POJO, JSON Schema |
-| YAML | JSON, XML, CSV, TOML, Protobuf, Java POJO, JSON Schema |
-| CSV | JSON, XML, YAML, TOML, Protobuf, Java POJO, JSON Schema |
-| TOML | JSON, XML, YAML, CSV, Protobuf, Java POJO, JSON Schema |
-| Protobuf | JSON, XML, YAML, CSV, TOML, Java POJO, JSON Schema |
+| JSON | XML, YAML, CSV, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
+| XML | JSON, YAML, CSV, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
+| YAML | JSON, XML, CSV, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
+| CSV | JSON, XML, YAML, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
+| TOML | JSON, XML, YAML, CSV, Protobuf, Java POJO, Kotlin, JSON Schema |
+| Protobuf | JSON, XML, YAML, CSV, TOML, Java POJO, Kotlin, JSON Schema |
 
-`Java POJO` and `JSON Schema` are output-only: neither is accepted as an input format,
-so **Swap** refuses to move them to the input side.
+`Java POJO`, `Kotlin` and `JSON Schema` are output-only: none is accepted as an input
+format, so **Swap** refuses to move them to the input side.
 
 Most conversions follow a two-step flow: input is first normalized to JSON, then JSON is
 rendered to the requested target format. JSON input is parsed leniently — comments,
@@ -274,6 +274,24 @@ elements are merged rather than sampled, so a heterogeneous array yields an `any
 distinct element schemas instead of silently adopting the first element's shape; an empty
 array places no constraint on its items. Integral numbers map to `integer` and other
 numbers to `number`.
+
+### Kotlin data class generation
+
+`Kotlin` output emits `data class` declarations with `val` properties. Structure discovery
+is shared with the Java generator, so nested objects, arrays of objects and name collisions
+behave identically — two differently-shaped objects that would claim the same name get
+`User` and `User2` in both languages.
+
+Kotlin differs in three ways that the output reflects. Every class is top-level and public,
+because Kotlin allows several top-level declarations per file. An object with no properties
+becomes a plain `class` rather than a `data class`, since a data class must declare at least
+one parameter. And a value that appeared as `null` in the example is typed `Any?` — the one
+case where an example positively demonstrates nullability; everything else is non-null,
+because an example can only show what *was* present.
+
+Hard keywords (`when`, `class`, `is`, `fun`, …) are renamed with a `Value` suffix and mapped
+back with `@JsonProperty`; soft keywords such as `data`, `value` and `sealed` are legal
+property names and are left alone. The **Detect dates** toggle applies here too.
 
 ### Protobuf schema generation
 
