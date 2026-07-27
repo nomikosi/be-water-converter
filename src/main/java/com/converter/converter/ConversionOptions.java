@@ -28,7 +28,8 @@ public record ConversionOptions(
       boolean useLombok,
       boolean detectDates,
       boolean inferTypes,
-      boolean sortKeys) {
+      boolean sortKeys,
+      String filterPath) {
 
     public static final ConversionOptions DEFAULTS = new ConversionOptions(
           CsvConverter.CsvMode.FLAT_FIRST,
@@ -36,29 +37,52 @@ public record ConversionOptions(
           false,   // useLombok
           true,    // detectDates
           true,    // inferTypes
-          false);  // sortKeys
+          false,   // sortKeys
+          "");     // filterPath: empty means the whole document
+
+    /** Six-arg form kept so existing callers need no change. */
+    public ConversionOptions(CsvConverter.CsvMode csvMode, CsvConverter.CsvFormat csvFormat,
+          boolean useLombok, boolean detectDates, boolean inferTypes, boolean sortKeys) {
+        this(csvMode, csvFormat, useLombok, detectDates, inferTypes, sortKeys, "");
+    }
+
+    /** True when a subtree filter is actually set. */
+    public boolean hasFilter() {
+        return filterPath != null && !filterPath.isBlank();
+    }
 
     public ConversionOptions withCsvMode(CsvConverter.CsvMode mode) {
-        return new ConversionOptions(mode, csvFormat, useLombok, detectDates, inferTypes, sortKeys);
+        return new ConversionOptions(mode, csvFormat, useLombok, detectDates, inferTypes,
+              sortKeys, filterPath);
     }
 
     public ConversionOptions withCsvFormat(CsvConverter.CsvFormat format) {
-        return new ConversionOptions(csvMode, format, useLombok, detectDates, inferTypes, sortKeys);
+        return new ConversionOptions(csvMode, format, useLombok, detectDates, inferTypes,
+              sortKeys, filterPath);
     }
 
     public ConversionOptions withLombok(boolean lombok) {
-        return new ConversionOptions(csvMode, csvFormat, lombok, detectDates, inferTypes, sortKeys);
+        return new ConversionOptions(csvMode, csvFormat, lombok, detectDates, inferTypes,
+              sortKeys, filterPath);
     }
 
     public ConversionOptions withDetectDates(boolean detect) {
-        return new ConversionOptions(csvMode, csvFormat, useLombok, detect, inferTypes, sortKeys);
+        return new ConversionOptions(csvMode, csvFormat, useLombok, detect, inferTypes,
+              sortKeys, filterPath);
     }
 
     public ConversionOptions withInferTypes(boolean infer) {
-        return new ConversionOptions(csvMode, csvFormat, useLombok, detectDates, infer, sortKeys);
+        return new ConversionOptions(csvMode, csvFormat, useLombok, detectDates, infer,
+              sortKeys, filterPath);
     }
 
     public ConversionOptions withSortKeys(boolean sort) {
-        return new ConversionOptions(csvMode, csvFormat, useLombok, detectDates, inferTypes, sort);
+        return new ConversionOptions(csvMode, csvFormat, useLombok, detectDates, inferTypes,
+              sort, filterPath);
+    }
+
+    public ConversionOptions withFilterPath(String path) {
+        return new ConversionOptions(csvMode, csvFormat, useLombok, detectDates, inferTypes,
+              sortKeys, path == null ? "" : path);
     }
 }

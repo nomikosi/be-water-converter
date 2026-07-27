@@ -20,13 +20,7 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.project.DumbAware;
-import com.intellij.openapi.project.Project;
-import com.intellij.openapi.wm.ToolWindow;
-import com.intellij.openapi.wm.ToolWindowManager;
-import com.intellij.ui.content.Content;
 import org.jetbrains.annotations.NotNull;
-
-import javax.swing.JComponent;
 
 /**
  * Registered IDE actions that drive the Be Water converter panel. Registering
@@ -59,18 +53,7 @@ public final class ConverterActions {
         abstract void run(ConverterPanel panel);
 
         private static ConverterPanel findPanel(AnActionEvent e) {
-            Project project = e.getProject();
-            if (project == null) return null;
-            ToolWindow tw = ToolWindowManager.getInstance(project).getToolWindow("Be Water");
-            if (tw == null) return null;
-            for (Content content : tw.getContentManager().getContents()) {
-                if (content.getComponent() instanceof JComponent c
-                      && c.getClientProperty(ConverterPanel.PANEL_CLIENT_PROPERTY)
-                            instanceof ConverterPanel panel) {
-                    return panel;
-                }
-            }
-            return null;
+            return ConverterToolWindowAccess.findPanel(e.getProject());
         }
     }
 

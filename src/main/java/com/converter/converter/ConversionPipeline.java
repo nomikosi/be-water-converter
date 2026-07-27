@@ -102,9 +102,24 @@ public class ConversionPipeline {
             case FMT_PROTO -> proto.protoToJson(input);
             default -> throw new UnsupportedOperationException("Unknown input: " + inFmt);
         };
+        // Filter before sorting: narrowing first means the sort only walks the
+        // subtree that is actually going to be rendered.
+        if (opts.hasFilter()) {
+            pivot = COMPACT_JSON.writeValueAsString(
+                  JsonPathFilter.apply(COMPACT_JSON.readTree(pivot), opts.filterPath()));
+        }
         // Sorting the pivot rather than each renderer's output means every target
         // format inherits key ordering from one place.
         return opts.sortKeys() ? sortKeys(pivot) : pivot;
+    }
+
+    /**
+     * Normalises any supported format to sorted, pretty-printed JSON — the form
+     * used to compare two documents that carry the same data in different
+     * formats or different key orders.
+     */
+    public String canonicalJson(String input, String fmt) throws Exception {
+        return prettyJson(sortKeys(normalizeToJson(input, fmt, ConversionOptions.DEFAULTS)));
     }
 
     /** JSON pivot -> desired output format. */

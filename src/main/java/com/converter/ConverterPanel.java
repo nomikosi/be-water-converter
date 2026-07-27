@@ -151,6 +151,7 @@ public class ConverterPanel implements Disposable {
     private final JCheckBox detectDatesCheck;
     private final JCheckBox inferTypesCheck;
     private final JCheckBox sortKeysCheck;
+    private final JTextField filterField;
     private final JComboBox<CsvDelimiter> csvDelimiterCombo;
     private final ConversionHistory history = new ConversionHistory();
     private final JPanel    csvOptions;
@@ -310,10 +311,25 @@ public class ConverterPanel implements Disposable {
         javaOptions.add(lombokCheck);
         javaOptions.add(detectDatesCheck);
 
+        filterField = new JTextField(16);
+        filterField.setToolTipText("<html>Convert only part of the document.<br>"
+              + "JSON Pointer (<code>/users/0/name</code>) or dotted "
+              + "(<code>users[0].name</code>). Empty converts everything.</html>");
+        filterField.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        filterField.setBackground(DROPDOWN_BG);
+        filterField.setForeground(TEXT_BRIGHT);
+        filterField.setCaretColor(TEXT_BRIGHT);
+        filterField.setBorder(BorderFactory.createCompoundBorder(
+              BorderFactory.createLineBorder(BORDER, 1),
+              new javax.swing.border.EmptyBorder(3, 6, 3, 6)));
+        filterField.addActionListener(e -> doConvert());   // Enter re-runs the conversion
+
         // Applies to every conversion, so it is always visible.
         generalOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         generalOptions.setOpaque(false);
         generalOptions.add(sortKeysCheck);
+        generalOptions.add(toolbarLabel("Filter:"));
+        generalOptions.add(filterField);
 
         optionsBar = new JPanel(new WrapLayout(FlowLayout.LEFT, 8, 5));
         optionsBar.setBackground(BG_LABEL_BAR);
@@ -434,6 +450,29 @@ public class ConverterPanel implements Disposable {
     }
 
     // ── Public entry points for registered IDE actions ───────────────────
+
+    /**
+     * Loads text into the input editor from outside the panel (an editor
+     * selection, a Project-view file). A null {@code format} leaves detection to
+     * the content sniffer; anything else is taken as authoritative.
+     */
+    public void loadContent(String text, String format) {
+        if (format != null) {
+            setInputTextQuietly(text);
+            inputCombo.setSelectedItem(format);
+        } else {
+            inputArea.setText(text);
+            inputArea.setCaretPosition(0);
+        }
+        inputArea.requestFocusInWindow();
+    }
+
+    /** The format currently selected on the output side. */
+    public String selectedOutputFormat() {
+        String fmt = (String) outputCombo.getSelectedItem();
+        return fmt == null ? FMT_JSON : fmt;
+    }
+
     public void convert()     { doConvert(); }
     public void formatInput() { doFormat(); }
     public void copyOutput()  { doCopy(); }
@@ -632,6 +671,11 @@ public class ConverterPanel implements Disposable {
               "Toggle soft-wrap in both editors");
         wrapBtn.addActionListener(e -> setLineWrap(!inputArea.getLineWrap()));
         bar.add(wrapBtn);
+
+        JButton compareBtn = buildIconButton(com.intellij.icons.AllIcons.Actions.Diff,
+              "Compare input and output as canonical JSON");
+        compareBtn.addActionListener(e -> doCompare());
+        bar.add(compareBtn);
 
         JButton historyBtn = buildIconButton(com.intellij.icons.AllIcons.Vcs.History,
               "Conversion history — restore a previous conversion");
@@ -856,7 +900,8 @@ public class ConverterPanel implements Disposable {
               lombokCheck.isSelected(),
               detectDatesCheck.isSelected(),
               inferTypesCheck.isSelected(),
-              sortKeysCheck.isSelected());
+              sortKeysCheck.isSelected(),
+              filterField.getText());
     }
 
     private static String csvModeHintFor(CsvConverter.CsvMode mode) {
@@ -941,6 +986,7 @@ public class ConverterPanel implements Disposable {
                                 setStatusWarn("Conversion cancelled");
                             } else {
                                 showError(cause.getMessage());
+                                jumpToErrorLocation(cause);
                             }
                         } else {
                             boolean huge = result.length() > HIGHLIGHT_LIMIT_CHARS;
@@ -994,6 +1040,7 @@ public class ConverterPanel implements Disposable {
             setStatus("\u2713  Input formatted", true);
         } catch (Exception ex) {
             showError("Format failed: " + ex.getMessage());
+            jumpToErrorLocation(ex);
         }
     }
 
@@ -1008,6 +1055,38 @@ public class ConverterPanel implements Disposable {
         // The badge reflects the format of the text actually in the output area;
         // the combo may have been changed since the last conversion.
         fileOps.saveOutput(output, outputFormatLabel.getText());
+    }
+
+    /**
+     * Opens the IDE diff viewer on the two editors, each normalised to canonical
+     * JSON. Comparing the canonical forms rather than the raw text is what lets a
+     * YAML input and a JSON output be recognised as carrying the same data.
+     */
+    private void doCompare() {
+        String inputText  = inputArea.getText();
+        String outputText = outputArea.getText();
+        if (inputText.isBlank() || outputText.isBlank()) {
+            setStatus("Both editors need content to compare", false);
+            return;
+        }
+        String inFmt  = inputFormatLabel.getText();
+        String outFmt = outputFormatLabel.getText();
+        if (!isValidInputFormat(outFmt)) {
+            setStatusWarn(outFmt + " output cannot be parsed back for comparison");
+            return;
+        }
+        try {
+            String left  = pipeline.canonicalJson(inputText, inFmt);
+            String right = pipeline.canonicalJson(outputText, outFmt);
+            if (left.equals(right)) {
+                setStatus("Input and output are equivalent", true);
+            }
+            ConverterDiff.show(project, "Be Water: " + inFmt + " vs " + outFmt,
+                  inFmt + " (input)", left, outFmt + " (output)", right);
+        } catch (Throwable failure) {
+            // Also catches the case where there is no IDE (tests, standalone).
+            showError("Compare failed: " + failure.getMessage());
+        }
     }
 
     // ── Utility actions ───────────────────────────────────────────────────
@@ -1185,6 +1264,36 @@ public class ConverterPanel implements Disposable {
      * first line goes to the status bar; the full text is delivered as an IDE
      * notification balloon and as the status label's tooltip.
      */
+    /**
+     * Moves the input caret to the position a parse failure points at, so the
+     * user lands on the offending character instead of reading a line number out
+     * of a message. Silently does nothing when the exception carries no location.
+     */
+    private void jumpToErrorLocation(Throwable failure) {
+        Throwable cause = failure;
+        while (cause != null && !(cause instanceof com.fasterxml.jackson.core.JsonProcessingException)) {
+            cause = cause.getCause();
+        }
+        if (!(cause instanceof com.fasterxml.jackson.core.JsonProcessingException jsonFailure)) return;
+        com.fasterxml.jackson.core.JsonLocation location = jsonFailure.getLocation();
+        if (location == null) return;
+
+        int line = location.getLineNr();      // 1-based, -1 when unknown
+        int column = location.getColumnNr();
+        if (line < 1) return;
+        try {
+            int lineStart = inputArea.getLineStartOffset(
+                  Math.min(line - 1, Math.max(0, inputArea.getLineCount() - 1)));
+            int offset = column > 0 ? lineStart + column - 1 : lineStart;
+            inputArea.setCaretPosition(Math.min(Math.max(offset, 0),
+                  inputArea.getDocument().getLength()));
+            inputArea.requestFocusInWindow();
+        } catch (javax.swing.text.BadLocationException outOfRange) {
+            // The reported position does not exist in the current document
+            // (input edited since): leave the caret alone.
+        }
+    }
+
     private void showError(String message) {
         if (message == null || message.isBlank()) message = "Unknown error";
         List<String> lines = message.lines().toList();

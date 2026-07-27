@@ -29,6 +29,17 @@
         <ul>
             <li>Bidirectional conversion between <b>JSON, XML, YAML, CSV, TOML and Protobuf</b></li>
             <li><b>Java POJO generation</b> from any supported input, with optional Lombok annotations</li>
+            <li><b>JSON Schema generation</b> (draft 2020-12) from any supported input</li>
+        </ul>
+
+        <h3>Works where you already are</h3>
+        <ul>
+            <li>Right-click a file or an editor selection to open it in the converter, or convert it
+                straight to another format</li>
+            <li>Results open as scratch files, in a real IDE editor</li>
+            <li><b>Compare</b> two documents as canonical JSON — the same data in YAML and JSON
+                compares as equal, so only real differences show</li>
+            <li><b>Subtree filter</b> to convert only the part of a document you care about</li>
         </ul>
 
         <h3>Protobuf</h3>
@@ -41,6 +52,7 @@
         <h3>CSV &amp; XML</h3>
         <ul>
             <li>Two CSV expansion modes: <code>FLAT_FIRST</code> (safe default) and <code>CROSS_JOIN</code> (full Cartesian product)</li>
+            <li>Comma, semicolon or tab delimiters for reading and writing</li>
             <li>Configurable row-warning threshold for <code>CROSS_JOIN</code> to control the row-explosion confirmation</li>
             <li><b>Type inference</b> for CSV and XML input — numbers, booleans and null become typed JSON values</li>
         </ul>
@@ -69,6 +81,18 @@
                 array order is preserved. Applies to every target format.</li>
             <li><b>Automatic format detection on paste</b> — pasting or dropping content sets the
                 input format for you; it never overrides a format you picked yourself.</li>
+            <li><b>Works from the editor and Project view</b> — right-click a file or a selection for
+                <i>Open in Be Water Converter</i>, or <i>Convert with Be Water</i> to convert straight
+                to any format. No more pasting into the tool window to get started.</li>
+            <li><b>Results open as scratch files</b> — conversions started from a context menu open in a
+                real IDE editor, with full highlighting, folding and your own keymap.</li>
+            <li><b>Subtree filter</b> — convert only part of a document with a JSON Pointer
+                (<code>/users/0/name</code>) or dotted path (<code>users[0].name</code>).</li>
+            <li><b>Compare</b> — diff the two editors in the IDE's diff viewer. Both sides are
+                normalised and key-sorted first, so the same data in YAML and JSON compares as equal
+                and only real differences are shown.</li>
+            <li><b>Parse errors move the caret</b> to the reported line and column instead of only
+                describing where the problem is.</li>
         </ul>
         <h3>1.4.1</h3>
         <ul>
@@ -211,5 +235,27 @@
                 class="com.converter.ConverterActions$SaveOutput"
                 text="Be Water: Save Output"
                 description="Save the converter output to a file"/>
+
+        <!-- Context actions: reach the converter from an editor or the Project
+             view instead of pasting into the tool window. Both are hidden unless
+             the context is something the plugin can actually read. -->
+        <action id="BeWaterConverter.SendToConverter"
+                class="com.converter.ConverterContextActions$SendToConverter"
+                text="Open in Be Water Converter"
+                description="Load the selection, editor contents or selected file into the converter"
+                icon="/icons/beWater.svg">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+
+        <group id="BeWaterConverter.ConvertTo"
+               class="com.converter.ConverterContextActions$ConvertToGroup"
+               text="Convert with Be Water"
+               description="Convert to another format and open the result in a scratch file"
+               icon="/icons/beWater.svg"
+               popup="true">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </group>
     </actions>
 </idea-plugin>

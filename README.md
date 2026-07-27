@@ -147,6 +147,38 @@ order untouched. Two documents carrying the same data in different key orders ca
 to the same output, which makes conversions diffable across runs and across sources. It is
 applied to the internal JSON pivot, so every target format inherits the ordering.
 
+### Using it from the editor and Project view
+
+Right-click a file in the Project view, or a selection in any editor:
+
+- **Open in Be Water Converter** loads the selection, the editor's contents, or the file into
+  the tool window, with the format resolved from the extension where there is one and from
+  the content otherwise.
+- **Convert with Be Water → <format>** converts straight to the chosen format and opens the
+  result as a scratch file, so it lands in a real IDE editor rather than the plugin's pane.
+
+Both entries are hidden when the context is not something the plugin can read. Files are
+read and converted on a background task with a cancellable progress indicator, so a large
+file never blocks the UI.
+
+### Subtree filter
+
+The **Filter** box converts only part of a document. Paths are
+[RFC 6901](https://datatracker.ietf.org/doc/html/rfc6901) JSON Pointers, with a dotted
+convenience syntax on top — `/users/0/name` and `users[0].name` select the same node, and a
+leading `$` (as JSONPath spells the root) is accepted so paths copied from other tools work.
+Bracket-quoting reaches keys that contain dots or slashes: `['odd.key'].a`. A path that
+matches nothing is reported as an error rather than silently converting an empty document.
+This is deliberately selection only, not a query language, and adds no dependency.
+
+### Compare
+
+The **Compare** toolbar button opens the IDE's diff viewer on the two editors. Each side is
+first normalised to canonical JSON — converted to the pivot format and key-sorted — so two
+documents carrying the same data in different formats or different key orders compare as
+identical, and only genuine differences appear. The status bar says so explicitly when the
+two sides are equivalent.
+
 ### CSV / XML type inference
 
 When CSV or XML is the input format, values that look like integers, decimals, booleans,
