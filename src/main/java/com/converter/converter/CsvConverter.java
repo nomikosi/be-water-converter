@@ -89,23 +89,60 @@ public class CsvConverter {
     public String csvToJson(String csv, boolean inferTypes, CsvFormat format) throws Exception {
         if (csv == null || csv.isBlank())
             throw new IllegalArgumentException("Input CSV must not be empty");
-        CsvSchema schema = CsvSchema.emptySchema().withHeader()
+        csv = ConversionPipeline.stripBom(csv);
+
+        // Read positionally rather than through withHeader(): letting Jackson key
+        // rows by header name silently collapses repeated column names, so a
+        // trailing empty duplicate would overwrite the populated column.
+        CsvSchema schema = CsvSchema.emptySchema()
               .withColumnSeparator(format.delimiter())
               .withQuoteChar(format.quote());
-        MappingIterator<Map<String, String>> it =
-              csvMapper.readerFor(Map.class).with(schema).readValues(csv);
-        List<Map<String, String>> rows = it.readAll();
-        if (!inferTypes) return jsonMapper.writeValueAsString(rows);
+        // WRAP_AS_ARRAY is what lets a column-less schema read raw rows; without
+        // it Jackson enforces the schema's zero columns and rejects every line.
+        MappingIterator<String[]> it = csvMapper.readerFor(String[].class)
+              .with(com.fasterxml.jackson.dataformat.csv.CsvParser.Feature.WRAP_AS_ARRAY)
+              .with(schema)
+              .readValues(csv);
+        List<String[]> lines = it.readAll();
+        if (lines.isEmpty()) return jsonMapper.writeValueAsString(jsonMapper.createArrayNode());
+
+        List<String> headers = uniqueHeaders(lines.get(0));
 
         ArrayNode arr = jsonMapper.createArrayNode();
-        for (Map<String, String> row : rows) {
+        for (int r = 1; r < lines.size(); r++) {
+            String[] cells = lines.get(r);
             ObjectNode obj = arr.addObject();
-            for (Map.Entry<String, String> e : row.entrySet()) {
-                obj.set(e.getKey(),
-                      ScalarInference.infer(e.getValue(), jsonMapper.getNodeFactory()));
+            // Ragged rows keep the old behaviour: a missing trailing cell means
+            // the key is absent rather than present-and-empty.
+            for (int c = 0; c < headers.size() && c < cells.length; c++) {
+                String value = cells[c] == null ? "" : cells[c];
+                obj.set(headers.get(c), inferTypes
+                      ? ScalarInference.infer(value, jsonMapper.getNodeFactory())
+                      : jsonMapper.getNodeFactory().textNode(value));
             }
         }
         return jsonMapper.writeValueAsString(arr);
+    }
+
+    /**
+     * Disambiguates repeated header names ({@code id}, {@code id_2}) so no column
+     * is lost, and names anonymous columns so an empty header cell is still
+     * addressable.
+     */
+    private List<String> uniqueHeaders(String[] rawHeaders) {
+        List<String> headers = new ArrayList<>(rawHeaders.length);
+        Set<String> used = new LinkedHashSet<>();
+        for (int i = 0; i < rawHeaders.length; i++) {
+            String name = rawHeaders[i] == null ? "" : rawHeaders[i].trim();
+            if (name.isEmpty()) name = "column_" + (i + 1);
+            if (!used.add(name)) {
+                int n = 2;
+                while (!used.add(name + "_" + n)) n++;
+                name = name + "_" + n;
+            }
+            headers.add(name);
+        }
+        return headers;
     }
 
     // ── JSON → CSV (mode-aware) ───────────────────────────────────────────────

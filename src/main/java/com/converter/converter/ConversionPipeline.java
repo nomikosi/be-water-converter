@@ -17,6 +17,7 @@
 package com.converter.converter;
 
 import com.fasterxml.jackson.core.json.JsonReadFeature;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -55,7 +56,27 @@ public class ConversionPipeline {
               .enable(JsonReadFeature.ALLOW_YAML_COMMENTS)
               .enable(JsonReadFeature.ALLOW_TRAILING_COMMA)
               .enable(JsonReadFeature.ALLOW_SINGLE_QUOTES)
-              .enable(JsonReadFeature.ALLOW_UNQUOTED_FIELD_NAMES);
+              .enable(JsonReadFeature.ALLOW_UNQUOTED_FIELD_NAMES)
+              // Without this, readTree stops at the first top-level value and
+              // silently discards the rest: JSONL kept only its first record and
+              // trailing garbage was accepted. Failing is strictly better than
+              // Format overwriting the editor with a truncated document.
+              .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+              // Floats would otherwise become double: 1e400 turned into the
+              // STRING "Infinity", 1e-400 into 0.0, and long decimals lost
+              // digits — including inside canonicalJson, which made Compare
+              // report differing documents as equal.
+              .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+    }
+
+    /**
+     * Strips a leading UTF-8 BOM. Excel writes one on "CSV UTF-8" export, and
+     * nothing downstream treats U+FEFF as whitespace: it silently became part of
+     * the first CSV header name, and made JSON, TOML and XML fail to parse.
+     */
+    public static String stripBom(String text) {
+        return text != null && !text.isEmpty() && text.charAt(0) == '﻿'
+              ? text.substring(1) : text;
     }
 
     /** Indenting mapper — for JSON the user actually sees. */
@@ -88,6 +109,7 @@ public class ConversionPipeline {
 
     public String normalizeToJson(String rawInput, String inFmt, ConversionOptions opts)
           throws Exception {
+        rawInput = stripBom(rawInput);
         String input = FMT_JSON.equals(inFmt) ? autoClose(rawInput) : rawInput;
         boolean inferTypes = opts.inferTypes();
         String pivot = switch (inFmt) {
@@ -176,14 +198,17 @@ public class ConversionPipeline {
     }
 
     public String formatInput(String input, String fmt, ConversionOptions opts) throws Exception {
-        boolean inferTypes = opts.inferTypes();
+        input = stripBom(input);
         String formatted = switch (fmt) {
             case FMT_JSON  -> prettyJson(autoClose(input));
             case FMT_XML   -> prettyXml(input);
             case FMT_YAML  -> jsonYaml.jsonToYaml(jsonYaml.yamlToJson(input));
             case FMT_TOML  -> toml.jsonToToml(toml.tomlToJson(input));
+            // inferTypes is deliberately false: Format only re-lays-out the
+            // document. Inferring here rewrote the user's data in place —
+            // 1.50 became 1.5 and a literal "null" cell was erased.
             case FMT_CSV   -> csv.jsonToCsv(
-                                    parseJson(csv.csvToJson(input, inferTypes, opts.csvFormat())),
+                                    parseJson(csv.csvToJson(input, false, opts.csvFormat())),
                                     CsvConverter.CsvMode.FLAT_FIRST, opts.csvFormat());
             case FMT_PROTO -> input.replaceAll("[ \t]+\n", "\n")
                                    .replaceAll("\n{3,}", "\n\n").trim();
@@ -208,7 +233,7 @@ public class ConversionPipeline {
      */
     public static String detectFormat(String text) {
         if (text == null) return null;
-        String s = text.strip();
+        String s = stripBom(text).strip();
         if (s.isEmpty()) return null;
 
         // Structural markers first: these are unambiguous.

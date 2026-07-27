@@ -22,13 +22,30 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 public class JsonYamlConverter {
+
+    /**
+     * SnakeYAML's default code-point limit is ~3 MB, which rejected YAML files
+     * well under the plugin's own 10 MB open warning. Raised to match, leaving
+     * the alias and nesting limits at their defaults so billion-laughs input is
+     * still refused.
+     */
+    static final int CODE_POINT_LIMIT = 64 * 1024 * 1024;
+
     private final ObjectMapper jsonMapper;
     private final YAMLMapper yamlMapper;
 
     public JsonYamlConverter() {
-        jsonMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+        jsonMapper = new ObjectMapper()
+              .enable(SerializationFeature.INDENT_OUTPUT)
+              // SnakeYAML resolves YAML timestamps to java.util.Date; without
+              // this they would serialise as epoch millis rather than the text
+              // the document actually contained.
+              .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
         yamlMapper = YAMLMapper.builder(
               YAMLFactory.builder()
@@ -49,18 +66,33 @@ public class JsonYamlConverter {
      * Converts YAML to JSON. Multi-document input ("---"-separated, e.g.
      * Kubernetes manifests) becomes a JSON array with one element per document;
      * a single document maps to its JSON value directly.
+     *
+     * <p>Parsed through SnakeYAML's composer rather than Jackson's YAML parser:
+     * Jackson works at the event level and never resolves anchors, so {@code *ref}
+     * arrived as the literal string {@code "ref"} and a {@code <<:} merge key
+     * survived as a key of that name with the merged content discarded.
      */
     public String yamlToJson(String yaml) throws Exception {
         if (yaml == null || yaml.isBlank())
             throw new IllegalArgumentException("Input YAML must not be empty");
-        java.util.List<JsonNode> docs =
-              yamlMapper.readerFor(JsonNode.class).<JsonNode>readValues(yaml).readAll();
-        // Trailing/empty documents surface as null, NullNode or a blank text
-        // scalar depending on parser configuration — drop them all.
-        docs.removeIf(d -> d == null || d.isNull() || d.isMissingNode()
-              || (d.isTextual() && d.asText().isBlank()));
+
+        LoaderOptions options = new LoaderOptions();
+        options.setCodePointLimit(CODE_POINT_LIMIT);
+        // SafeConstructor refuses arbitrary Java type tags, so a hostile
+        // document cannot cause class instantiation.
+        Yaml composer = new Yaml(new SafeConstructor(options));
+
+        java.util.List<JsonNode> docs = new java.util.ArrayList<>();
+        for (Object document : composer.loadAll(ConversionPipeline.stripBom(yaml))) {
+            if (document == null) continue;      // empty or "---"-only document
+            JsonNode node = jsonMapper.valueToTree(document);
+            if (node == null || node.isNull() || node.isMissingNode()) continue;
+            if (node.isTextual() && node.asText().isBlank()) continue;
+            docs.add(node);
+        }
         if (docs.isEmpty())
             throw new IllegalArgumentException("Input YAML contains no documents");
+
         JsonNode node = docs.size() == 1
               ? docs.get(0)
               : jsonMapper.createArrayNode().addAll(docs);
