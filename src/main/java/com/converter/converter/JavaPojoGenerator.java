@@ -33,6 +33,9 @@ import java.util.regex.Pattern;
  */
 public class JavaPojoGenerator {
 
+    /** Name of the generated root class; the only public type in the output. */
+    public static final String ROOT_CLASS_NAME = "Root";
+
     private final ObjectMapper jsonMapper = new ObjectMapper();
     private final XmlMapper   xmlMapper   = new XmlMapper();
 

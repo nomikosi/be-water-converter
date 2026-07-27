@@ -16,7 +16,7 @@
 
 package com.converter;
 
-import com.converter.converter.ConversionPipeline;
+import com.converter.converter.ConversionFileNames;
 import com.intellij.ide.scratch.ScratchRootType;
 import com.intellij.lang.Language;
 import com.intellij.openapi.command.WriteCommandAction;
@@ -29,7 +29,6 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
 
 import java.util.Locale;
-import java.util.Map;
 
 /**
  * Opens conversion results as scratch files. A scratch buffer gives the result
@@ -40,40 +39,13 @@ final class ConverterScratchFiles {
 
     private ConverterScratchFiles() {}
 
-    private static final Map<String, String> EXTENSIONS = Map.of(
-          ConversionPipeline.FMT_JSON,   "json",
-          ConversionPipeline.FMT_SCHEMA, "json",
-          ConversionPipeline.FMT_XML,    "xml",
-          ConversionPipeline.FMT_YAML,   "yaml",
-          ConversionPipeline.FMT_CSV,    "csv",
-          ConversionPipeline.FMT_TOML,   "toml",
-          ConversionPipeline.FMT_PROTO,  "proto",
-          ConversionPipeline.FMT_JAVA,   "java");
-
-    /** File extension a conversion result should carry. Package-private for testing. */
-    static String extensionFor(String format) {
-        return EXTENSIONS.getOrDefault(format, "txt");
-    }
-
-    /**
-     * Scratch file name for a result, derived from the source name where there
-     * is one so several conversions of different files stay tellable apart.
-     */
-    static String scratchNameFor(String sourceName, String format) {
-        String ext = extensionFor(format);
-        if (sourceName == null || sourceName.isBlank()) return "converted." + ext;
-        int dot = sourceName.lastIndexOf('.');
-        String base = dot > 0 ? sourceName.substring(0, dot) : sourceName;
-        return base + "." + ext;
-    }
-
     /**
      * Writes {@code text} to a new scratch file and opens it. Returns the file,
      * or null when the platform refused to create it.
      */
     static VirtualFile openAsScratch(Project project, String sourceName, String format, String text) {
-        String name = scratchNameFor(sourceName, format);
-        Language language = languageForExtension(extensionFor(format));
+        String name = ConversionFileNames.nameFor(sourceName, format);
+        Language language = languageForExtension(ConversionFileNames.extensionFor(format));
         return WriteCommandAction.writeCommandAction(project)
               .withName("Be Water: Open Conversion Result")
               .compute(() -> {
