@@ -7,7 +7,7 @@ plugins {
 }
 
 group = 'com.converter'
-version = '1.4.0'
+version = '1.4.1'
 
 repositories {
     mavenCentral()
@@ -19,7 +19,7 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        intellijIdeaCommunity('2024.3.7')
+        intellijIdeaCommunity('2025.1.7.1')
     }
 
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.21.1'
@@ -51,7 +51,9 @@ intellijPlatform {
         version = project.version
         name = 'Be Water Converter'
         ideaVersion {
-            sinceBuild = '243'
+            // 251 (2025.1) is the first build with the non-deprecated
+            // FileSaverDescriptor(title, description, extension) constructor.
+            sinceBuild = '251'
         }
     }
     pluginVerification {

@@ -10,7 +10,7 @@
 
   [![Build](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml/badge.svg)](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml)
   [![Java 21](https://img.shields.io/badge/Java-21-blue)](https://openjdk.org/projects/jdk/21/)
-  [![IntelliJ 2024.3+](https://img.shields.io/badge/IntelliJ-2024.3%2B-purple)](https://plugins.jetbrains.com/)
+  [![IntelliJ 2025.1+](https://img.shields.io/badge/IntelliJ-2025.1%2B-purple)](https://plugins.jetbrains.com/)
   [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
 </div>
 
@@ -289,7 +289,7 @@ Produces:
 ### Requirements
 
 - Java 21
-- IntelliJ Platform Gradle Plugin 2.x (targets IntelliJ IDEA Community 2024.3)
+- IntelliJ Platform Gradle Plugin 2.x (targets IntelliJ IDEA Community 2025.1)
 
 ### Running locally
 
@@ -338,8 +338,8 @@ GitHub release. Publishing requires a `PUBLISH_TOKEN` repository secret containi
 
 | Property | Value |
 |---|---|
-| Plugin version | 1.4.0 |
-| Minimum IDE build | 243 (IntelliJ IDEA 2024.3) |
+| Plugin version | 1.4.1 |
+| Minimum IDE build | 251 (IntelliJ IDEA 2025.1) |
 | Maximum IDE build | Open-ended |
 | Java | 21 |
 

@@ -59,6 +59,12 @@
         </ul>
     ]]></description>
     <change-notes><![CDATA[
+        <h3>1.4.1</h3>
+        <ul>
+            <li><b>Minimum IDE version is now 2025.1</b> — the save-file dialog moved to the
+                current <code>FileSaverDescriptor</code> API, which removes the last deprecated
+                platform API usage. Users on 2024.3 should stay on 1.4.0.</li>
+        </ul>
         <h3>1.4.0</h3>
         <ul>
             <li><b>Fixed: Format no longer corrupts XML input</b> — pretty-printing now preserves the
