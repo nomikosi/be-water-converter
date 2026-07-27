@@ -16,6 +16,7 @@
 
 package com.converter;
 
+import com.converter.converter.ConversionFileNames;
 import com.converter.converter.ConversionPipeline;
 import com.intellij.openapi.fileChooser.FileChooser;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
@@ -54,15 +55,9 @@ final class ConverterFileOps {
     private static final Set<String> SUPPORTED_EXTENSIONS =
           Set.of("json", "xml", "yaml", "yml", "csv", "toml", "proto");
 
-    private static final Map<String, String> FORMAT_EXTENSIONS = Map.of(
-          ConversionPipeline.FMT_SCHEMA, "json",
-          ConversionPipeline.FMT_JSON,  "json",
-          ConversionPipeline.FMT_XML,   "xml",
-          ConversionPipeline.FMT_YAML,  "yaml",
-          ConversionPipeline.FMT_CSV,   "csv",
-          ConversionPipeline.FMT_TOML,  "toml",
-          ConversionPipeline.FMT_PROTO, "proto",
-          ConversionPipeline.FMT_JAVA,  "java");
+    // Extension mapping lives in ConversionFileNames. A private copy of it here
+    // already went stale once: Kotlin was added there and not here, so Save
+    // Output wrote Kotlin results as output.txt.
 
     /** How the panel receives results; every call arrives on the EDT. */
     interface Host {
@@ -94,7 +89,7 @@ final class ConverterFileOps {
     }
 
     void saveOutput(String output, String outputFormat) {
-        String ext = FORMAT_EXTENSIONS.getOrDefault(outputFormat, "txt");
+        String ext = ConversionFileNames.extensionFor(outputFormat);
         // Single-extension constructor; the varargs overload is deprecated
         // since 2025.1. Requires sinceBuild >= 251.
         VirtualFileWrapper wrapper = FileChooserFactory.getInstance()

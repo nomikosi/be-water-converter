@@ -76,7 +76,10 @@ public class ConversionPipeline {
      * the first CSV header name, and made JSON, TOML and XML fail to parse.
      */
     public static String stripBom(String text) {
-        return text != null && !text.isEmpty() && text.charAt(0) == '﻿'
+        // The escape, not a literal U+FEFF char: the character is invisible, so
+        // a literal survives review poorly and dies silently if the file is
+        // ever re-encoded.
+        return text != null && !text.isEmpty() && text.charAt(0) == '\uFEFF'
               ? text.substring(1) : text;
     }
 

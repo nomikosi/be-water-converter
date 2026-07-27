@@ -33,6 +33,7 @@ class ConversionFileNamesTest {
         assertThat(ConversionFileNames.extensionFor(ConversionPipeline.FMT_TOML)).isEqualTo("toml");
         assertThat(ConversionFileNames.extensionFor(ConversionPipeline.FMT_PROTO)).isEqualTo("proto");
         assertThat(ConversionFileNames.extensionFor(ConversionPipeline.FMT_JAVA)).isEqualTo("java");
+        assertThat(ConversionFileNames.extensionFor(ConversionPipeline.FMT_KOTLIN)).isEqualTo("kt");
         // A JSON Schema document is still JSON.
         assertThat(ConversionFileNames.extensionFor(ConversionPipeline.FMT_SCHEMA)).isEqualTo("json");
     }

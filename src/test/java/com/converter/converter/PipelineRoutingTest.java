@@ -49,6 +49,7 @@ class PipelineRoutingTest {
           "TOML,        'id ='",
           "Protobuf,    'message Root'",
           "Java POJO,   'public class Root'",
+          "Kotlin,      'data class Root('",
           "JSON Schema, '$schema'",
     })
     @DisplayName("every output format is reachable and produces its own syntax")

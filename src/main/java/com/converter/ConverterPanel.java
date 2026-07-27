@@ -305,7 +305,7 @@ public class ConverterPanel implements Disposable {
 
         javaOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         javaOptions.setOpaque(false);
-        javaOptions.add(toolbarLabel("Java POJO:"));
+        javaOptions.add(toolbarLabel("Code gen:"));
         javaOptions.add(lombokCheck);
         javaOptions.add(detectDatesCheck);
 
@@ -887,12 +887,15 @@ public class ConverterPanel implements Disposable {
         String inFmt  = (String) inputCombo.getSelectedItem();
         boolean isCsvOut  = FMT_CSV.equals(outFmt);
         boolean isCsvIn   = FMT_CSV.equals(inFmt);
-        boolean isJava    = FMT_JAVA.equals(outFmt) || FMT_KOTLIN.equals(outFmt);
+        boolean isCodeGen = FMT_JAVA.equals(outFmt) || FMT_KOTLIN.equals(outFmt);
+        // Lombok is a Java-only concept; offering it for Kotlin output would be
+        // a toggle that silently does nothing.
+        lombokCheck.setVisible(FMT_JAVA.equals(outFmt));
         boolean untypedIn = isCsvIn || FMT_XML.equals(inFmt);
         csvOptions.setVisible(isCsvOut);
         csvInputOptions.setVisible(untypedIn);
         csvDelimiterOptions.setVisible(isCsvIn || isCsvOut);
-        javaOptions.setVisible(isJava);
+        javaOptions.setVisible(isCodeGen);
         // generalOptions (sort keys) applies to everything, so the bar is always shown.
         optionsBar.setVisible(true);
         optionsBar.revalidate();
