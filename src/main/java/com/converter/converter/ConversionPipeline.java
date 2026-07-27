@@ -43,19 +43,30 @@ public class ConversionPipeline {
     public static final String FMT_JAVA  = "Java POJO";
 
     /**
-     * Lenient reader for JSON input: accepts comments, trailing commas,
+     * Lenient read settings for JSON input: accepts comments, trailing commas,
      * single quotes and unquoted field names (pasted JS object literals).
-     * Input is normalised through this mapper into strict JSON before it
-     * reaches the downstream converters.
+     * Input is normalised through these into strict JSON before it reaches the
+     * downstream converters.
      */
-    private static final ObjectMapper LENIENT_JSON = JsonMapper.builder()
-          .enable(JsonReadFeature.ALLOW_JAVA_COMMENTS)
-          .enable(JsonReadFeature.ALLOW_YAML_COMMENTS)
-          .enable(JsonReadFeature.ALLOW_TRAILING_COMMA)
-          .enable(JsonReadFeature.ALLOW_SINGLE_QUOTES)
-          .enable(JsonReadFeature.ALLOW_UNQUOTED_FIELD_NAMES)
-          .enable(SerializationFeature.INDENT_OUTPUT)
-          .build();
+    private static JsonMapper.Builder lenientReader() {
+        return JsonMapper.builder()
+              .enable(JsonReadFeature.ALLOW_JAVA_COMMENTS)
+              .enable(JsonReadFeature.ALLOW_YAML_COMMENTS)
+              .enable(JsonReadFeature.ALLOW_TRAILING_COMMA)
+              .enable(JsonReadFeature.ALLOW_SINGLE_QUOTES)
+              .enable(JsonReadFeature.ALLOW_UNQUOTED_FIELD_NAMES);
+    }
+
+    /** Indenting mapper — for JSON the user actually sees. */
+    private static final ObjectMapper LENIENT_JSON =
+          lenientReader().enable(SerializationFeature.INDENT_OUTPUT).build();
+
+    /**
+     * Compact mapper for the internal JSON pivot. The pivot is re-parsed by the
+     * next stage and never displayed, so indenting it only inflates the string:
+     * on a 20k-row array the indented pivot measured ~1.5x the compact one.
+     */
+    private static final ObjectMapper COMPACT_JSON = lenientReader().build();
 
     private final JsonXmlConverter  jsonXml  = new JsonXmlConverter();
     private final JsonYamlConverter jsonYaml = new JsonYamlConverter();
@@ -73,8 +84,9 @@ public class ConversionPipeline {
         String input = FMT_JSON.equals(inFmt) ? autoClose(rawInput) : rawInput;
         return switch (inFmt) {
             // Lenient parse (comments, trailing commas, single quotes), then
-            // re-serialize so downstream converters always see strict JSON.
-            case FMT_JSON  -> LENIENT_JSON.writeValueAsString(LENIENT_JSON.readTree(input));
+            // re-serialize compactly so downstream converters always see strict
+            // JSON without paying to indent a string nobody reads.
+            case FMT_JSON  -> COMPACT_JSON.writeValueAsString(COMPACT_JSON.readTree(input));
             case FMT_XML   -> jsonXml.xmlToJson(input, inferTypes);
             case FMT_YAML  -> jsonYaml.yamlToJson(input);
             case FMT_CSV   -> csv.csvToJson(input, inferTypes);

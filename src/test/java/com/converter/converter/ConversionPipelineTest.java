@@ -54,6 +54,24 @@ class ConversionPipelineTest {
         assertThat(json.readTree(strict).get("name").asText()).isEqualTo("Bob");
     }
 
+    @Test @DisplayName("The JSON pivot is compact, not indented")
+    void jsonPivotIsCompact() throws Exception {
+        // The pivot is re-parsed by the next stage and never displayed, so
+        // indenting it only inflates a string nobody reads (~1.5x on large input).
+        String compactInput = "[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]";
+        String pivot = pipeline.normalizeToJson(compactInput, ConversionPipeline.FMT_JSON, false);
+        assertThat(pivot).doesNotContain("\n").hasSameSizeAs(compactInput);
+        // Still strict, parseable JSON with the same content.
+        assertThat(json.readTree(pivot)).isEqualTo(json.readTree(compactInput));
+    }
+
+    @Test @DisplayName("JSON output stays pretty-printed for the user")
+    void jsonOutputStaysIndented() throws Exception {
+        String pretty = pipeline.renderFromJson("[{\"id\":1}]", ConversionPipeline.FMT_JSON,
+              CsvConverter.CsvMode.FLAT_FIRST, false, false);
+        assertThat(pretty).contains("\n");
+    }
+
     // ── autoClose ─────────────────────────────────────────────────────────
 
     @Test @DisplayName("autoClose repairs an unterminated string and brackets")

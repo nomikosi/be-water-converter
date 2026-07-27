@@ -59,10 +59,6 @@ public final class ConversionHistory {
         return List.copyOf(entries);
     }
 
-    public synchronized boolean isEmpty() {
-        return entries.isEmpty();
-    }
-
     public synchronized void clear() {
         entries.clear();
     }

@@ -85,12 +85,13 @@ public class WrapLayout extends FlowLayout {
      */
     private Dimension layoutSize(Container target, boolean preferred) {
         synchronized (target.getTreeLock()) {
-            int targetWidth = target.getSize().width;
+            // Walk up to the first ancestor with a real width: during the initial
+            // layout pass the target itself still measures zero.
             Container container = target;
             while (container.getSize().width == 0 && container.getParent() != null) {
                 container = container.getParent();
             }
-            targetWidth = container.getSize().width;
+            int targetWidth = container.getSize().width;
             if (targetWidth == 0) {
                 targetWidth = Integer.MAX_VALUE;
             }

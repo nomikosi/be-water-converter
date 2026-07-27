@@ -129,15 +129,10 @@ public class CsvConverter {
         CsvSchema.Builder sb = CsvSchema.builder().setUseHeader(true);
         for (String h : headers) sb.addColumn(h);
 
-        // Ensure every row has a value (possibly "") for every header
-        List<Map<String, String>> normalised = new ArrayList<>();
-        for (Map<String, String> row : rows) {
-            Map<String, String> r = new LinkedHashMap<>();
-            for (String h : headers) r.put(h, row.getOrDefault(h, ""));
-            normalised.add(r);
-        }
-
-        return csvMapper.writer(sb.build()).writeValueAsString(normalised);
+        // The schema drives column order and emits an empty cell for any header a
+        // row is missing, so padding every row into a second list here would only
+        // double peak memory on exactly the largest conversions.
+        return csvMapper.writer(sb.build()).writeValueAsString(rows);
     }
 
     // ── Row-count estimation (no row materialisation) ────────────────────────

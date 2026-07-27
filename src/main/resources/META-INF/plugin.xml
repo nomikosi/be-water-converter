@@ -70,6 +70,15 @@
             <li><b>Fixed: colliding POJO class names</b> — two differently-shaped objects that map to
                 the same class name each get their own class instead of the second being typed with
                 the first one's fields.</li>
+            <li><b>Fixed: JSON→Proto emitted duplicate message names</b> — keys like
+                <code>user</code> and <code>User</code> produced two <code>message User</code> blocks
+                in one scope, which is invalid proto3.</li>
+            <li><b>Fixed: Protobuf input with braces or <code>//</code> inside string literals</b> —
+                a valid schema containing <code>option x = "{";</code> was rejected as having
+                unbalanced braces.</li>
+            <li><b>Faster, leaner conversions</b> — the internal JSON pivot is no longer
+                pretty-printed, which removed about a third of its size on large inputs, and CSV
+                output no longer copies every row a second time.</li>
             <li><b>Fixed: saving output no longer freezes the IDE</b> — writes moved off the UI
                 thread, matching how files are read.</li>
             <li><b>Cancel is now reliable</b> — cancelling before the conversion starts is honoured,

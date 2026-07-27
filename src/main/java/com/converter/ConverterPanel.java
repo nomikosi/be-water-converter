@@ -606,8 +606,11 @@ public class ConverterPanel implements Disposable {
         // a restore can itself be undone from the history menu.
         String curIn  = inputArea.getText();
         String curOut = outputArea.getText();
+        boolean previousKept = true;
         if (!curIn.isEmpty() || !curOut.isEmpty()) {
-            history.push(new ConversionHistory.Entry(
+            // push() refuses entries over the size cap; say so rather than
+            // letting the undo silently not be there.
+            previousKept = history.push(new ConversionHistory.Entry(
                   inputFormatLabel.getText(), outputFormatLabel.getText(),
                   curIn, curOut, java.time.LocalTime.now()));
         }
@@ -623,8 +626,13 @@ public class ConverterPanel implements Disposable {
         outputFormatLabel.setText(entry.outputFormat());
         outputFormatLabel.repaint();
 
-        setStatus("Restored " + entry.inputFormat() + " → " + entry.outputFormat()
-              + " from history", true);
+        String restored = "Restored " + entry.inputFormat() + " → " + entry.outputFormat()
+              + " from history";
+        if (previousKept) {
+            setStatus(restored, true);
+        } else {
+            setStatusWarn(restored + "  (previous content too large to keep for undo)");
+        }
     }
 
     /** Compact icon-only button between the From/To combos that swaps the two sides. */

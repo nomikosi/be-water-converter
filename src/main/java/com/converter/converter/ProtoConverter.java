@@ -97,10 +97,7 @@ public class ProtoConverter {
             throw new IllegalArgumentException(
                 "Protobuf input is empty. Paste a proto3 schema containing at least one 'message' block.");
 
-        String clean = protoSchema
-            .replaceAll("(?s)/\\*.*?\\*/", "")   // block comments
-            .replaceAll("//[^\\n]*", "")          // line comments
-            .trim();
+        String clean = maskCommentsAndStrings(protoSchema).trim();
         validateBraces(clean);
 
         List<Block> topMessages = findNamedBlocks(clean, "message");
@@ -215,6 +212,51 @@ public class ProtoConverter {
             case "bool"                                              -> node.put(fieldName, false);
             default                                                  -> node.put(fieldName, "");
         }
+    }
+
+    // ── Lexing ────────────────────────────────────────────────────────────
+
+    /**
+     * Blanks the contents of comments and string literals with spaces, leaving
+     * every other character (and the overall length) untouched.
+     *
+     * <p>Structural scanning counts braces and looks for {@code message}/{@code
+     * enum} keywords over raw text, so without this a literal brace in
+     * {@code option x = "{";} is counted as a real block opener and a valid
+     * schema is rejected as unbalanced. Doing it in one pass — rather than with
+     * separate comment and string regexes — is what keeps {@code "//"} inside a
+     * string and a quote inside a comment from confusing each other.
+     */
+    static String maskCommentsAndStrings(String input) {
+        char[] out = input.toCharArray();
+        int i = 0, n = input.length();
+        while (i < n) {
+            char c = input.charAt(i);
+            if (c == '/' && i + 1 < n && input.charAt(i + 1) == '/') {
+                while (i < n && input.charAt(i) != '\n') out[i++] = ' ';
+            } else if (c == '/' && i + 1 < n && input.charAt(i + 1) == '*') {
+                out[i++] = ' ';
+                out[i++] = ' ';
+                while (i < n && !(input.charAt(i) == '*'
+                      && i + 1 < n && input.charAt(i + 1) == '/')) {
+                    if (input.charAt(i) != '\n') out[i] = ' ';   // keep line structure
+                    i++;
+                }
+                if (i < n) out[i++] = ' ';
+                if (i < n) out[i++] = ' ';
+            } else if (c == '"' || c == '\'') {
+                out[i++] = ' ';                                   // opening quote
+                while (i < n && input.charAt(i) != c) {
+                    boolean escaped = input.charAt(i) == '\\';
+                    out[i++] = ' ';
+                    if (escaped && i < n) out[i++] = ' ';         // escaped char
+                }
+                if (i < n) out[i++] = ' ';                        // closing quote
+            } else {
+                i++;
+            }
+        }
+        return new String(out);
     }
 
     // ── Block finding (brace-depth aware) ─────────────────────────────────
@@ -373,14 +415,25 @@ public class ProtoConverter {
         String pad = "  ".repeat(indent);
         sb.append(pad).append("message ").append(msgName).append(" {\n");
 
+        // Nested message names must be unique within this message: keys "user"
+        // and "User" both want to be "User", which would emit two blocks of the
+        // same name. Assign once here, then reuse for the block and the field
+        // type so the two can never disagree.
+        Map<String, String> childNames    = new LinkedHashMap<>();
+        Set<String> usedMessageNames      = new HashSet<>();
         for (Map.Entry<String, JsonNode> e : node.properties()) {
-            String   childName = protoMessageName(e.getKey());
-            JsonNode val       = e.getValue();
-            if (val.isObject()) {
-                generateMessage(childName, val, sb, indent + 1);
-            } else if (val.isArray() && !val.isEmpty() && val.get(0).isObject()) {
-                generateMessage(childName, val.get(0), sb, indent + 1);
+            JsonNode val = e.getValue();
+            if (val.isObject() || (val.isArray() && !val.isEmpty() && val.get(0).isObject())) {
+                childNames.put(e.getKey(),
+                      uniqueName(protoMessageName(e.getKey()), "", usedMessageNames));
             }
+        }
+
+        for (Map.Entry<String, JsonNode> e : node.properties()) {
+            String childName = childNames.get(e.getKey());
+            if (childName == null) continue;
+            JsonNode val = e.getValue();
+            generateMessage(childName, val.isObject() ? val : val.get(0), sb, indent + 1);
         }
 
         int[] counter = {1};
@@ -388,11 +441,11 @@ public class ProtoConverter {
         for (Map.Entry<String, JsonNode> e : node.properties()) {
             String   fieldName = protoFieldName(e.getKey(), usedFieldNames);
             JsonNode val       = e.getValue();
-            String   childName = protoMessageName(e.getKey());
+            String   childName = childNames.get(e.getKey());
             String   fieldPad  = pad + "  ";
 
             if (val.isArray()) {
-                String elemType = (!val.isEmpty() && val.get(0).isObject())
+                String elemType = (childName != null)
                     ? childName : jsonTypeToProto(!val.isEmpty() ? val.get(0) : null);
                 sb.append(fieldPad).append("repeated ").append(elemType).append(" ")
                   .append(fieldName).append(" = ").append(counter[0]++).append(";\n");
@@ -405,6 +458,14 @@ public class ProtoConverter {
             }
         }
         sb.append(pad).append("}\n");
+    }
+
+    /** Suffixes a counter until {@code base} is unused, recording the result in {@code used}. */
+    private String uniqueName(String base, String separator, Set<String> used) {
+        if (used.add(base)) return base;
+        int n = 2;
+        while (!used.add(base + separator + n)) n++;
+        return base + separator + n;
     }
 
     /**
@@ -422,13 +483,7 @@ public class ProtoConverter {
         }
         if (sb.isEmpty()) sb.append('_');
         if (Character.isDigit(sb.charAt(0))) sb.insert(0, '_');
-        String name = sb.toString();
-        if (!used.add(name)) {
-            int n = 2;
-            while (!used.add(name + "_" + n)) n++;
-            name = name + "_" + n;
-        }
-        return name;
+        return uniqueName(sb.toString(), "_", used);
     }
 
     /** Sanitized, capitalized message name for a JSON key. */

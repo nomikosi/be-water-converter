@@ -58,7 +58,7 @@ class ConversionHistoryTest {
         ConversionHistory history = new ConversionHistory();
         String huge = "x".repeat(ConversionHistory.MAX_ENTRY_CHARS + 1);
         assertThat(history.push(entry(huge, ""))).isFalse();
-        assertThat(history.isEmpty()).isTrue();
+        assertThat(history.entries()).isEmpty();
         assertThat(history.push(entry("small", "ok"))).isTrue();
         assertThat(history.entries()).hasSize(1);
     }
@@ -68,7 +68,6 @@ class ConversionHistoryTest {
         ConversionHistory history = new ConversionHistory();
         history.push(entry("a", "b"));
         history.clear();
-        assertThat(history.isEmpty()).isTrue();
         assertThat(history.entries()).isEmpty();
     }
 }

@@ -124,6 +124,48 @@ class ProtoConverterEdgeCaseTest {
         assertThat(result).contains("a_b = 1;").contains("a_b_2 = 2;");
     }
 
+    @Test @DisplayName("JSON->Proto: nested messages colliding on name are deduplicated")
+    void jsonToProtoDeduplicatesMessageNames() throws Exception {
+        // "user" and "User" both want the message name "User"; emitting it twice
+        // in one scope is invalid proto3.
+        String result = converter.jsonToProto("{\"user\":{\"a\":1},\"User\":{\"b\":\"x\"}}");
+        assertThat(result).contains("message User {").contains("message User2 {");
+        long userBlocks = result.lines().filter(l -> l.trim().equals("message User {")).count();
+        assertThat(userBlocks).isEqualTo(1);
+        // The field types must reference the names actually emitted.
+        assertThat(result).contains("User user = 1;").contains("User2 User = 2;");
+    }
+
+    @Test @DisplayName("JSON->Proto: colliding array-of-object message names are deduplicated")
+    void jsonToProtoDeduplicatesRepeatedMessageNames() throws Exception {
+        String result = converter.jsonToProto("{\"item\":{\"a\":1},\"Item\":[{\"b\":2}]}");
+        assertThat(result).contains("message Item {").contains("message Item2 {")
+              .contains("repeated Item2 Item = 2;");
+    }
+
+    // ── String literals are not structural (comments/braces inside quotes) ──
+
+    @Test @DisplayName("Proto->JSON: a brace inside a string literal is not a block opener")
+    void protoBraceInsideStringLiteral() throws Exception {
+        String result = converter.protoToJson(
+              "message M { string s = 1; }\noption x = \"{\";");
+        assertThat(result).contains("\"M\"").contains("\"s\"");
+    }
+
+    @Test @DisplayName("Proto->JSON: '//' inside a string literal is not a comment")
+    void protoSlashesInsideStringLiteral() throws Exception {
+        String result = converter.protoToJson(
+              "option java_package = \"http://example.com\";\nmessage M { string s = 1; }");
+        assertThat(result).contains("\"M\"").contains("\"s\"");
+    }
+
+    @Test @DisplayName("Proto->JSON: a quote inside a comment does not swallow the schema")
+    void protoQuoteInsideComment() throws Exception {
+        String result = converter.protoToJson(
+              "// don\"t let this quote start a string\nmessage M { string s = 1; }");
+        assertThat(result).contains("\"M\"").contains("\"s\"");
+    }
+
     @Test @DisplayName("JSON->Proto: generated schema with hostile keys round-trips through protoToJson")
     void jsonToProtoRoundTripsWithHostileKeys() throws Exception {
         String schema = converter.jsonToProto(
