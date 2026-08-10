@@ -53,6 +53,18 @@ class ConversionFileNamesTest {
               .isEqualTo("Root.java");
     }
 
+    @Test @DisplayName("Kotlin keeps the source name, and falls back to Root.kt without one")
+    void kotlinNaming() {
+        // Kotlin allows several top-level declarations per file, so unlike Java
+        // the file name is free to follow the source.
+        assertThat(ConversionFileNames.nameFor("customers.csv", ConversionPipeline.FMT_KOTLIN))
+              .isEqualTo("customers.kt");
+        assertThat(ConversionFileNames.nameFor(null, ConversionPipeline.FMT_KOTLIN))
+              .isEqualTo("Root.kt");
+        assertThat(ConversionFileNames.nameFor("  ", ConversionPipeline.FMT_KOTLIN))
+              .isEqualTo("Root.kt");
+    }
+
     @Test @DisplayName("the source file's base name is kept so results stay tellable apart")
     void keepsBaseName() {
         assertThat(ConversionFileNames.nameFor("customers.csv", ConversionPipeline.FMT_JSON))

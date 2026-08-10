@@ -50,13 +50,8 @@ public class JavaPojoGenerator {
           "transient", "try", "void", "volatile", "while",
           "var", "yield", "record", "sealed", "permits");
 
-    // ── ISO-8601 date/time detection ──────────────────────────────────────
-    private static final Pattern ISO_DATE =
-          Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
-    private static final Pattern ISO_DATETIME_OFFSET =
-          Pattern.compile("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})");
-    private static final Pattern ISO_DATETIME_LOCAL =
-          Pattern.compile("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?");
+    /** Java identifiers admit {@code $}, which is the only way they differ from Kotlin's. */
+    private static final Pattern ILLEGAL_IN_IDENTIFIER = Pattern.compile("[^a-zA-Z0-9_$]");
 
     public String fromJson(String json) throws Exception {
         return fromJson(json, false);
@@ -75,8 +70,11 @@ public class JavaPojoGenerator {
         if (json == null || json.isBlank())
             throw new IllegalArgumentException("Input must not be null or blank");
         JsonNode root = jsonMapper.readTree(json);
-        if (root.isArray()) {
-            if (root.size() == 0)
+        // Peels every level, not just one: an array of arrays is typed from the
+        // first element of the innermost, the same rule StructureModel applies
+        // to a nested array under a key.
+        while (root.isArray()) {
+            if (root.isEmpty())
                 throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
             root = root.get(0);
         }
@@ -95,8 +93,8 @@ public class JavaPojoGenerator {
         if (xml == null || xml.isBlank())
             throw new IllegalArgumentException("Input XML must not be null or blank");
         JsonNode root = xmlMapper.readTree(xml.getBytes(StandardCharsets.UTF_8));
-        if (root.isArray()) {
-            if (root.size() == 0)
+        while (root.isArray()) {
+            if (root.isEmpty())
                 throw new IllegalArgumentException("XML array is empty — nothing to generate.");
             root = root.get(0);
         }
@@ -173,7 +171,9 @@ public class JavaPojoGenerator {
                   usedTypes, model);
             if (!camelName.equals(originalKey)) {
                 usedTypes.add("JsonProperty");
-                sb.append("    @JsonProperty(\"").append(originalKey).append("\")\n");
+                sb.append("    @JsonProperty(\"")
+                      .append(SourceConventions.javaStringLiteral(originalKey))
+                      .append("\")\n");
             }
             sb.append("    private ").append(javaType).append(" ").append(camelName).append(";\n");
         }
@@ -218,60 +218,15 @@ public class JavaPojoGenerator {
         return "Object";
     }
 
-    /**
-     * Returns the java.time type for an ISO-8601 value, or null when the value
-     * is not a date. Matches are confirmed with an actual java.time parse so
-     * "2025-13-99" is not mistaken for a date.
-     */
     private String temporalTypeFor(String value) {
-        try {
-            if (ISO_DATETIME_OFFSET.matcher(value).matches()) {
-                java.time.OffsetDateTime.parse(value);
-                return "OffsetDateTime";
-            }
-            if (ISO_DATETIME_LOCAL.matcher(value).matches()) {
-                java.time.LocalDateTime.parse(value);
-                return "LocalDateTime";
-            }
-            if (ISO_DATE.matcher(value).matches()) {
-                java.time.LocalDate.parse(value);
-                return "LocalDate";
-            }
-        } catch (java.time.format.DateTimeParseException notADate) {
-            return null;
-        }
-        return null;
+        return SourceConventions.temporalTypeFor(value);
     }
 
     private String capitalize(String s) {
-        if (s == null || s.isEmpty()) return s;
-        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+        return SourceConventions.capitalize(s);
     }
 
     private String toCamelCase(String s) {
-        if (s == null || s.isEmpty()) return s;
-        String[] parts = s.split("[_\\-.]+");
-        StringBuilder sb = new StringBuilder();
-        for (String rawPart : parts) {
-            if (rawPart.isEmpty()) continue;
-            String part = sanitize(rawPart);
-            if (sb.isEmpty()) {
-                sb.append(Character.toLowerCase(part.charAt(0))).append(part.substring(1));
-            } else {
-                sb.append(Character.toUpperCase(part.charAt(0)))
-                      .append(part.substring(1).toLowerCase(Locale.ROOT));
-            }
-        }
-        if (sb.isEmpty()) sb.append('_');
-        String result = sb.toString();
-        if (Character.isDigit(result.charAt(0))) {
-            result = "_" + result;
-        }
-        if (JAVA_KEYWORDS.contains(result)) {
-            result = result + "Value";
-        }
-        return result;
+        return SourceConventions.toCamelCase(s, ILLEGAL_IN_IDENTIFIER, JAVA_KEYWORDS);
     }
-
-    private String sanitize(String s) { return s.replaceAll("[^a-zA-Z0-9_$]", "_"); }
 }

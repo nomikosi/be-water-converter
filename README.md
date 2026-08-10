@@ -300,6 +300,12 @@ Hard keywords (`when`, `class`, `is`, `fun`, …) are renamed with a `Value` suf
 back with `@JsonProperty`; soft keywords such as `data`, `value` and `sealed` are legal
 property names and are left alone. The **Detect dates** toggle applies here too.
 
+Deserializing the result needs [`jackson-module-kotlin`](https://github.com/FasterXML/jackson-module-kotlin),
+the way the Lombok mode needs Lombok on the classpath. A data class has no no-argument
+constructor, and `@JsonProperty` on a constructor `val` binds to the constructor
+*parameter* — only that module reads either, so plain `jackson-databind` cannot construct
+the generated classes whatever the annotation placement.
+
 ### Protobuf schema generation
 
 The Protobuf converter works structurally in both directions without invoking `protoc`:

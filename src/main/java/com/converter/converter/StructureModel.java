@@ -22,7 +22,6 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.UnaryOperator;
 
 /**
@@ -58,6 +57,11 @@ public final class StructureModel {
      */
     public static StructureModel from(JsonNode root, String rootName,
           UnaryOperator<String> typeNamer) {
+        // A scalar implies no type at all, so generation would otherwise return
+        // an empty string and the panel would report that as a conversion.
+        if (root == null || !root.isObject())
+            throw new IllegalArgumentException(
+                  "Nothing to generate: the input must be a JSON object, or an array of objects.");
         StructureModel model = new StructureModel(typeNamer);
         model.collect(root, rootName);
         return model;
@@ -73,12 +77,21 @@ public final class StructureModel {
             JsonNode child = entry.getValue();
             if (child.isObject()) {
                 collect(child, childName);
-            } else if (child.isArray() && !child.isEmpty() && child.get(0).isObject()) {
+            } else if (child.isArray()) {
                 // Arrays are typed from their first element; see the generators'
-                // tests, which pin that this is deliberate.
-                collect(child.get(0), childName);
+                // tests, which pin that this is deliberate. Nesting has to be
+                // followed all the way down, because the generators type
+                // [[{...}]] as List<List<Row>> and that Row still needs a type.
+                collect(firstElement(child), childName);
             }
         }
+    }
+
+    /** The element an array is typed from, unwrapping arrays of arrays. */
+    private static JsonNode firstElement(JsonNode array) {
+        JsonNode node = array;
+        while (node.isArray() && !node.isEmpty()) node = node.get(0);
+        return node;
     }
 
     /** Suffixes a counter when the desired name is already taken. */
@@ -98,9 +111,5 @@ public final class StructureModel {
     /** The name assigned to this exact node, or null if it is not a discovered type. */
     public String nameOf(JsonNode node) {
         return names.get(node);
-    }
-
-    public Set<String> names() {
-        return Collections.unmodifiableSet(types.keySet());
     }
 }

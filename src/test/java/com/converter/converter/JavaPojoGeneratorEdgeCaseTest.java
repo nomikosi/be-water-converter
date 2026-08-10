@@ -201,6 +201,44 @@ class JavaPojoGeneratorEdgeCaseTest {
               .contains("\nclass Shipping");
     }
 
+    @Test @DisplayName("JSON->POJO: an array of arrays of objects still emits the element class")
+    void nestedArraysOfObjects() throws Exception {
+        String result = generator.fromJson("{\"matrix\":[[{\"a\":1}]]}");
+        assertThat(result)
+              .contains("private List<List<Matrix>> matrix;")
+              .contains("class Matrix");
+    }
+
+    // ── Keys that are not valid identifiers or literals ───────────────────
+
+    @Test @DisplayName("JSON->POJO: a quote or backslash in a key is escaped in @JsonProperty")
+    void escapesInAnnotation() throws Exception {
+        // Written raw, these ended the string literal and the class stopped compiling.
+        assertThat(generator.fromJson("{\"a\\\"b\":1}")).contains("@JsonProperty(\"a\\\"b\")");
+        assertThat(generator.fromJson("{\"c:\\\\path\":1}")).contains("@JsonProperty(\"c:\\\\path\")");
+        assertThat(generator.fromJson("{\"a\\nb\":1}"))
+              .contains("@JsonProperty(\"a\\nb\")")
+              .doesNotContain("@JsonProperty(\"a\n");
+    }
+
+    @Test @DisplayName("JSON->POJO: keys that sanitise to nothing still get a legal identifier")
+    void unusableKeysGetLegalNames() throws Exception {
+        // "_" has been a reserved keyword since Java 9, so it cannot be the fallback.
+        assertThat(generator.fromJson("{\"\":1}")).contains("private Integer _value;");
+        assertThat(generator.fromJson("{\"@\":1}")).contains("private Integer _value;");
+        assertThat(generator.fromJson("{\"__\":1}")).contains("private Integer _value;");
+        // The same rule applies where the name becomes a class rather than a field.
+        assertThat(generator.fromJson("{\"\":{\"a\":1}}"))
+              .contains("private _Value _value;")
+              .contains("class _Value");
+    }
+
+    @Test @DisplayName("JSON->POJO: a root array of arrays is unwrapped all the way down")
+    void rootArrayOfArrays() throws Exception {
+        // The same shape one level down generates; the root must not disagree.
+        assertThat(generator.fromJson("[[{\"id\":1}]]")).contains("private Integer id;");
+    }
+
     // ── Null / blank input ────────────────────────────────────────────────
 
     @Test @DisplayName("JSON->POJO: null input throws")
@@ -211,5 +249,13 @@ class JavaPojoGeneratorEdgeCaseTest {
     @Test @DisplayName("JSON->POJO: blank input throws")
     void fromJsonBlankInput() {
         assertThatThrownBy(() -> generator.fromJson("   ")).isInstanceOf(Exception.class);
+    }
+
+    @Test @DisplayName("JSON->POJO: a scalar document is rejected rather than generating nothing")
+    void rejectsScalarRoot() {
+        assertThatThrownBy(() -> generator.fromJson("42"))
+              .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> generator.fromJson("[1,2]"))
+              .isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -157,10 +157,61 @@ class KotlinDataClassGeneratorTest {
               .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test @DisplayName("a scalar document is rejected rather than generating nothing")
+    void rejectsScalarRoot() {
+        // Returning "" made the panel report a successful conversion into an
+        // empty output pane.
+        assertThatThrownBy(() -> generator.fromJson("42"))
+              .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> generator.fromJson("\"text\""))
+              .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> generator.fromJson("[1,2]"))
+              .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test @DisplayName("an array of arrays of objects still emits the element class")
+    void nestedArraysOfObjects() throws Exception {
+        String out = generator.fromJson("{\"matrix\":[[{\"a\":1}]]}");
+        assertThat(out)
+              .contains("val matrix: List<List<Matrix>>")
+              .contains("data class Matrix(");
+    }
+
     @Test @DisplayName("a quote or dollar in a key is escaped inside @JsonProperty")
     void escapesInAnnotation() throws Exception {
         // An unescaped $ would be a Kotlin string template and fail to compile.
         assertThat(generator.fromJson("{\"a$b\":1}")).contains("@JsonProperty(\"a\\$b\")");
+        assertThat(generator.fromJson("{\"a\\\"b\":1}")).contains("@JsonProperty(\"a\\\"b\")");
+        assertThat(generator.fromJson("{\"a\\\\b\":1}")).contains("@JsonProperty(\"a\\\\b\")");
+    }
+
+    @Test @DisplayName("a control character in a key is escaped, not written raw")
+    void escapesControlCharacters() throws Exception {
+        // A raw newline ends the string literal, so the output would not compile.
+        assertThat(generator.fromJson("{\"a\\nb\":1}"))
+              .contains("@JsonProperty(\"a\\nb\")")
+              .doesNotContain("@JsonProperty(\"a\n");
+    }
+
+    @Test @DisplayName("keys that sanitise to nothing still get a legal identifier")
+    void unusableKeysGetLegalNames() throws Exception {
+        // Kotlin reserves every underscore run — _, __, ___ — and each illegal
+        // character contributes one underscore, so none of them is a name.
+        assertThat(generator.fromJson("{\"\":1}")).contains("val _value: Int");
+        assertThat(generator.fromJson("{\"@\":1}")).contains("val _value: Int");
+        assertThat(generator.fromJson("{\"__\":1}")).contains("val _value: Int");
+        assertThat(generator.fromJson("{\"中文\":1}")).contains("val _value: Int");
+        assertThat(generator.fromJson("{\"@@@\":1}")).contains("val _value: Int");
+        // …including where the name becomes a type rather than a property.
+        assertThat(generator.fromJson("{\"中文\":{\"a\":1}}"))
+              .contains("val _value: _Value")
+              .contains("data class _Value(");
+    }
+
+    @Test @DisplayName("a root array of arrays is unwrapped all the way down")
+    void rootArrayOfArrays() throws Exception {
+        // The same shape one level down generates; the root must not disagree.
+        assertThat(generator.fromJson("[[{\"id\":1}]]")).contains("val id: Int");
     }
 
     @Test @DisplayName("reachable as a pipeline output format")

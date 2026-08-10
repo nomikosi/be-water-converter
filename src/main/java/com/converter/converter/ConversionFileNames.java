@@ -47,24 +47,42 @@ public final class ConversionFileNames {
     }
 
     /**
+     * How a code generator's root type constrains the result's file name.
+     *
+     * @param rootType     the type the generator always emits at the root.
+     * @param mustMatch    true when the language requires the file to be named
+     *                     after that type, so the source name cannot be kept.
+     */
+    private record RootType(String rootType, boolean mustMatch) {}
+
+    /**
+     * The code-generating formats. One row per generator, so adding a language
+     * does not mean adding another branch below.
+     *
+     * <p>Java must match: IntelliJ reports {@code CLASS_WRONG_FILE_NAME} on a
+     * public class whose file disagrees, and the generator always emits
+     * {@code public class Root}. Kotlin allows several top-level declarations
+     * per file, so its name is free and only stands in for a missing source
+     * name.
+     */
+    private static final Map<String, RootType> ROOT_TYPES = Map.of(
+          ConversionPipeline.FMT_JAVA,
+          new RootType(JavaPojoGenerator.ROOT_CLASS_NAME, true),
+          ConversionPipeline.FMT_KOTLIN,
+          new RootType(KotlinDataClassGenerator.ROOT_CLASS_NAME, false));
+
+    /**
      * Name for a conversion result, derived from the source name where there is
      * one so several conversions of different files stay tellable apart.
-     *
-     * <p>Java is the exception: {@link JavaPojoGenerator} always names the root
-     * class {@code Root}, and IntelliJ reports {@code CLASS_WRONG_FILE_NAME} on a
-     * public class whose file disagrees — so a Java result is always Root.java.
      */
     public static String nameFor(String sourceName, String format) {
         String ext = extensionFor(format);
-        if (ConversionPipeline.FMT_JAVA.equals(format)) {
-            return JavaPojoGenerator.ROOT_CLASS_NAME + "." + ext;
+        boolean nameless = sourceName == null || sourceName.isBlank();
+        RootType root = ROOT_TYPES.get(format);
+        if (root != null && (root.mustMatch() || nameless)) {
+            return root.rootType() + "." + ext;
         }
-        // Kotlin allows several top-level classes per file, so the file name is
-        // free — but matching the root class keeps results tellable apart.
-        if (ConversionPipeline.FMT_KOTLIN.equals(format) && (sourceName == null || sourceName.isBlank())) {
-            return KotlinDataClassGenerator.ROOT_CLASS_NAME + "." + ext;
-        }
-        if (sourceName == null || sourceName.isBlank()) return "converted." + ext;
+        if (nameless) return "converted." + ext;
         int dot = sourceName.lastIndexOf('.');
         String base = dot > 0 ? sourceName.substring(0, dot) : sourceName;
         return base + "." + ext;

@@ -35,6 +35,13 @@ import java.util.regex.Pattern;
  * <p>Types are non-null except where the example showed {@code null}, because an
  * example can only demonstrate what was present. Values that appeared as null are
  * typed {@code Any?}.
+ *
+ * <p>Deserialising the output needs {@code jackson-module-kotlin}: a data class
+ * has no no-argument constructor, and the emitted {@code @JsonProperty} carries
+ * no use-site target, so Kotlin applies it to the constructor parameter — which
+ * only that module reads. This is documented rather than worked around because
+ * no annotation placement makes plain {@code jackson-databind} construct a data
+ * class.
  */
 public class KotlinDataClassGenerator {
 
@@ -54,12 +61,8 @@ public class KotlinDataClassGenerator {
           "super", "this", "throw", "true", "try", "typealias", "typeof", "val",
           "var", "when", "while");
 
-    private static final Pattern ISO_DATE =
-          Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
-    private static final Pattern ISO_DATETIME_OFFSET =
-          Pattern.compile("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})");
-    private static final Pattern ISO_DATETIME_LOCAL =
-          Pattern.compile("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?");
+    /** Kotlin identifiers, unlike Java's, do not admit {@code $}. */
+    private static final Pattern ILLEGAL_IN_IDENTIFIER = Pattern.compile("[^a-zA-Z0-9_]");
 
     public String fromJson(String json) throws Exception {
         return fromJson(json, true);
@@ -74,7 +77,10 @@ public class KotlinDataClassGenerator {
         if (json == null || json.isBlank())
             throw new IllegalArgumentException("Input must not be null or blank");
         JsonNode root = jsonMapper.readTree(json);
-        if (root.isArray()) {
+        // Peels every level, not just one: an array of arrays is typed from the
+        // first element of the innermost, the same rule StructureModel applies
+        // to a nested array under a key.
+        while (root.isArray()) {
             if (root.isEmpty())
                 throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
             root = root.get(0);
@@ -126,7 +132,9 @@ public class KotlinDataClassGenerator {
 
             if (!propertyName.equals(originalKey)) {
                 usedTypes.add("JsonProperty");
-                sb.append("    @JsonProperty(\"").append(escape(originalKey)).append("\")\n");
+                sb.append("    @JsonProperty(\"")
+                      .append(SourceConventions.kotlinStringLiteral(originalKey))
+                      .append("\")\n");
             }
             sb.append("    val ").append(propertyName).append(": ").append(type);
             if (--remaining > 0) sb.append(',');
@@ -176,60 +184,20 @@ public class KotlinDataClassGenerator {
         return "Any";
     }
 
-    /** Confirms an ISO-8601 match with a real parse, so "2025-13-99" stays a String. */
     private String temporalTypeFor(String value) {
-        try {
-            if (ISO_DATETIME_OFFSET.matcher(value).matches()) {
-                java.time.OffsetDateTime.parse(value);
-                return "OffsetDateTime";
-            }
-            if (ISO_DATETIME_LOCAL.matcher(value).matches()) {
-                java.time.LocalDateTime.parse(value);
-                return "LocalDateTime";
-            }
-            if (ISO_DATE.matcher(value).matches()) {
-                java.time.LocalDate.parse(value);
-                return "LocalDate";
-            }
-        } catch (java.time.format.DateTimeParseException notADate) {
-            return null;
-        }
-        return null;
-    }
-
-    private static String escape(String s) {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$");
+        return SourceConventions.temporalTypeFor(value);
     }
 
     private String capitalize(String s) {
-        if (s == null || s.isEmpty()) return s;
-        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+        return SourceConventions.capitalize(s);
     }
 
+    /**
+     * Keywords are suffixed rather than back-quoted: the {@code @JsonProperty}
+     * that the rename triggers is what preserves the original key, and
+     * {@code val `class`: X} reads badly in generated code.
+     */
     private String toCamelCase(String s) {
-        if (s == null || s.isEmpty()) return "_";
-        String[] parts = s.split("[_\\-.]+");
-        StringBuilder sb = new StringBuilder();
-        for (String rawPart : parts) {
-            if (rawPart.isEmpty()) continue;
-            String part = sanitize(rawPart);
-            if (part.isEmpty()) continue;
-            if (sb.isEmpty()) {
-                sb.append(Character.toLowerCase(part.charAt(0))).append(part.substring(1));
-            } else {
-                sb.append(Character.toUpperCase(part.charAt(0)))
-                      .append(part.substring(1).toLowerCase(java.util.Locale.ROOT));
-            }
-        }
-        if (sb.isEmpty()) sb.append('_');
-        String result = sb.toString();
-        if (Character.isDigit(result.charAt(0))) result = "_" + result;
-        // Suffixed rather than back-quoted: the @JsonProperty that the rename
-        // triggers is what preserves the original key, and `val \`class\`: X`
-        // reads badly in generated code.
-        if (KOTLIN_KEYWORDS.contains(result)) result = result + "Value";
-        return result;
+        return SourceConventions.toCamelCase(s, ILLEGAL_IN_IDENTIFIER, KOTLIN_KEYWORDS);
     }
-
-    private String sanitize(String s) { return s.replaceAll("[^a-zA-Z0-9_]", "_"); }
 }

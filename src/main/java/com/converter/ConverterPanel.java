@@ -66,6 +66,12 @@ public class ConverterPanel implements Disposable {
     private static final int HIGHLIGHT_LIMIT_CHARS = 2_000_000;
 
     /**
+     * Above this output size, Open in editor confirms first: the scratch write
+     * needs a write action and so cannot leave the EDT.
+     */
+    private static final int SCRATCH_WARNING_CHARS = 1_000_000;
+
+    /**
      * A single insertion of at least this many characters is treated as a paste
      * or drop rather than typing, and triggers input-format detection.
      */
@@ -1097,6 +1103,15 @@ public class ConverterPanel implements Disposable {
             setStatusWarn("Open in editor needs a project");
             return;
         }
+        // Creating a scratch file runs a write command action, which the platform
+        // only runs on the EDT, so a large output blocks the UI for as long as the
+        // write and the editor open take. It cannot be moved off the EDT; ask
+        // first instead of freezing unannounced, as loading a large file does.
+        if (output.length() > SCRATCH_WARNING_CHARS && !confirmWarning("Large output",
+              String.format("The output is %,d characters. Opening it in an editor "
+                    + "will block the IDE while it is written. Continue?", output.length()))) {
+            return;
+        }
         // The badge reflects what is actually in the pane; the combo may have
         // moved on since the last conversion.
         String format = outputFormatLabel.getText();
@@ -1104,8 +1119,14 @@ public class ConverterPanel implements Disposable {
             var file = ConverterScratchFiles.openAsScratch(project, null, format, output);
             setStatus(file != null ? "Opened " + file.getName() + " in the editor"
                   : "Could not create a scratch file", file != null);
+        } catch (com.intellij.openapi.progress.ProcessCanceledException cancelled) {
+            // Control flow, not a failure: the platform cancels this when the
+            // project closes mid-open, and it must reach the platform unchanged.
+            throw cancelled;
         } catch (Throwable failure) {
-            showError("Open in editor failed: " + failure.getMessage());
+            String message = failure.getMessage() == null
+                  ? failure.getClass().getSimpleName() : failure.getMessage();
+            showError("Open in editor failed: " + message);
         }
     }
 
