@@ -73,6 +73,7 @@ public class JsonXmlConverter {
         if (xml == null || xml.isBlank()) {
             throw new IllegalArgumentException("Input XML must not be empty");
         }
+        rejectMergingNames(xml);
         JsonNode node = xmlMapper.readTree(xml.getBytes(StandardCharsets.UTF_8));
         if (inferTypes) node = inferLeafTypes(node);
         return jsonMapper.writeValueAsString(node);
@@ -97,6 +98,73 @@ public class JsonXmlConverter {
             return out;
         }
         return node;
+    }
+
+    /**
+     * Refuses XML whose element and attribute names collide once Jackson drops
+     * namespace prefixes.
+     *
+     * <p>Jackson's tree API keys on the LOCAL name, so {@code <p:a>1</p:a>} and
+     * {@code <q:a>2</q:a>} — different elements in different namespaces —
+     * became the single key {@code a} holding {@code ["1","2"]}, and an
+     * attribute {@code a="1"} merged with a child {@code <a>} the same way. The
+     * values survive but the distinction does not, and nothing said so.
+     *
+     * <p>Only an actual collision is refused: ordinary namespaced XML, where
+     * local names stay distinct, converts exactly as before.
+     */
+    private static void rejectMergingNames(String xml) throws Exception {
+        javax.xml.parsers.DocumentBuilderFactory dbf =
+              javax.xml.parsers.DocumentBuilderFactory.newInstance();
+        dbf.setNamespaceAware(true);
+        dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        dbf.setExpandEntityReferences(false);
+        org.w3c.dom.Document doc;
+        try {
+            doc = dbf.newDocumentBuilder().parse(
+                  new org.xml.sax.InputSource(new java.io.StringReader(xml)));
+        } catch (Exception notParseableHere) {
+            return;   // let XmlMapper produce the real parse error
+        }
+        checkElement(doc.getDocumentElement());
+    }
+
+    private static void checkElement(org.w3c.dom.Element element) {
+        // Attributes and child elements land in the same JSON object, so an
+        // attribute named "a" and a child <a> collide even though both spell "a".
+        Map<String, String> attributeNames = new java.util.HashMap<>();
+        org.w3c.dom.NamedNodeMap attrs = element.getAttributes();
+        for (int i = 0; i < attrs.getLength(); i++) {
+            org.w3c.dom.Node a = attrs.item(i);
+            if ("xmlns".equals(a.getPrefix()) || "xmlns".equals(a.getNodeName())) continue;
+            String local = a.getLocalName() == null ? a.getNodeName() : a.getLocalName();
+            String previous = attributeNames.put(local, a.getNodeName());
+            if (previous != null)
+                throw collision(element, previous, a.getNodeName(), local);
+        }
+        Map<String, String> elementNames = new java.util.HashMap<>();
+        org.w3c.dom.NodeList children = element.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            if (!(children.item(i) instanceof org.w3c.dom.Element child)) continue;
+            String local = child.getLocalName() == null ? child.getNodeName() : child.getLocalName();
+            String attribute = attributeNames.get(local);
+            if (attribute != null)
+                throw collision(element, "the attribute " + attribute,
+                      "the element <" + child.getNodeName() + ">", local);
+            // Repeating the SAME element name is an ordinary XML list.
+            String previous = elementNames.put(local, child.getNodeName());
+            if (previous != null && !previous.equals(child.getNodeName()))
+                throw collision(element, previous, child.getNodeName(), local);
+            checkElement(child);
+        }
+    }
+
+    private static IllegalArgumentException collision(org.w3c.dom.Element parent,
+          String one, String other, String key) {
+        return new IllegalArgumentException(
+              "<" + parent.getNodeName() + "> holds both " + one + " and " + other
+              + ", which are different in XML but the same key \"" + key + "\" in JSON, so "
+              + "converting would merge them. Rename one, or convert the sections separately.");
     }
 
     private JsonNode sanitizeKeysForXml(JsonNode node) {

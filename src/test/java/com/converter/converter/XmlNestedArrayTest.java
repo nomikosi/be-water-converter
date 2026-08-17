@@ -20,6 +20,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** XML has no nested-list form, so inner lists get an element of their own. */
 @DisplayName("XML nested arrays")
@@ -58,6 +59,35 @@ class XmlNestedArrayTest {
         assertThat(converter.jsonToXml("{\"c\":[[[1]],[[2]]]}").replaceAll("\\s+", ""))
               .isEqualTo("<root><c><values><values>1</values></values></c>"
                     + "<c><values><values>2</values></values></c></root>");
+    }
+
+    @Test @DisplayName("names that would merge into one JSON key are refused")
+    void mergingNamesAreRefused() {
+        // Jackson keys on the LOCAL name, so these became one key holding both
+        // values and the distinction vanished silently.
+        assertThatThrownBy(() -> converter.xmlToJson(
+              "<r xmlns:p=\"urn:p\" xmlns:q=\"urn:q\"><p:a>1</p:a><q:a>2</q:a></r>"))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("same key");
+        assertThatThrownBy(() -> converter.xmlToJson("<r a=\"1\"><a>2</a></r>"))
+              .isInstanceOf(IllegalArgumentException.class);
+        // Nested, not just at the root.
+        assertThatThrownBy(() -> converter.xmlToJson(
+              "<r xmlns:p=\"urn:p\"><inner><p:a>1</p:a><a>2</a></inner></r>"))
+              .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test @DisplayName("ordinary namespaced XML and repeated elements still convert")
+    void namespacesWithoutCollisionsStillWork() throws Exception {
+        // Distinct local names: nothing merges, so nothing is refused.
+        assertThat(converter.xmlToJson(
+              "<r xmlns:p=\"urn:p\"><p:a>1</p:a><p:b>2</p:b></r>"))
+              .isEqualTo("{\"a\":\"1\",\"b\":\"2\"}");
+        // The same name repeated is an ordinary list, not a collision.
+        assertThat(converter.xmlToJson("<r><a>1</a><a>2</a></r>"))
+              .isEqualTo("{\"a\":[\"1\",\"2\"]}");
+        assertThat(converter.xmlToJson("<r a=\"1\" b=\"2\"/>"))
+              .isEqualTo("{\"a\":\"1\",\"b\":\"2\"}");
     }
 
     @Test @DisplayName("flat arrays and objects are untouched")

@@ -40,19 +40,39 @@ class YamlFidelityTest {
         assertThat(converter.jsonToYaml("{\"name\":\"Alice\"}")).contains("name: Alice");
     }
 
-    @Test @DisplayName("KNOWN LIMIT: strings YAML resolves by a non-decimal rule still retype")
-    void nonDecimalLookalikesStillRetype() throws Exception {
-        // Pinned so the gap is visible rather than discovered. Jackson's
-        // ALWAYS_QUOTE_NUMBERS_AS_STRINGS quotes plain decimals only, so these
-        // go out bare and YAML reads them back as something else. Closing it
-        // needs quoting every string, which costs the readable output the
-        // JsonYamlConverter tests deliberately pin.
+    @Test @DisplayName("times, exponents and dates now survive the round trip too")
+    void formerLookalikesNowSurvive() throws Exception {
+        // These were sexagesimal, float and timestamp under YAML 1.1.
+        assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"12:30:00\"}")))
+              .isEqualTo("{\"a\":\"12:30:00\"}");
+        assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"1e3\"}")))
+              .isEqualTo("{\"a\":\"1e3\"}");
+        assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"2024-01-01\"}")))
+              .isEqualTo("{\"a\":\"2024-01-01\"}");
+        assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"0777\"}")))
+              .isEqualTo("{\"a\":\"0777\"}");
+    }
+
+    @Test @DisplayName("KNOWN LIMIT: a hex-looking string still comes back as a number")
+    void hexLookalikeStillRetypes() throws Exception {
+        // 0x1F is a genuine integer in YAML 1.2, so reading it as 31 is right.
+        // What is wrong is the OUTPUT side: MINIMIZE_QUOTES emits the string
+        // "0x1F" bare, and ALWAYS_QUOTE_NUMBERS_AS_STRINGS covers plain decimals
+        // only. Closing it needs quoting every string, which costs the readable
+        // output the JsonYamlConverter tests deliberately pin. Left visible.
         assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"0x1F\"}")))
               .isEqualTo("{\"a\":31}");
-        assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"1e3\"}")))
-              .isEqualTo("{\"a\":1000.0}");
-        assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"12:30:00\"}")))
-              .isEqualTo("{\"a\":45000}");
+    }
+
+    @Test @DisplayName("YAML 1.1 values that were never ambiguous still resolve")
+    void ordinaryResolutionUnchanged() throws Exception {
+        assertThat(converter.yamlToJson("a: yes\nb: no\nc: true\n"))
+              .isEqualTo("{\"a\":true,\"b\":false,\"c\":true}");
+        assertThat(converter.yamlToJson("a: null\nb: ~\nc: 42\nd: 1.5\ne: 0x1F\n"))
+              .isEqualTo("{\"a\":null,\"b\":null,\"c\":42,\"d\":1.5,\"e\":31}");
+        // Anchors and merge keys still work — they are why this uses the composer.
+        assertThat(converter.yamlToJson("base: &b {x: 1}\nuse:\n  <<: *b\n  y: 2\n"))
+              .contains("\"x\":1").contains("\"y\":2");
     }
 
     @Test @DisplayName("keys that differ in YAML but collide as JSON are refused")

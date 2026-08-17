@@ -95,7 +95,9 @@ public class JsonYamlConverter {
         options.setAllowDuplicateKeys(false);
         // SafeConstructor refuses arbitrary Java type tags, so a hostile
         // document cannot cause class instantiation.
-        Yaml composer = new Yaml(new SafeConstructor(options));
+        Yaml composer = new Yaml(new SafeConstructor(options),
+              new org.yaml.snakeyaml.representer.Representer(new org.yaml.snakeyaml.DumperOptions()),
+              new org.yaml.snakeyaml.DumperOptions(), options, new CoreScalarResolver());
 
         java.util.List<JsonNode> docs = new java.util.ArrayList<>();
         for (Object document : composer.loadAll(ConversionPipeline.stripBom(yaml))) {
@@ -117,6 +119,45 @@ public class JsonYamlConverter {
               ? docs.get(0)
               : jsonMapper.createArrayNode().addAll(docs);
         return jsonMapper.writeValueAsString(node);
+    }
+
+    /**
+     * Scalar resolution without the YAML 1.1 rules that rewrite data.
+     *
+     * <p>SnakeYAML defaults to YAML 1.1, where {@code 12:30:00} is sexagesimal
+     * for 45000, {@code 0777} is octal for 511, and a bare date becomes a
+     * {@code java.util.Date} that then serialised as a timestamp string. Those
+     * three silently changed values that every modern YAML producer means as
+     * text, and JSON has no date type to receive the third.
+     *
+     * <p>This drops exactly those: the sexagesimal alternatives, bare octal, and
+     * the timestamp resolver. Booleans, null, plain integers, floats, merge keys
+     * and explicit {@code 0o}/{@code 0x} forms all still resolve, so {@code yes}
+     * is still a boolean and nothing else about reading YAML changes.
+     */
+    private static final class CoreScalarResolver extends org.yaml.snakeyaml.resolver.Resolver {
+        @Override protected void addImplicitResolvers() {
+            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.BOOL, java.util.regex.Pattern.compile(
+                  "^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE"
+                  + "|on|On|ON|off|Off|OFF)$"), "yYnNtTfFoO");
+            // No "[-+]?[1-9][0-9_]*(:[0-5]?[0-9])+" and no bare "0[0-7_]+".
+            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.INT, java.util.regex.Pattern.compile(
+                  "^(?:[-+]?0b[0-1_]+|[-+]?0o?[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)"
+                  + "|[-+]?0x[0-9a-fA-F_]+)$"), "-+0123456789");
+            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.FLOAT, java.util.regex.Pattern.compile(
+                  "^(?:[-+]?(?:[0-9][0-9_]*)\\.[0-9_]*(?:[eE][-+]?[0-9]+)?"
+                  + "|\\.[0-9_]+(?:[eE][-+][0-9]+)?"
+                  + "|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$"), "-+0123456789.");
+            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.MERGE,
+                  java.util.regex.Pattern.compile("^(?:<<)$"), "<");
+            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.NULL, java.util.regex.Pattern.compile(
+                  "^(?:~|null|Null|NULL| )$"), "~nN\0");
+            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.NULL,
+                  java.util.regex.Pattern.compile("^$"), null);
+            // Tag.TIMESTAMP is deliberately absent: it produced a java.util.Date
+            // that JSON then had to render as a string anyway, in a format the
+            // document never used.
+        }
     }
 
     /**
