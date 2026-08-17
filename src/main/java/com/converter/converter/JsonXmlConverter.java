@@ -114,11 +114,32 @@ public class JsonXmlConverter {
         }
         if (node.isArray()) {
             ArrayNode out = jsonMapper.createArrayNode();
-            for (JsonNode item : node) out.add(sanitizeKeysForXml(item));
+            for (JsonNode item : node) {
+                JsonNode child = sanitizeKeysForXml(item);
+                // XML has no nested-list form: two levels of array serialised as
+                // one flat run of elements, so {"m":[[1,2],[3,4]]} came back as
+                // {"m":[1,2,3,4]} with the rows merged and a dimension gone.
+                // Wrapping each inner list in an element keeps the grouping, the
+                // same trade ProtoConverter makes for repeated-of-repeated.
+                out.add(item.isArray()
+                      ? jsonMapper.createObjectNode().set(NESTED_ARRAY_ELEMENT, child)
+                      : child);
+            }
             return out;
         }
         return node;
     }
+
+    /**
+     * Element that stands in for one nested array level.
+     *
+     * <p>Not reserved by construction: a document that genuinely contains
+     * {@code {"m":[{"values":[1,2]}]}} produces byte-identical XML, so
+     * {@code xmlToJson} cannot unwrap it again without corrupting that case.
+     * The round trip therefore gains this level rather than losing a dimension
+     * — a deliberate choice of consumable XML over a recoverable round trip.
+     */
+    static final String NESTED_ARRAY_ELEMENT = "values";
 
     /** Maps an arbitrary JSON key to a well-formed XML element name. */
     static String xmlElementName(String key) {
