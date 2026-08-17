@@ -51,6 +51,18 @@ public class JsonYamlConverter {
               YAMLFactory.builder()
                     .disable(YAMLGenerator.Feature.WRITE_DOC_START_MARKER)  // suppress "---"
                     .enable(YAMLGenerator.Feature.MINIMIZE_QUOTES)           // bare strings, no 'quoting'
+                    // On its own MINIMIZE_QUOTES emitted the STRING "123" as
+                    // bare 123, which YAML reads back as a number: the round
+                    // trip retyped the value. This quotes the numeric-looking
+                    // ones and leaves ordinary text bare, which is what keeps
+                    // the output readable — the point of MINIMIZE_QUOTES.
+                    //
+                    // It does NOT cover strings YAML resolves by other rules:
+                    // "0x1F" still returns as 31 and "12:30:00" as 45000 by
+                    // YAML 1.1 sexagesimal. Closing that needs quoting
+                    // everything, which costs the readable output this project
+                    // deliberately tests for, so it is a documented limit.
+                    .enable(YAMLGenerator.Feature.ALWAYS_QUOTE_NUMBERS_AS_STRINGS)
                     .build()
         ).build();
     }
@@ -78,18 +90,26 @@ public class JsonYamlConverter {
 
         LoaderOptions options = new LoaderOptions();
         options.setCodePointLimit(CODE_POINT_LIMIT);
+        // A repeated key silently kept only the last value. YAML says duplicate
+        // keys are an error; SnakeYAML merely defaults to allowing them.
+        options.setAllowDuplicateKeys(false);
         // SafeConstructor refuses arbitrary Java type tags, so a hostile
         // document cannot cause class instantiation.
         Yaml composer = new Yaml(new SafeConstructor(options));
 
         java.util.List<JsonNode> docs = new java.util.ArrayList<>();
         for (Object document : composer.loadAll(ConversionPipeline.stripBom(yaml))) {
-            if (document == null) continue;      // empty or "---"-only document
-            JsonNode node = jsonMapper.valueToTree(document);
-            if (node == null || node.isNull() || node.isMissingNode()) continue;
-            if (node.isTextual() && node.asText().isBlank()) continue;
+            JsonNode node = document == null ? null : jsonMapper.valueToTree(document);
+            if (node == null || node.isMissingNode()) node = jsonMapper.nullNode();
+            rejectCollidingKeys(document, node);
             docs.add(node);
         }
+        // A trailing "---" terminates the last document rather than starting an
+        // empty one, and yamlTrailingSeparator pins that. Interior empties are
+        // kept, though: dropping them renumbered every later document, so a
+        // leading "--- null" silently shifted a manifest's index.
+        while (!docs.isEmpty() && docs.get(docs.size() - 1).isNull())
+            docs.remove(docs.size() - 1);
         if (docs.isEmpty())
             throw new IllegalArgumentException("Input YAML contains no documents");
 
@@ -97,5 +117,27 @@ public class JsonYamlConverter {
               ? docs.get(0)
               : jsonMapper.createArrayNode().addAll(docs);
         return jsonMapper.writeValueAsString(node);
+    }
+
+    /**
+     * Refuses a mapping whose keys are distinct in YAML but identical once
+     * stringified for JSON.
+     *
+     * <p>YAML keys can be any node; JSON keys are strings, so {@code valueToTree}
+     * stringifies them. {@code 1} and {@code "1"} — or {@code true} and
+     * {@code "true"} — are different keys in YAML and the same key in JSON, and
+     * the second silently overwrote the first. Stringifying is fine; losing a
+     * value to it is not.
+     */
+    private static void rejectCollidingKeys(Object document, JsonNode converted) {
+        if (!(document instanceof java.util.Map<?, ?> map) || converted == null
+              || !converted.isObject()) return;
+        if (map.size() != converted.size())
+            throw new IllegalArgumentException(
+                  "This YAML mapping has keys that differ in YAML but are identical as JSON "
+                  + "keys (for example 1 and \"1\"), so converting would drop a value. "
+                  + "Give them distinct names first.");
+        for (java.util.Map.Entry<?, ?> e : map.entrySet())
+            rejectCollidingKeys(e.getValue(), converted.get(String.valueOf(e.getKey())));
     }
 }
