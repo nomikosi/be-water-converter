@@ -231,8 +231,12 @@ public class ConversionPipeline {
         String formatted = switch (fmt) {
             case FMT_JSON  -> prettyJson(autoClose(input));
             case FMT_XML   -> prettyXml(input);
-            case FMT_YAML  -> jsonYaml.jsonToYaml(jsonYaml.yamlToJson(input));
-            case FMT_TOML  -> toml.jsonToToml(toml.tomlToJson(input));
+            // Per document, not once over the whole stream: yamlToJson turns a
+            // multi-document file into a JSON array, and rendering that back
+            // gave one YAML sequence — Format replaced a two-manifest k8s file
+            // with a single list and wrote it over the editor.
+            case FMT_YAML  -> jsonYaml.formatPreservingDocuments(input, opts.sortKeys());
+            case FMT_TOML  -> formatToml(input, opts.sortKeys());
             // inferTypes is deliberately false: Format only re-lays-out the
             // document. Inferring here rewrote the user's data in place —
             // 1.50 became 1.5 and a literal "null" cell was erased.
@@ -243,11 +247,36 @@ public class ConversionPipeline {
                                    .replaceAll("\n{3,}", "\n\n").trim();
             default        -> input;
         };
-        // Key sorting is a JSON-tree operation; only the tree-backed formats can
-        // honour it without a lossy round-trip through their own syntax.
+        // YAML and TOML sort inside their own formatters above, because both
+        // already pass through the JSON tree there and the sort has to happen
+        // while the tree exists.
         if (opts.sortKeys() && FMT_JSON.equals(fmt)) return prettyJson(sortKeys(formatted));
         return formatted;
     }
+
+    /**
+     * Re-lays-out TOML, refusing rather than retyping a date.
+     *
+     * <p>TOML has first-class dates and JSON does not, so the pivot turns
+     * {@code created = 1979-05-27T07:32:00Z} into a string and rendering it back
+     * writes {@code created = "1979-05-27T07:32:00Z"} — Format silently changed
+     * a date into text, in the user's own file.
+     */
+    private String formatToml(String input, boolean sortKeys) throws Exception {
+        java.util.regex.Matcher dated = TOML_DATE.matcher(TomlConverter.maskStringsAndComments(input));
+        if (dated.find())
+            throw new IllegalArgumentException(
+                  "Format would rewrite the date " + dated.group().trim() + " as a quoted string: "
+                  + "TOML has date and time types and the JSON step this uses does not. "
+                  + "The document is left as it is.");
+        String pivot = toml.tomlToJson(input);
+        return toml.jsonToToml(sortKeys ? sortKeys(pivot) : pivot);
+    }
+
+    /** A bare TOML date, datetime or time in value position. */
+    private static final java.util.regex.Pattern TOML_DATE = java.util.regex.Pattern.compile(
+          "=\\s*(\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}:\\d{2}\\S*)?|\\d{2}:\\d{2}:\\d{2}\\S*)\\s*(?=$|[,}\\]#\\r\\n])",
+          java.util.regex.Pattern.MULTILINE);
 
     /** Parses the JSON pivot once for callers that need the tree (row estimates). */
     public JsonNode parseJson(String json) throws Exception {
@@ -298,8 +327,15 @@ public class ConversionPipeline {
         return null;
     }
 
+    /**
+     * {@code package x;} is deliberately NOT here. It is legal proto, but it is
+     * also an ordinary line of Java, Kotlin or Go, and scanning the whole
+     * document for it classified any YAML that merely embedded such a line — a
+     * k8s ConfigMap carrying a source file — as Protobuf. The remaining markers
+     * are ones nothing else writes at the start of a line.
+     */
     private static final java.util.regex.Pattern PROTO_MARKER = java.util.regex.Pattern.compile(
-          "(?m)^\\s*(syntax\\s*=|message\\s+\\w+\\s*\\{|enum\\s+\\w+\\s*\\{|package\\s+[\\w.]+\\s*;)");
+          "(?m)^\\s*(syntax\\s*=\\s*[\"']proto[23][\"']|message\\s+\\w+\\s*\\{|enum\\s+\\w+\\s*\\{)");
     private static final java.util.regex.Pattern TOML_MARKER = java.util.regex.Pattern.compile(
           "(?m)^\\s*(\\[[^]]+]\\s*$|[A-Za-z_][\\w.-]*\\s*=)");
     private static final java.util.regex.Pattern YAML_MARKER = java.util.regex.Pattern.compile(
@@ -386,20 +422,37 @@ public class ConversionPipeline {
      */
     public String autoClose(String json) {
         Deque<Character> stack = new ArrayDeque<>();
-        boolean inString = false;
+        char quote       = 0;          // 0 = not in a string, else the opening quote
         boolean escape   = false;
-        for (char c : json.toCharArray()) {
-            if (escape)        { escape = false; continue; }
-            if (c == '\\')     { if (inString) escape = true; continue; }
-            if (c == '"')      { inString = !inString; continue; }
-            if (inString)      continue;
-            if (c == '{')      stack.push('}');
-            else if (c == '[') stack.push(']');
-            else if (c == '}' || c == ']') { if (!stack.isEmpty()) stack.pop(); }
+        // The reader accepts comments and single quotes, so the scan has to know
+        // about them too: a brace inside // a note, or inside 'it {', was counted
+        // as real and this appended a closer that made valid input fail to parse.
+        boolean lineComment = false, blockComment = false;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            char next = i + 1 < json.length() ? json.charAt(i + 1) : 0;
+            if (lineComment)  { if (c == '\n') lineComment = false; continue; }
+            if (blockComment) { if (c == '*' && next == '/') { blockComment = false; i++; } continue; }
+            if (escape)       { escape = false; continue; }
+            if (quote != 0) {
+                if (c == '\\')      escape = true;
+                else if (c == quote) quote = 0;
+                continue;
+            }
+            if (c == '"' || c == '\'')            { quote = c; continue; }
+            if (c == '/' && next == '/')          { lineComment = true; i++; continue; }
+            if (c == '#')                         { lineComment = true; continue; }
+            if (c == '/' && next == '*')          { blockComment = true; i++; continue; }
+            if (c == '{')                          stack.push('}');
+            else if (c == '[')                     stack.push(']');
+            else if (c == '}' || c == ']')       { if (!stack.isEmpty()) stack.pop(); }
         }
         StringBuilder sb = new StringBuilder(json);
-        if (escape)   sb.append('\\');
-        if (inString) sb.append('"');
+        // An unterminated comment needs no closer, and appending one inside it
+        // would be appending to a comment.
+        if (blockComment) return sb.toString();
+        if (escape)    sb.append('\\');
+        if (quote != 0) sb.append(quote);
         while (!stack.isEmpty()) sb.append(stack.pop());
         return sb.toString();
     }

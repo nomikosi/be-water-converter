@@ -92,7 +92,7 @@ public class TomlConverter {
      * Blanks comments and quoted strings so the integer scan cannot fire on a
      * digit run inside them. Length is preserved so match offsets stay usable.
      */
-    private static String maskStringsAndComments(String toml) {
+    static String maskStringsAndComments(String toml) {
         char[] out = toml.toCharArray();
         int i = 0, n = toml.length();
         while (i < n) {

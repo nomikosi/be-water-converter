@@ -118,13 +118,23 @@ class PipelineRoutingTest {
         assertThat(out.indexOf("\"a\"")).isLessThan(out.indexOf("\"b\""));
     }
 
-    @Test @DisplayName("Format+Sort keys deliberately leaves YAML alone rather than failing")
-    void formatDoesNotSortYaml() throws Exception {
-        // sortKeys is a JSON-tree operation; applying it to already-formatted
-        // YAML would throw, so the gate is load-bearing rather than an oversight.
-        String out = pipeline.formatInput("b: 1\na: 2\n", ConversionPipeline.FMT_YAML,
+    @Test @DisplayName("Format+Sort keys now sorts YAML and TOML too")
+    void formatSortsTreeBackedFormats() throws Exception {
+        // Previously skipped, on the reasoning that sorting already-formatted
+        // YAML would throw. It does not: Format already passes through the JSON
+        // tree, so the sort happens there, while the tree exists.
+        String yaml = pipeline.formatInput("b: 1\na: 2\n", ConversionPipeline.FMT_YAML,
               ConversionOptions.DEFAULTS.withSortKeys(true));
-        assertThat(out.indexOf("b:")).isLessThan(out.indexOf("a:"));
+        assertThat(yaml.indexOf("a:")).isLessThan(yaml.indexOf("b:"));
+
+        String toml = pipeline.formatInput("b = 1\na = 2\n", ConversionPipeline.FMT_TOML,
+              ConversionOptions.DEFAULTS.withSortKeys(true));
+        assertThat(toml.indexOf("a ")).isLessThan(toml.indexOf("b "));
+
+        // Without the option the document's own order is kept.
+        String unsorted = pipeline.formatInput("b: 1\na: 2\n", ConversionPipeline.FMT_YAML,
+              ConversionOptions.DEFAULTS);
+        assertThat(unsorted.indexOf("b:")).isLessThan(unsorted.indexOf("a:"));
     }
 
     @Test @DisplayName("formatInput threads the CSV delimiter through both directions")

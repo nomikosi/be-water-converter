@@ -120,6 +120,58 @@ public class JsonYamlConverter {
     }
 
     /**
+     * Re-lays-out YAML one document at a time, so a multi-document file stays a
+     * multi-document file.
+     *
+     * <p>Formatting through {@code jsonToYaml(yamlToJson(input))} turned the
+     * stream into a JSON array and rendered it back as a single sequence: a
+     * two-manifest Kubernetes file came out as one list, written straight over
+     * the editor.
+     *
+     * @param sortKeys sorts each document's keys; the sort is a JSON-tree
+     *                 operation and this is where the tree exists.
+     */
+    public String formatPreservingDocuments(String yaml, boolean sortKeys) throws Exception {
+        String pivot = yamlToJson(yaml);
+        JsonNode parsed = jsonMapper.readTree(pivot);
+        boolean multi = isMultiDocument(yaml) && parsed.isArray();
+        if (!multi) return jsonToYaml(sortKeys ? sortNode(parsed).toString() : pivot);
+
+        StringBuilder out = new StringBuilder();
+        for (JsonNode document : parsed) {
+            if (!out.isEmpty()) out.append("---\n");
+            JsonNode node = sortKeys ? sortNode(document) : document;
+            out.append(yamlMapper.writeValueAsString(node));
+        }
+        return out.toString();
+    }
+
+    /** True when the source actually carries a document separator of its own. */
+    private static boolean isMultiDocument(String yaml) {
+        for (String line : yaml.split("\r?\n"))
+            if (line.strip().equals("---") || line.strip().startsWith("--- ")) return true;
+        return false;
+    }
+
+    /** Recursively orders object keys; arrays keep their order. */
+    private JsonNode sortNode(JsonNode node) {
+        if (node.isObject()) {
+            java.util.List<String> names = new java.util.ArrayList<>();
+            node.fieldNames().forEachRemaining(names::add);
+            java.util.Collections.sort(names);
+            com.fasterxml.jackson.databind.node.ObjectNode out = jsonMapper.createObjectNode();
+            for (String name : names) out.set(name, sortNode(node.get(name)));
+            return out;
+        }
+        if (node.isArray()) {
+            com.fasterxml.jackson.databind.node.ArrayNode out = jsonMapper.createArrayNode();
+            for (JsonNode item : node) out.add(sortNode(item));
+            return out;
+        }
+        return node;
+    }
+
+    /**
      * Refuses a mapping whose keys are distinct in YAML but identical once
      * stringified for JSON.
      *
