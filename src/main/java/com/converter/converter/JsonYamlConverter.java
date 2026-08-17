@@ -57,11 +57,13 @@ public class JsonYamlConverter {
                     // ones and leaves ordinary text bare, which is what keeps
                     // the output readable — the point of MINIMIZE_QUOTES.
                     //
-                    // It does NOT cover strings YAML resolves by other rules:
-                    // "0x1F" still returns as 31 and "12:30:00" as 45000 by
-                    // YAML 1.1 sexagesimal. Closing that needs quoting
-                    // everything, which costs the readable output this project
-                    // deliberately tests for, so it is a documented limit.
+                    // It does NOT cover every such string: "0x1F" is emitted bare
+                    // and read back as 31, because hex is a genuine integer form
+                    // under CoreScalarResolver. (Times and leading-zero runs used
+                    // to belong on this list; the resolver no longer rewrites
+                    // them.) Closing the hex case needs quoting everything, which
+                    // costs the readable output this project deliberately tests
+                    // for, so it is a documented limit.
                     .enable(YAMLGenerator.Feature.ALWAYS_QUOTE_NUMBERS_AS_STRINGS)
                     .build()
         ).build();
@@ -96,8 +98,7 @@ public class JsonYamlConverter {
         // SafeConstructor refuses arbitrary Java type tags, so a hostile
         // document cannot cause class instantiation.
         Yaml composer = new Yaml(new SafeConstructor(options),
-              new org.yaml.snakeyaml.representer.Representer(new org.yaml.snakeyaml.DumperOptions()),
-              new org.yaml.snakeyaml.DumperOptions(), options, new CoreScalarResolver());
+              UNUSED_REPRESENTER, UNUSED_DUMPER_OPTIONS, options, new CoreScalarResolver());
 
         java.util.List<JsonNode> docs = new java.util.ArrayList<>();
         for (Object document : composer.loadAll(ConversionPipeline.stripBom(yaml))) {
@@ -106,13 +107,17 @@ public class JsonYamlConverter {
             rejectCollidingKeys(document, node);
             docs.add(node);
         }
-        // A trailing "---" terminates the last document rather than starting an
-        // empty one, and yamlTrailingSeparator pins that. Interior empties are
-        // kept, though: dropping them renumbered every later document, so a
-        // leading "--- null" silently shifted a manifest's index.
-        while (!docs.isEmpty() && docs.get(docs.size() - 1).isNull())
+        // A trailing "---" with nothing after it terminates the last document
+        // rather than starting an empty one, and yamlTrailingSeparator pins
+        // that. Exactly one such document is dropped, and only when the source
+        // really does end that way: a document the user WROTE as null is theirs,
+        // and popping it changed the document count — the same index-shifting
+        // loss the interior case was fixed for.
+        if (docs.size() > 1 && docs.get(docs.size() - 1).isNull() && endsWithBareSeparator(yaml))
             docs.remove(docs.size() - 1);
-        if (docs.isEmpty())
+        // A stream that is nothing but empty documents carries no content at all,
+        // which is a different thing from one that happens to contain a null.
+        if (docs.isEmpty() || docs.stream().allMatch(JsonNode::isNull))
             throw new IllegalArgumentException("Input YAML contains no documents");
 
         JsonNode node = docs.size() == 1
@@ -132,21 +137,29 @@ public class JsonYamlConverter {
      *
      * <p>This drops exactly those: the sexagesimal alternatives, bare octal, and
      * the timestamp resolver. Booleans, null, plain integers, floats, merge keys
-     * and explicit {@code 0o}/{@code 0x} forms all still resolve, so {@code yes}
-     * is still a boolean and nothing else about reading YAML changes.
+     * and {@code 0x}/{@code 0b} forms all still resolve, so {@code yes} is still
+     * a boolean and nothing else about reading YAML changes.
      */
     private static final class CoreScalarResolver extends org.yaml.snakeyaml.resolver.Resolver {
         @Override protected void addImplicitResolvers() {
             addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.BOOL, java.util.regex.Pattern.compile(
                   "^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE"
                   + "|on|On|ON|off|Off|OFF)$"), "yYnNtTfFoO");
-            // No "[-+]?[1-9][0-9_]*(:[0-5]?[0-9])+" and no bare "0[0-7_]+".
+            // Neither the sexagesimal "[-+]?[1-9][0-9_]*(:[0-5]?[0-9])+" nor bare
+            // octal "0[0-7_]+", so 12:30:00 and 0777 stay the text they were
+            // written as. YAML 1.2's explicit 0o777 is deliberately absent too:
+            // SafeConstructor reads a leading 0 as octal and then calls
+            // parseInt("o777", 8), so tagging it INT throws rather than converts.
+            // Unresolved, it is simply the string it looks like.
             addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.INT, java.util.regex.Pattern.compile(
-                  "^(?:[-+]?0b[0-1_]+|[-+]?0o?[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)"
+                  "^(?:[-+]?0b[0-1_]+|[-+]?(?:0|[1-9][0-9_]*)"
                   + "|[-+]?0x[0-9a-fA-F_]+)$"), "-+0123456789");
+            // A dot or an exponent is required, so 0777 cannot land here either
+            // once INT has declined it. Both forms take an optionally signed
+            // exponent: 1e3, .5e3 and 0.5e3 are all numbers, as YAML 1.2 says.
             addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.FLOAT, java.util.regex.Pattern.compile(
-                  "^(?:[-+]?(?:[0-9][0-9_]*)\\.[0-9_]*(?:[eE][-+]?[0-9]+)?"
-                  + "|\\.[0-9_]+(?:[eE][-+][0-9]+)?"
+                  "^(?:[-+]?(?:[0-9][0-9_]*)?\\.[0-9_]*(?:[eE][-+]?[0-9]+)?"
+                  + "|[-+]?[0-9][0-9_]*[eE][-+]?[0-9]+"
                   + "|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$"), "-+0123456789.");
             addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.MERGE,
                   java.util.regex.Pattern.compile("^(?:<<)$"), "<");
@@ -187,6 +200,21 @@ public class JsonYamlConverter {
         return out.toString();
     }
 
+    /**
+     * True when the text after the last {@code ---} is blank, i.e. the separator
+     * closes the previous document instead of introducing an explicit null one.
+     */
+    private static boolean endsWithBareSeparator(String yaml) {
+        int last = -1;
+        String[] lines = yaml.split("\r?\n", -1);
+        for (int i = 0; i < lines.length; i++)
+            if (lines[i].strip().equals("---") || lines[i].strip().startsWith("--- ")) last = i;
+        if (last < 0 || !lines[last].strip().equals("---")) return false;
+        for (int i = last + 1; i < lines.length; i++)
+            if (!lines[i].isBlank()) return false;
+        return true;
+    }
+
     /** True when the source actually carries a document separator of its own. */
     private static boolean isMultiDocument(String yaml) {
         for (String line : yaml.split("\r?\n"))
@@ -223,8 +251,16 @@ public class JsonYamlConverter {
      * value to it is not.
      */
     private static void rejectCollidingKeys(Object document, JsonNode converted) {
-        if (!(document instanceof java.util.Map<?, ?> map) || converted == null
-              || !converted.isObject()) return;
+        if (converted == null) return;
+        // Sequences are descended into as well: a mapping inside a list — every
+        // Kubernetes "containers:" block — was never examined, so the guard
+        // missed the commonest YAML shape there is.
+        if (document instanceof java.util.List<?> list && converted.isArray()) {
+            for (int i = 0; i < list.size() && i < converted.size(); i++)
+                rejectCollidingKeys(list.get(i), converted.get(i));
+            return;
+        }
+        if (!(document instanceof java.util.Map<?, ?> map) || !converted.isObject()) return;
         if (map.size() != converted.size())
             throw new IllegalArgumentException(
                   "This YAML mapping has keys that differ in YAML but are identical as JSON "
@@ -233,4 +269,14 @@ public class JsonYamlConverter {
         for (java.util.Map.Entry<?, ?> e : map.entrySet())
             rejectCollidingKeys(e.getValue(), converted.get(String.valueOf(e.getKey())));
     }
+
+    /**
+     * Dump-side arguments the five-argument {@link Yaml} constructor demands.
+     * Nothing here ever dumps — the composer only loads — so these exist purely
+     * to reach the resolver parameter, and are shared rather than reallocated.
+     */
+    private static final org.yaml.snakeyaml.DumperOptions UNUSED_DUMPER_OPTIONS =
+          new org.yaml.snakeyaml.DumperOptions();
+    private static final org.yaml.snakeyaml.representer.Representer UNUSED_REPRESENTER =
+          new org.yaml.snakeyaml.representer.Representer(UNUSED_DUMPER_OPTIONS);
 }

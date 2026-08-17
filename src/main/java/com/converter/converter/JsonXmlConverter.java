@@ -24,6 +24,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -114,57 +116,77 @@ public class JsonXmlConverter {
      * local names stay distinct, converts exactly as before.
      */
     private static void rejectMergingNames(String xml) throws Exception {
-        javax.xml.parsers.DocumentBuilderFactory dbf =
-              javax.xml.parsers.DocumentBuilderFactory.newInstance();
-        dbf.setNamespaceAware(true);
-        dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        dbf.setExpandEntityReferences(false);
-        org.w3c.dom.Document doc;
+        // StAX, not DOM: this runs before every conversion, and building a whole
+        // second tree meant a large document was fully parsed and held in memory
+        // twice before any converting started. A streaming pass answers the same
+        // question and keeps only the names at the current depth.
+        javax.xml.stream.XMLInputFactory factory = javax.xml.stream.XMLInputFactory.newInstance();
+        factory.setProperty(javax.xml.stream.XMLInputFactory.SUPPORT_DTD, false);
+        factory.setProperty(javax.xml.stream.XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+        javax.xml.stream.XMLStreamReader reader;
         try {
-            doc = dbf.newDocumentBuilder().parse(
-                  new org.xml.sax.InputSource(new java.io.StringReader(xml)));
+            reader = factory.createXMLStreamReader(new java.io.StringReader(xml));
         } catch (Exception notParseableHere) {
             return;   // let XmlMapper produce the real parse error
         }
-        checkElement(doc.getDocumentElement());
-    }
+        // One frame per open element: the names its children and attributes have
+        // claimed so far, since those all land in the same JSON object.
+        Deque<Map<String, String>> stack = new ArrayDeque<>();
+        try {
+            while (reader.hasNext()) {
+                if (reader.next() != javax.xml.stream.XMLStreamConstants.START_ELEMENT) {
+                    if (reader.getEventType() == javax.xml.stream.XMLStreamConstants.END_ELEMENT
+                          && !stack.isEmpty()) stack.pop();
+                    continue;
+                }
+                String qName = qualified(reader.getPrefix(), reader.getLocalName());
+                if (!stack.isEmpty())
+                    claim(stack.peek(), reader.getLocalName(), qName, true);
 
-    private static void checkElement(org.w3c.dom.Element element) {
-        // Attributes and child elements land in the same JSON object, so an
-        // attribute named "a" and a child <a> collide even though both spell "a".
-        Map<String, String> attributeNames = new java.util.HashMap<>();
-        org.w3c.dom.NamedNodeMap attrs = element.getAttributes();
-        for (int i = 0; i < attrs.getLength(); i++) {
-            org.w3c.dom.Node a = attrs.item(i);
-            if ("xmlns".equals(a.getPrefix()) || "xmlns".equals(a.getNodeName())) continue;
-            String local = a.getLocalName() == null ? a.getNodeName() : a.getLocalName();
-            String previous = attributeNames.put(local, a.getNodeName());
-            if (previous != null)
-                throw collision(element, previous, a.getNodeName(), local);
-        }
-        Map<String, String> elementNames = new java.util.HashMap<>();
-        org.w3c.dom.NodeList children = element.getChildNodes();
-        for (int i = 0; i < children.getLength(); i++) {
-            if (!(children.item(i) instanceof org.w3c.dom.Element child)) continue;
-            String local = child.getLocalName() == null ? child.getNodeName() : child.getLocalName();
-            String attribute = attributeNames.get(local);
-            if (attribute != null)
-                throw collision(element, "the attribute " + attribute,
-                      "the element <" + child.getNodeName() + ">", local);
-            // Repeating the SAME element name is an ordinary XML list.
-            String previous = elementNames.put(local, child.getNodeName());
-            if (previous != null && !previous.equals(child.getNodeName()))
-                throw collision(element, previous, child.getNodeName(), local);
-            checkElement(child);
+                Map<String, String> frame = new java.util.HashMap<>();
+                for (int i = 0; i < reader.getAttributeCount(); i++)
+                    claim(frame, reader.getAttributeLocalName(i),
+                          qualified(reader.getAttributePrefix(i), reader.getAttributeLocalName(i)),
+                          false);
+                stack.push(frame);
+            }
+        } catch (javax.xml.stream.XMLStreamException notParseableHere) {
+            // Malformed: XmlMapper will report it properly.
+        } finally {
+            try { reader.close(); } catch (javax.xml.stream.XMLStreamException ignored) { }
         }
     }
 
-    private static IllegalArgumentException collision(org.w3c.dom.Element parent,
-          String one, String other, String key) {
-        return new IllegalArgumentException(
-              "<" + parent.getNodeName() + "> holds both " + one + " and " + other
-              + ", which are different in XML but the same key \"" + key + "\" in JSON, so "
+    /**
+     * Records one name in a frame, refusing when a different XML name has
+     * already claimed the same JSON key.
+     *
+     * @param repeatable true for child elements, where the SAME name appearing
+     *                   twice is an ordinary list rather than a collision.
+     *                   Attributes are unique per element, so a repeat there can
+     *                   only be a differing prefix.
+     */
+    private static void claim(Map<String, String> frame, String local, String qName,
+          boolean repeatable) {
+        // Attributes are marked, so an attribute "a" and a child <a> — which
+        // spell the same qualified name but are different things, and do collide
+        // — are not mistaken for the same name repeating.
+        String entry = repeatable ? qName : "@" + qName;
+        String previous = frame.put(local, entry);
+        if (previous == null || (repeatable && previous.equals(entry))) return;
+        throw new IllegalArgumentException(
+              "This XML holds both " + describe(previous) + " and " + describe(entry)
+              + ", which are different in XML but the same key \"" + local + "\" in JSON, so "
               + "converting would merge them. Rename one, or convert the sections separately.");
+    }
+
+    private static String describe(String entry) {
+        return entry.startsWith("@")
+              ? "the attribute " + entry.substring(1) : "the element <" + entry + ">";
+    }
+
+    private static String qualified(String prefix, String local) {
+        return prefix == null || prefix.isEmpty() ? local : prefix + ":" + local;
     }
 
     private JsonNode sanitizeKeysForXml(JsonNode node) {

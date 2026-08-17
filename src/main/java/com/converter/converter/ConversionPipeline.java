@@ -277,9 +277,17 @@ public class ConversionPipeline {
         return toml.jsonToToml(sortKeys ? sortKeys(pivot) : pivot);
     }
 
-    /** A bare TOML date, datetime or time in value position. */
+    /**
+     * A bare TOML date, datetime or time in value position.
+     *
+     * <p>Anchored on what comes BEFORE rather than on {@code =}: a date is just
+     * as likely to be an array element or an inline-table value, and requiring
+     * {@code =} meant only the first element of {@code d = [1979-05-27, …]} could
+     * ever match, so the rest were still retyped.
+     */
     private static final java.util.regex.Pattern TOML_DATE = java.util.regex.Pattern.compile(
-          "=\\s*(\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}:\\d{2}\\S*)?|\\d{2}:\\d{2}:\\d{2}\\S*)\\s*(?=$|[,}\\]#\\r\\n])",
+          "(?<=[=\\[,{]|\\A)\\s*(\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}:\\d{2}\\S*)?"
+          + "|\\d{2}:\\d{2}:\\d{2}\\S*)\\s*(?=$|[,}\\]#\\r\\n])",
           java.util.regex.Pattern.MULTILINE);
 
     /** Parses the JSON pivot once for callers that need the tree (row estimates). */

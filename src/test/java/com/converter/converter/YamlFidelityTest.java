@@ -45,23 +45,71 @@ class YamlFidelityTest {
         // These were sexagesimal, float and timestamp under YAML 1.1.
         assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"12:30:00\"}")))
               .isEqualTo("{\"a\":\"12:30:00\"}");
-        assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"1e3\"}")))
-              .isEqualTo("{\"a\":\"1e3\"}");
         assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"2024-01-01\"}")))
               .isEqualTo("{\"a\":\"2024-01-01\"}");
         assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"0777\"}")))
               .isEqualTo("{\"a\":\"0777\"}");
     }
 
-    @Test @DisplayName("KNOWN LIMIT: a hex-looking string still comes back as a number")
-    void hexLookalikeStillRetypes() throws Exception {
-        // 0x1F is a genuine integer in YAML 1.2, so reading it as 31 is right.
-        // What is wrong is the OUTPUT side: MINIMIZE_QUOTES emits the string
-        // "0x1F" bare, and ALWAYS_QUOTE_NUMBERS_AS_STRINGS covers plain decimals
-        // only. Closing it needs quoting every string, which costs the readable
-        // output the JsonYamlConverter tests deliberately pin. Left visible.
+    @Test @DisplayName("KNOWN LIMIT: hex- and exponent-looking strings come back as numbers")
+    void numberLookalikesStillRetype() throws Exception {
+        // Both are genuine numbers in YAML 1.2, so READING them as numbers is
+        // right. What is wrong is the OUTPUT side: MINIMIZE_QUOTES emits the
+        // strings bare, and ALWAYS_QUOTE_NUMBERS_AS_STRINGS covers plain
+        // decimals only. Closing it needs quoting every string, which costs the
+        // readable output the JsonYamlConverter tests deliberately pin.
         assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"0x1F\"}")))
               .isEqualTo("{\"a\":31}");
+        assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"1e3\"}")))
+              .isEqualTo("{\"a\":1000.0}");
+    }
+
+    @Test @DisplayName("the resolver is exercised directly, not only through quoted output")
+    void resolverReadsScalarsDirectly() throws Exception {
+        // Round-tripping a JSON string emits it QUOTED, and a quoted scalar
+        // never reaches implicit resolution — so those assertions passed whether
+        // or not the resolver was right. These read the YAML as written.
+        assertThat(converter.yamlToJson("a: 0777\n")).isEqualTo("{\"a\":\"0777\"}");
+        assertThat(converter.yamlToJson("a: 010\n")).isEqualTo("{\"a\":\"010\"}");
+        assertThat(converter.yamlToJson("a: 12:30:00\n")).isEqualTo("{\"a\":\"12:30:00\"}");
+        assertThat(converter.yamlToJson("a: 2024-01-01\n")).isEqualTo("{\"a\":\"2024-01-01\"}");
+        // 0o777 is YAML 1.2 octal that SnakeYAML's constructor cannot build, so
+        // it stays text rather than throwing NumberFormatException.
+        assertThat(converter.yamlToJson("a: 0o777\n")).isEqualTo("{\"a\":\"0o777\"}");
+        // Still numbers, per YAML 1.2.
+        assertThat(converter.yamlToJson("a: 1e3\n")).isEqualTo("{\"a\":1000.0}");
+        assertThat(converter.yamlToJson("a: .5e3\n")).isEqualTo("{\"a\":500.0}");
+        assertThat(converter.yamlToJson("a: 0x1F\n")).isEqualTo("{\"a\":31}");
+        assertThat(converter.yamlToJson("a: 0\n")).isEqualTo("{\"a\":0}");
+        assertThat(converter.yamlToJson("a: 42\n")).isEqualTo("{\"a\":42}");
+    }
+
+    @Test @DisplayName("a mapping inside a sequence is checked for colliding keys too")
+    void collidingKeysInsideSequences() throws Exception {
+        // The guard only descended through Map values, so a list of mappings —
+        // every Kubernetes containers: block — was never examined.
+        assertThatThrownBy(() -> converter.yamlToJson("items:\n  - 1: a\n    \"1\": b\n"))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("identical as JSON keys");
+        // Nested a second level down, to prove the descent is not one-deep.
+        assertThatThrownBy(() -> converter.yamlToJson(
+              "outer:\n  - inner:\n      - 1: a\n        \"1\": b\n"))
+              .isInstanceOf(IllegalArgumentException.class);
+        // An ordinary list of mappings still converts.
+        assertThat(converter.yamlToJson("items:\n  - a: 1\n  - b: 2\n"))
+              .isEqualTo("{\"items\":[{\"a\":1},{\"b\":2}]}");
+    }
+
+    @Test @DisplayName("a document written as null is kept; a bare trailing separator is not")
+    void explicitNullDocumentIsKept() throws Exception {
+        // Popping every trailing null took the user's own null document with it.
+        assertThat(converter.yamlToJson("--- {a: 1}\n--- null\n"))
+              .isEqualTo("[{\"a\":1},null]");
+        assertThat(converter.yamlToJson("--- {a: 1}\n--- null\n--- null\n"))
+              .isEqualTo("[{\"a\":1},null,null]");
+        // A separator with nothing after it still closes the last document.
+        assertThat(converter.yamlToJson("name: Alice\n---\n")).isEqualTo("{\"name\":\"Alice\"}");
+        assertThat(converter.yamlToJson("--- {a: 1}\n---\n")).isEqualTo("{\"a\":1}");
     }
 
     @Test @DisplayName("YAML 1.1 values that were never ambiguous still resolve")

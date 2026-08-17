@@ -63,6 +63,21 @@ class FormatAndDetectionTest {
               .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test @DisplayName("Format refuses a TOML date wherever it sits, not only after '='")
+    void tomlDatesInAnyPositionAreCaught() {
+        // Anchoring on '=' meant only the first array element could match, so
+        // d = [1979-05-27] was still rewritten as a quoted string.
+        assertThatThrownBy(() -> pipeline.formatInput(
+              "d = [1979-05-27]\n", ConversionPipeline.FMT_TOML, opts))
+              .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> pipeline.formatInput(
+              "d = [1979-05-27, 1979-05-28]\n", ConversionPipeline.FMT_TOML, opts))
+              .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> pipeline.formatInput(
+              "t = {at = 07:32:00}\n", ConversionPipeline.FMT_TOML, opts))
+              .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test @DisplayName("Format still tidies TOML that carries no dates")
     void tomlWithoutDatesStillFormats() throws Exception {
         assertThat(pipeline.formatInput("a=1\nb=\"x\"\n", ConversionPipeline.FMT_TOML, opts))

@@ -180,10 +180,10 @@ public class ProtoConverter {
             List<Block> oneofs = findNamedBlocks(msg.body, "oneof");
 
             String flatBody = stripBlocks(msg.body, "message", "oneof", "enum");
-            Set<String> seenNumbers = new HashSet<>();
-            validateMessageBody(msg.name, flatBody, seenNumbers);
-            for (Block oneof : oneofs)
-                validateMessageBody(msg.name, oneof.body, seenNumbers);
+            // Not validated here: validateTree already covered every message,
+            // referenced or not, before any of this ran. Doing it again split
+            // the same bodies on ';' and re-matched them for a second time, and
+            // left two paths that could disagree about which error a user sees.
 
             addFields(flatBody, node, registry, enums, resolving);
 

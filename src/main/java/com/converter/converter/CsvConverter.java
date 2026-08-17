@@ -117,12 +117,20 @@ public class CsvConverter {
             // Extra cells have nowhere to go: the loop below stops at the header
             // count, so they were dropped and Format then wrote the truncated
             // file back over the user's data.
-            if (cells.length > headers.size())
+            //
+            // Only cells that actually carry something count. A trailing
+            // delimiter — the dialect Excel and many exporters emit — leaves an
+            // empty cell past the last header, and refusing the whole file over
+            // a value that is the empty string helps nobody.
+            int discarded = 0;
+            for (int c = headers.size(); c < cells.length; c++)
+                if (cells[c] != null && !cells[c].isEmpty()) discarded++;
+            if (discarded > 0)
                 throw new IllegalArgumentException(String.format(
                       "Row %d has %d values but the header declares %d columns, so %d would be "
                       + "discarded. Add the missing header names, or quote the delimiter inside "
                       + "the value if it was meant as text.",
-                      r + 1, cells.length, headers.size(), cells.length - headers.size()));
+                      r + 1, cells.length, headers.size(), discarded));
             ObjectNode obj = arr.addObject();
             // Ragged rows keep the old behaviour: a missing trailing cell means
             // the key is absent rather than present-and-empty.

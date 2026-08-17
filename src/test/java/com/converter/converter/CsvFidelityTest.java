@@ -59,6 +59,18 @@ class CsvFidelityTest {
               .hasMessageContaining("would be discarded");
     }
 
+    @Test @DisplayName("a trailing delimiter is not a discarded value")
+    void trailingDelimiterIsAccepted() throws Exception {
+        // Excel and many exporters end every row with a separator. The extra
+        // cell is the empty string, so refusing the file over it helps nobody.
+        assertThat(converter.csvToJson("a,b\n1,2,\n", false)).isEqualTo("[{\"a\":\"1\",\"b\":\"2\"}]");
+        assertThat(converter.csvToJson("a,b\n1,2,,\n", false)).isEqualTo("[{\"a\":\"1\",\"b\":\"2\"}]");
+        // A non-empty extra value is still refused, and counts only the real ones.
+        assertThatThrownBy(() -> converter.csvToJson("a,b\n1,2,3,\n", false))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("so 1 would be");
+    }
+
     @Test @DisplayName("a row with fewer cells than headers still means an absent key")
     void raggedShortRowIsUnchanged() throws Exception {
         assertThat(converter.csvToJson("a,b\n1\n", false)).isEqualTo("[{\"a\":\"1\"}]");

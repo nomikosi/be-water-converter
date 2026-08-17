@@ -574,11 +574,13 @@ public class ConverterPanel implements Disposable {
             try { mode = CsvConverter.CsvMode.valueOf(savedMode); }
             catch (IllegalArgumentException unknownName) { /* keep the default */ }
         }
-        // Absent means "never set", and these two default to on in the UI.
-        boolean inferTypes  = loadProp(PROP_INFER_TYPES) == null
-              || "true".equals(loadProp(PROP_INFER_TYPES));
-        boolean detectDates = loadProp(PROP_DETECT_DATES) == null
-              || "true".equals(loadProp(PROP_DETECT_DATES));
+        // Absent means "never set", and these two default to on in the UI. Read
+        // once each: the rule belongs in one place, and a later edit touching
+        // only one of a repeated pair would flip the default silently.
+        String savedInfer = loadProp(PROP_INFER_TYPES);
+        String savedDates = loadProp(PROP_DETECT_DATES);
+        boolean inferTypes  = savedInfer == null || "true".equals(savedInfer);
+        boolean detectDates = savedDates == null || "true".equals(savedDates);
         return new ConversionOptions(mode, delimiter,
               "true".equals(loadProp(PROP_LOMBOK)), detectDates, inferTypes,
               "true".equals(loadProp(PROP_SORT_KEYS)), "");
