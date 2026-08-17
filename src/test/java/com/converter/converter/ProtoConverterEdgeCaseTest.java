@@ -127,20 +127,57 @@ class ProtoConverterEdgeCaseTest {
     @Test @DisplayName("JSON->Proto: nested messages colliding on name are deduplicated")
     void jsonToProtoDeduplicatesMessageNames() throws Exception {
         // "user" and "User" both want the message name "User"; emitting it twice
-        // in one scope is invalid proto3.
+        // in one scope is invalid proto3. The key "User" also becomes a FIELD
+        // named User, and protoc keeps nested types and fields in one symbol
+        // table per message — so "message User" cannot be emitted here either.
         String result = converter.jsonToProto("{\"user\":{\"a\":1},\"User\":{\"b\":\"x\"}}");
-        assertThat(result).contains("message User {").contains("message User2 {");
-        long userBlocks = result.lines().filter(l -> l.trim().equals("message User {")).count();
-        assertThat(userBlocks).isEqualTo(1);
-        // The field types must reference the names actually emitted.
-        assertThat(result).contains("User user = 1;").contains("User2 User = 2;");
+        assertThat(result).contains("message User2 {").contains("message User3 {");
+        assertThat(result.lines().filter(l -> l.trim().equals("message User {")).count())
+              .isEqualTo(0);
+        // Field names carry the JSON mapping, so they are the ones that keep it.
+        assertThat(result).contains("User2 user = 1;").contains("User3 User = 2;");
     }
 
     @Test @DisplayName("JSON->Proto: colliding array-of-object message names are deduplicated")
     void jsonToProtoDeduplicatesRepeatedMessageNames() throws Exception {
         String result = converter.jsonToProto("{\"item\":{\"a\":1},\"Item\":[{\"b\":2}]}");
-        assertThat(result).contains("message Item {").contains("message Item2 {")
-              .contains("repeated Item2 Item = 2;");
+        assertThat(result).contains("message Item2 {").contains("message Item3 {")
+              .contains("Item2 item = 1;")
+              .contains("repeated Item3 Item = 2;");
+    }
+
+    @Test @DisplayName("JSON->Proto: a message never takes the name of a sibling field")
+    void jsonToProtoMessageNeverShadowsField() throws Exception {
+        // protoc: '"Foo" is already defined in "Root"'. The wrapper messages made
+        // this reachable for many more documents than the plain-object case did.
+        assertThat(converter.jsonToProto("{\"Foo\":[[{\"x\":1}]]}"))
+              .contains("repeated FooRow Foo = 1;")
+              .doesNotContain("message Foo {");
+        assertThat(converter.jsonToProto("{\"m\":[[1]],\"MRow\":1}"))
+              .doesNotContain("message MRow {")
+              .contains("int32 MRow = 2;");
+    }
+
+    @Test @DisplayName("JSON->Proto: a root array of scalars is refused without naming a type it never had")
+    void jsonToProtoRootArrayDiagnostic() {
+        // Unwrapping every level made the old message report "number" for a
+        // document whose root the user wrote as an array.
+        assertThatThrownBy(() -> converter.jsonToProto("[[1,2],[3,4]]"))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("innermost element is: number");
+        assertThatThrownBy(() -> converter.jsonToProto("42"))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("but got: number");
+    }
+
+    @Test @DisplayName("JSON->Proto: absurd array nesting is refused rather than expanded")
+    void jsonToProtoRejectsRunawayNesting() {
+        // One wrapper message per level turned a 1.6 MB document into a 50 MB
+        // schema of nothing but wrappers.
+        String deep = "{\"k\":" + "[".repeat(40) + "1" + "]".repeat(40) + "}";
+        assertThatThrownBy(() -> converter.jsonToProto(deep))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("nests arrays");
     }
 
     // ── String literals are not structural (comments/braces inside quotes) ──
@@ -249,6 +286,65 @@ class ProtoConverterEdgeCaseTest {
     void jsonToProtoStringArray() throws Exception {
         String result = converter.jsonToProto("{\"tags\":[\"java\",\"spring\",\"proto\"]}");
         assertThat(result).contains("repeated string tags");
+    }
+
+    // ── Nested arrays: proto3 has no "repeated repeated" ─────────────────
+
+    @Test @DisplayName("JSON->Proto: an array of arrays of objects keeps the object's fields")
+    void jsonToProtoNestedArrayOfObjects() throws Exception {
+        // Previously "repeated string matrix", losing field 'a' and a dimension.
+        String result = converter.jsonToProto("{\"matrix\":[[{\"a\":1}]]}");
+        assertThat(result)
+              .contains("message Matrix {")
+              .contains("int32 a = 1;")
+              .contains("message MatrixRow {")
+              .contains("repeated Matrix values = 1;")
+              .contains("repeated MatrixRow matrix = 1;")
+              .doesNotContain("repeated string matrix");
+    }
+
+    @Test @DisplayName("JSON->Proto: an array of arrays of scalars keeps the element type")
+    void jsonToProtoNestedArrayOfScalars() throws Exception {
+        assertThat(converter.jsonToProto("{\"m\":[[1,2]]}"))
+              .contains("message MRow {")
+              .contains("repeated int32 values = 1;")
+              .contains("repeated MRow m = 1;");
+    }
+
+    @Test @DisplayName("JSON->Proto: each extra array level gets its own wrapper message")
+    void jsonToProtoThreeLevelArray() throws Exception {
+        assertThat(converter.jsonToProto("{\"m\":[[[{\"a\":1}]]]}"))
+              .contains("message M {")
+              .contains("message MRow {")
+              .contains("repeated M values = 1;")
+              .contains("message MRow2 {")
+              .contains("repeated MRow values = 1;")
+              .contains("repeated MRow2 m = 1;");
+    }
+
+    @Test @DisplayName("JSON->Proto: a wrapper name colliding with a real key is deduplicated")
+    void jsonToProtoWrapperNameCollision() throws Exception {
+        // The synthesized MRow and the object under "mRow" both want that name.
+        String result = converter.jsonToProto("{\"m\":[[{\"a\":1}]],\"mRow\":{\"z\":1}}");
+        assertThat(result)
+              .contains("message MRow {")
+              .contains("message MRow2 {")
+              .contains("int32 z = 1;");
+    }
+
+    @Test @DisplayName("JSON->Proto: single-level arrays are unchanged")
+    void jsonToProtoSingleLevelArraysUnchanged() throws Exception {
+        assertThat(converter.jsonToProto("{\"m\":[1,2]}")).contains("repeated int32 m = 1;");
+        assertThat(converter.jsonToProto("{\"m\":[]}")).contains("repeated string m = 1;");
+        assertThat(converter.jsonToProto("{\"m\":[{\"a\":1}]}"))
+              .contains("message M {").contains("repeated M m = 1;");
+    }
+
+    @Test @DisplayName("JSON->Proto: a root array of arrays is unwrapped all the way down")
+    void jsonToProtoRootArrayOfArrays() throws Exception {
+        // The same shape one level in generates; the root must not disagree.
+        assertThat(converter.jsonToProto("[[{\"id\":1}]]"))
+              .contains("message Root").contains("int32 id = 1;");
     }
 
     @Test @DisplayName("JSON->Proto: float value maps to float or double type")

@@ -135,6 +135,28 @@ public final class SourceConventions {
         return s.substring(0, i) + Character.toUpperCase(s.charAt(i)) + s.substring(i + 1);
     }
 
+    /**
+     * True when {@code @JsonProperty} can actually carry this key. It cannot
+     * carry the empty one: Jackson reads an empty value as USE_DEFAULT_NAME, so
+     * {@code @JsonProperty("")} silently binds to the field's own name instead
+     * of the key it came from, and the generated class cannot read the document
+     * it was generated from. Empty keys arrive mostly from XML, where the mapper
+     * files element text content under "".
+     */
+    public static boolean isMappableKey(String key) {
+        return key != null && !key.isEmpty();
+    }
+
+    /**
+     * Stands in for the annotation on a key {@link #isMappableKey} rejects. It
+     * points at {@code @JacksonXmlText} rather than just refusing, because the
+     * commonest way to get an empty key is XML element text, and that annotation
+     * does bind it.
+     */
+    public static final String UNMAPPABLE_KEY_NOTE =
+          "source key is empty; @JsonProperty cannot express that "
+          + "— for XML element text use @JacksonXmlText";
+
     /** Escapes a JSON key for embedding in a Java string literal. */
     public static String javaStringLiteral(String value) {
         return escape(value, false);

@@ -56,8 +56,14 @@ final class ScalarInference {
             }
         }
         if (DEC_PATTERN.matcher(value).matches()) {
-            double d = Double.parseDouble(value);
-            if (!Double.isInfinite(d)) return nf.numberNode(d);
+            try {
+                // BigDecimal, not double: a CSV cell of 1e-400 underflowed to
+                // 0.0 and a 30-digit decimal was cut to 17 digits, silently,
+                // on the way in. The pivot carries BigDecimal already.
+                return nf.numberNode(new java.math.BigDecimal(value));
+            } catch (NumberFormatException notADecimal) {
+                return nf.textNode(value);
+            }
         }
         return nf.textNode(value);
     }

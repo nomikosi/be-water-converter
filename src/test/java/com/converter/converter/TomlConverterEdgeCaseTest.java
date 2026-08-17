@@ -335,4 +335,30 @@ class TomlConverterEdgeCaseTest {
               .isInstanceOf(Exception.class);
     }
 
+    @Test @DisplayName("TOML->JSON: an integer the parser mis-reads is refused, not silently changed")
+    void rejectsIntegersTheParserCorrupts() {
+        // jackson-dataformat-toml returns 0 for a 19-digit id — a Discord or
+        // Twitter snowflake is exactly 19 digits — and drops the sign on a
+        // negative 20-digit one. Measured identical on 2.17.2 through 2.21.1.
+        assertThatThrownBy(() -> converter.tomlToJson("[e]\nid = 1723600000000000000\n"))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("cannot be read correctly");
+        assertThatThrownBy(() -> converter.tomlToJson("id = -92233720368547758070\n"))
+              .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> converter.tomlToJson("id = [1723600000000000000]\n"))
+              .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test @DisplayName("TOML->JSON: ordinary integers, and digits inside strings, are untouched")
+    void integerGuardDoesNotOverreach() throws Exception {
+        assertThat(converter.tomlToJson("a = 123456789012345678\n")).contains("123456789012345678");
+        assertThat(converter.tomlToJson("a = 42\nb = -7\n")).contains("42").contains("-7");
+        // The digits sit inside a string and a comment, so the guard must not fire.
+        assertThat(converter.tomlToJson("a = \"1723600000000000000\"\n"))
+              .contains("1723600000000000000");
+        assertThat(converter.tomlToJson("a = 1  # id 1723600000000000000\n")).contains("\"a\":1");
+        // Hex and float forms the parser reads correctly still pass.
+        assertThat(converter.tomlToJson("a = 0x17EA9F5B2C3D4E5F\n")).isNotBlank();
+        assertThat(converter.tomlToJson("a = 1723600000000000000.0\n")).isNotBlank();
+    }
 }

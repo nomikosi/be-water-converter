@@ -214,6 +214,44 @@ class KotlinDataClassGeneratorTest {
         assertThat(generator.fromJson("[[{\"id\":1}]]")).contains("val id: Int");
     }
 
+    @Test @DisplayName("a class cannot take the name of a type the output uses")
+    void classNameCannotShadowEmittedType() throws Exception {
+        // "data class List" shadows kotlin.collections.List, so every List<…>
+        // in the same file then fails to resolve.
+        assertThat(generator.fromJson("{\"list\":{\"a\":1},\"items\":[1,2]}"))
+              .contains("data class ListValue(")
+              .contains("val list: ListValue")
+              .contains("val items: List<Int>");
+
+        assertThat(generator.fromJson("{\"string\":{\"a\":1},\"name\":\"x\"}"))
+              .contains("data class StringValue(")
+              .contains("val name: String");
+        assertThat(generator.fromJson("{\"int\":{\"a\":1}}")).contains("data class IntValue(");
+    }
+
+    @Test @DisplayName("an empty key gets a note, not a @JsonProperty that cannot work")
+    void emptyKeyIsNotAnnotated() throws Exception {
+        // Jackson reads @JsonProperty("") as USE_DEFAULT_NAME, so it bound to
+        // "_value" rather than "" — a mapping the output claimed but never had.
+        // Matched as the annotation form: the explanatory note names it too.
+        assertThat(generator.fromJson("{\"\":1}"))
+              .contains("// source key is empty")
+              .contains("val _value: Int")
+              .doesNotContain("@JsonProperty(")
+              .doesNotContain("import com.fasterxml.jackson");
+
+        assertThat(generator.fromJson("{\"first_name\":\"a\"}"))
+              .contains("@JsonProperty(\"first_name\")")
+              .contains("import com.fasterxml.jackson.annotation.JsonProperty");
+    }
+
+    @Test @DisplayName("a real key wanting the substituted name is still deduplicated")
+    void reservedSubstituteStillDeduplicated() throws Exception {
+        assertThat(generator.fromJson("{\"list\":{\"a\":1},\"list_value\":{\"b\":2}}"))
+              .contains("data class ListValue(")
+              .contains("data class ListValue2(");
+    }
+
     @Test @DisplayName("reachable as a pipeline output format")
     void viaPipeline() throws Exception {
         assertThat(new ConversionPipeline().renderFromJson("{\"a\":1}",

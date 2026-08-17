@@ -239,6 +239,93 @@ class JavaPojoGeneratorEdgeCaseTest {
         assertThat(generator.fromJson("[[{\"id\":1}]]")).contains("private Integer id;");
     }
 
+    // ── Generated names must not collide with the types we emit ───────────
+
+    @Test @DisplayName("JSON->POJO: a class cannot take the name of an emitted import")
+    void classNameCannotShadowImport() throws Exception {
+        // "class List" beside "import java.util.List;" is "already defined in
+        // this compilation unit", so the whole file stopped compiling.
+        assertThat(generator.fromJson("{\"list\":{\"a\":1},\"items\":[1,2]}"))
+              .contains("import java.util.List;")
+              .contains("class ListValue")
+              .contains("private ListValue list;")
+              .contains("private List<Integer> items;");
+
+        assertThat(generator.fromJson("{\"json_property\":{\"a\":1}}"))
+              .contains("class JsonPropertyValue");
+    }
+
+    @Test @DisplayName("JSON->POJO: the Lombok names are reserved only in Lombok mode")
+    void lombokNamesReservedOnlyWithLombok() throws Exception {
+        // "data" is a common key. Reserving Data unconditionally renamed its
+        // class for every document, including the ones emitting no Lombok import.
+        assertThat(generator.fromJson("{\"data\":{\"a\":1}}", true))
+              .contains("import lombok.Data;")
+              .contains("class DataValue");
+        assertThat(generator.fromJson("{\"data\":{\"a\":1}}", false))
+              .doesNotContain("import lombok")
+              .contains("class Data ")
+              .contains("private Data data;");
+    }
+
+    @Test @DisplayName("JSON->POJO: the boolean and null literals are not identifiers either")
+    void literalsAreRenamed() throws Exception {
+        // JLS 3.8 bars true/false/null from identifiers, so "private Integer
+        // false;" does not parse. The Kotlin generator already listed all three.
+        assertThat(generator.fromJson("{\"false\":1,\"true\":2,\"null\":3}"))
+              .contains("private Integer falseValue;")
+              .contains("private Integer trueValue;")
+              .contains("private Integer nullValue;")
+              .contains("@JsonProperty(\"false\")");
+    }
+
+    @Test @DisplayName("JSON->POJO: a class cannot shadow a java.lang type it uses")
+    void classNameCannotShadowJavaLang() throws Exception {
+        // "class String" compiles, which is worse: every String field in the
+        // file would silently refer to the generated class instead.
+        assertThat(generator.fromJson("{\"string\":{\"a\":1},\"name\":\"x\"}"))
+              .contains("class StringValue")
+              .contains("private StringValue string;")
+              .contains("private String name;");
+    }
+
+    @Test @DisplayName("JSON->POJO: an empty key gets a note, not a @JsonProperty that cannot work")
+    void emptyKeyIsNotAnnotated() throws Exception {
+        // Jackson reads @JsonProperty("") as USE_DEFAULT_NAME, so the annotation
+        // bound to "_value" rather than "" and the class could not read the
+        // document it came from. Emitting it claimed a mapping that never existed.
+        // Matched as the annotation form: the explanatory note names it too.
+        assertThat(generator.fromJson("{\"\":1}"))
+              .contains("// source key is empty")
+              .contains("private Integer _value;")
+              .doesNotContain("@JsonProperty(")
+              .doesNotContain("import com.fasterxml.jackson");
+
+        // The usual arrival route: XmlMapper files element text content under "".
+        assertThat(generator.fromXml("<root>hello</root>"))
+              .contains("// source key is empty")
+              .doesNotContain("@JsonProperty(");
+
+        // A key that merely needs renaming is still annotated as before.
+        assertThat(generator.fromJson("{\"first_name\":\"a\"}"))
+              .contains("@JsonProperty(\"first_name\")")
+              .contains("import com.fasterxml.jackson.annotation.JsonProperty;");
+    }
+
+    @Test @DisplayName("JSON->POJO: a real key wanting the substituted name is still deduplicated")
+    void reservedSubstituteStillDeduplicated() throws Exception {
+        // Order decides, as it already does for User/User2: "list" is substituted
+        // to ListValue first, so the key that actually spells ListValue takes
+        // ListValue2. Pinned so which class holds which fields is not ambiguous.
+        String result = generator.fromJson(
+              "{\"list\":{\"a\":1},\"list_value\":{\"b\":2},\"items\":[1,2]}");
+        assertThat(result)
+              .contains("private ListValue list;")
+              .contains("private ListValue2 listValue;")
+              .containsSubsequence("class ListValue {", "private Integer a;")
+              .containsSubsequence("class ListValue2 {", "private Integer b;");
+    }
+
     // ── Null / blank input ────────────────────────────────────────────────
 
     @Test @DisplayName("JSON->POJO: null input throws")

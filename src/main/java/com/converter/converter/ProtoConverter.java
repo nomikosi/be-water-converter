@@ -39,6 +39,9 @@ import java.util.regex.*;
 public class ProtoConverter {
 
     // No INDENT_OUTPUT: writes the internal pivot only, which is re-parsed.
+    // A plain mapper on purpose: PivotJson keeps decimals as BigDecimal,
+    // which is right for carrying values through a conversion but would
+    // retype every JSON 1.5 here, and these classify number SHAPES.
     private final ObjectMapper jsonMapper = new ObjectMapper();
 
     /**
@@ -402,16 +405,26 @@ public class ProtoConverter {
     public String jsonToProto(String json) throws Exception {
         JsonNode root = jsonMapper.readTree(json);
 
-        if (root.isArray()) {
-            if (root.size() == 0)
+        // Peels every level, not just one: the POJO and data class generators
+        // unwrap a root array of arrays all the way down, and the root must not
+        // disagree with the same shape one level in.
+        int unwrapped = 0;
+        while (root.isArray()) {
+            if (root.isEmpty())
                 throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
             root = root.get(0);
+            unwrapped++;
         }
 
         if (!root.isObject())
             throw new IllegalArgumentException(
-                "JSON root must be an object (or an array of objects) to generate a Protobuf schema, " +
-                "but got: " + root.getNodeType().name().toLowerCase());
+                "JSON root must be an object (or an array of objects) to generate a Protobuf schema, "
+                // Naming the leaf type after unwrapping would report "number" for
+                // [[1,2]], a type the user never wrote at the root.
+                + (unwrapped == 0
+                      ? "but got: " + root.getNodeType().name().toLowerCase()
+                      : "but its innermost element is: "
+                            + root.getNodeType().name().toLowerCase()));
 
         StringBuilder sb = new StringBuilder();
         sb.append("syntax = \"proto3\";\n\n");
@@ -424,38 +437,77 @@ public class ProtoConverter {
         String pad = "  ".repeat(indent);
         sb.append(pad).append("message ").append(msgName).append(" {\n");
 
+        // Field names are assigned first because they carry the JSON mapping and
+        // so must not move. protoc registers nested type names and field names in
+        // ONE symbol table per message, so seeding the message names with them is
+        // what stops "message Foo" landing beside a field also called Foo —
+        // '"Foo" is already defined in "Root"'.
+        Set<String> usedFieldNames     = new HashSet<>();
+        Map<String, String> fieldNames = new LinkedHashMap<>();
+        for (Map.Entry<String, JsonNode> e : node.properties())
+            fieldNames.put(e.getKey(), protoFieldName(e.getKey(), usedFieldNames));
+
         // Nested message names must be unique within this message: keys "user"
         // and "User" both want to be "User", which would emit two blocks of the
         // same name. Assign once here, then reuse for the block and the field
         // type so the two can never disagree.
-        Map<String, String> childNames    = new LinkedHashMap<>();
-        Set<String> usedMessageNames      = new HashSet<>();
+        Map<String, String> childNames     = new LinkedHashMap<>();
+        Map<String, List<String>> rowNames = new LinkedHashMap<>();
+        Set<String> usedMessageNames       = new HashSet<>(usedFieldNames);
         for (Map.Entry<String, JsonNode> e : node.properties()) {
-            JsonNode val = e.getValue();
-            if (val.isObject() || (val.isArray() && !val.isEmpty() && val.get(0).isObject())) {
+            JsonNode val  = e.getValue();
+            JsonNode leaf = arrayLeaf(val);
+            if (leaf != null && leaf.isObject()) {
                 childNames.put(e.getKey(),
                       uniqueName(protoMessageName(e.getKey()), "", usedMessageNames));
+            }
+            // proto3 has no "repeated repeated", so every array level past the
+            // first needs a message of its own to be repeated inside. Without
+            // them the extra levels — and every field of the object at the
+            // bottom — were silently replaced by "repeated string".
+            int depth = arrayDepth(val);
+            if (depth > MAX_ARRAY_DEPTH)
+                throw new IllegalArgumentException(String.format(
+                      "Field \"%s\" nests arrays %d deep. proto3 has no repeated-of-repeated, so "
+                      + "each level needs a wrapper message; past %d that is noise rather than a "
+                      + "schema. Flatten the field, or convert to a format that has nested lists.",
+                      e.getKey(), depth, MAX_ARRAY_DEPTH));
+            if (depth >= 2) {
+                List<String> rows = new ArrayList<>();
+                for (int level = 2; level <= depth; level++)
+                    rows.add(uniqueName(protoMessageName(e.getKey()) + "Row", "", usedMessageNames));
+                rowNames.put(e.getKey(), rows);
             }
         }
 
         for (Map.Entry<String, JsonNode> e : node.properties()) {
-            String childName = childNames.get(e.getKey());
-            if (childName == null) continue;
-            JsonNode val = e.getValue();
-            generateMessage(childName, val.isObject() ? val : val.get(0), sb, indent + 1);
+            JsonNode val       = e.getValue();
+            String   childName = childNames.get(e.getKey());
+            if (childName != null)
+                generateMessage(childName, arrayLeaf(val), sb, indent + 1);
+
+            List<String> rows = rowNames.get(e.getKey());
+            if (rows == null) continue;
+            String elemType = (childName != null) ? childName : jsonTypeToProto(arrayLeaf(val));
+            for (String row : rows) {            // innermost level first
+                generateArrayWrapper(row, elemType, sb, indent + 1);
+                elemType = row;                  // the level above repeats this one
+            }
         }
 
         int[] counter = {1};
-        Set<String> usedFieldNames = new HashSet<>();
         for (Map.Entry<String, JsonNode> e : node.properties()) {
-            String   fieldName = protoFieldName(e.getKey(), usedFieldNames);
+            String   fieldName = fieldNames.get(e.getKey());
             JsonNode val       = e.getValue();
             String   childName = childNames.get(e.getKey());
             String   fieldPad  = pad + "  ";
 
             if (val.isArray()) {
-                String elemType = (childName != null)
-                    ? childName : jsonTypeToProto(!val.isEmpty() ? val.get(0) : null);
+                List<String> rows = rowNames.get(e.getKey());
+                // The outermost wrapper is what this field repeats; the inner
+                // ones are already chained to each other above.
+                String elemType = rows != null ? rows.get(rows.size() - 1)
+                      : (childName != null ? childName : jsonTypeToProto(arrayLeaf(val)));
                 sb.append(fieldPad).append("repeated ").append(elemType).append(" ")
                   .append(fieldName).append(" = ").append(counter[0]++).append(";\n");
             } else if (val.isObject()) {
@@ -467,6 +519,47 @@ public class ProtoConverter {
             }
         }
         sb.append(pad).append("}\n");
+    }
+
+    /**
+     * Emits the message standing in for one array level, since proto3 cannot
+     * repeat a repeated field. This is the encoding the schema's author would
+     * have to write by hand for a 2D array.
+     */
+    private void generateArrayWrapper(String name, String elementType,
+                                      StringBuilder sb, int indent) {
+        String pad = "  ".repeat(indent);
+        sb.append(pad).append("message ").append(name).append(" {\n")
+          .append(pad).append("  repeated ").append(elementType).append(" values = 1;\n")
+          .append(pad).append("}\n");
+    }
+
+    /**
+     * Array nesting past which a schema stops being worth generating. Each level
+     * costs a wrapper message, so an unbounded depth turned a 1.6 MB document
+     * into a 50 MB schema of nothing but wrappers.
+     */
+    private static final int MAX_ARRAY_DEPTH = 8;
+
+    /** Nested array levels: 0 for a non-array, 1 for {@code [1]}, 2 for {@code [[1]]}. */
+    private static int arrayDepth(JsonNode node) {
+        int depth = 0;
+        while (node != null && node.isArray()) {
+            depth++;
+            node = node.isEmpty() ? null : node.get(0);
+        }
+        return depth;
+    }
+
+    /**
+     * The element an array bottoms out at — the node itself when it is not an
+     * array, and null when some level is empty and there is nothing to type
+     * from. Arrays are typed from their first element at every level, matching
+     * {@link StructureModel}.
+     */
+    private static JsonNode arrayLeaf(JsonNode node) {
+        while (node != null && node.isArray()) node = node.isEmpty() ? null : node.get(0);
+        return node;
     }
 
     /** Suffixes a counter until {@code base} is unused, recording the result in {@code used}. */

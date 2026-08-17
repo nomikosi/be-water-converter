@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 
 /**
@@ -46,23 +47,35 @@ public final class StructureModel {
 
     private final UnaryOperator<String> typeNamer;
 
-    private StructureModel(UnaryOperator<String> typeNamer) {
+    /** Names a generated type may not take; see {@link #from}. */
+    private final Set<String> reservedNames;
+
+    private StructureModel(UnaryOperator<String> typeNamer, Set<String> reservedNames) {
         this.typeNamer = typeNamer;
+        this.reservedNames = reservedNames;
     }
 
     /**
-     * @param typeNamer maps a JSON key to a type name in the target language's
-     *                  conventions; supplied by the generator because keyword
-     *                  and identifier rules differ per language.
+     * @param typeNamer     maps a JSON key to a type name in the target
+     *                      language's conventions; supplied by the generator
+     *                      because keyword and identifier rules differ per
+     *                      language.
+     * @param reservedNames type names the generator itself emits — the simple
+     *                      names of its imports plus the built-ins it uses as
+     *                      field types. A generated class may not take one:
+     *                      declaring {@code List} alongside an emitted
+     *                      {@code import java.util.List} does not compile, and
+     *                      declaring {@code String} silently shadows
+     *                      {@code java.lang.String} for the whole file.
      */
     public static StructureModel from(JsonNode root, String rootName,
-          UnaryOperator<String> typeNamer) {
+          UnaryOperator<String> typeNamer, Set<String> reservedNames) {
         // A scalar implies no type at all, so generation would otherwise return
         // an empty string and the panel would report that as a conversion.
         if (root == null || !root.isObject())
             throw new IllegalArgumentException(
                   "Nothing to generate: the input must be a JSON object, or an array of objects.");
-        StructureModel model = new StructureModel(typeNamer);
+        StructureModel model = new StructureModel(typeNamer, reservedNames);
         model.collect(root, rootName);
         return model;
     }
@@ -97,6 +110,10 @@ public final class StructureModel {
     /** Suffixes a counter when the desired name is already taken. */
     private String unique(String desired) {
         String base = (desired == null || desired.isEmpty()) ? "Type" : desired;
+        // Suffixed rather than numbered: "List2" would imply a "List" exists in
+        // the generated file, when what it actually collides with is the import.
+        // This is the suffix the identifier rules already use for keywords.
+        if (reservedNames.contains(base)) base = base + "Value";
         if (!types.containsKey(base)) return base;
         int n = 2;
         while (types.containsKey(base + n)) n++;

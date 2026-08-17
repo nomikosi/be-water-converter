@@ -36,6 +36,9 @@ public class JavaPojoGenerator {
     /** Name of the generated root class; the only public type in the output. */
     public static final String ROOT_CLASS_NAME = "Root";
 
+    // A plain mapper on purpose: PivotJson keeps decimals as BigDecimal,
+    // which is right for carrying values through a conversion but would
+    // retype every JSON 1.5 here, and these classify number SHAPES.
     private final ObjectMapper jsonMapper = new ObjectMapper();
     private final XmlMapper   xmlMapper   = new XmlMapper();
 
@@ -48,7 +51,47 @@ public class JavaPojoGenerator {
           "protected", "public", "return", "short", "static", "strictfp",
           "super", "switch", "synchronized", "this", "throw", "throws",
           "transient", "try", "void", "volatile", "while",
-          "var", "yield", "record", "sealed", "permits");
+          "var", "yield", "record", "sealed", "permits",
+          // Not keywords but literals, and JLS 3.8 bars them from identifiers
+          // just the same: "private Integer false;" does not parse.
+          "true", "false", "null");
+
+    /**
+     * Every type name this generator can emit: the simple names of the imports
+     * in {@link #generate} plus the {@code java.lang} types
+     * {@link #resolveJavaType} returns. A generated class may take none of
+     * them — {@code class List} beside {@code import java.util.List} is
+     * "already defined in this compilation unit", and {@code class String}
+     * compiles but silently shadows {@code java.lang.String} for every field
+     * in the file.
+     *
+     * <p>Conservative on purpose: names are assigned before generation knows
+     * which imports it will actually emit, so {@code List} is reserved even in a
+     * document with no array. Reserving too much costs a suffix; reserving too
+     * little costs a file that does not compile.
+     */
+    private static final Set<String> RESERVED_TYPE_NAMES = Set.of(
+          "JsonProperty",
+          "BigDecimal", "BigInteger",
+          "LocalDate", "LocalDateTime", "OffsetDateTime",
+          "List",
+          "Boolean", "Double", "Float", "Integer", "Long", "Object", "String");
+
+    /**
+     * The Lombok annotations, reserved only in Lombok mode. {@code data} is a
+     * common key, and reserving {@code Data} unconditionally renamed its class
+     * for every document — including the ones that emit no Lombok import at all,
+     * and where the Kotlin generator still emits {@code Data}.
+     */
+    private static final Set<String> LOMBOK_TYPE_NAMES =
+          Set.of("AllArgsConstructor", "Data", "NoArgsConstructor");
+
+    private static Set<String> reservedTypeNames(boolean useLombok) {
+        if (!useLombok) return RESERVED_TYPE_NAMES;
+        Set<String> all = new HashSet<>(RESERVED_TYPE_NAMES);
+        all.addAll(LOMBOK_TYPE_NAMES);
+        return all;
+    }
 
     /** Java identifiers admit {@code $}, which is the only way they differ from Kotlin's. */
     private static final Pattern ILLEGAL_IN_IDENTIFIER = Pattern.compile("[^a-zA-Z0-9_$]");
@@ -106,7 +149,7 @@ public class JavaPojoGenerator {
     private String generate(JsonNode root, String rootClassName, boolean useLombok,
           boolean detectDates) {
         StructureModel model = StructureModel.from(root, rootClassName,
-              key -> capitalize(toCamelCase(key)));
+              key -> capitalize(toCamelCase(key)), reservedTypeNames(useLombok));
 
         Set<String> usedTypes = new HashSet<>();
         StringBuilder body = new StringBuilder();
@@ -170,10 +213,14 @@ public class JavaPojoGenerator {
             String javaType = resolveJavaType(e.getValue(), originalKey, detectDates,
                   usedTypes, model);
             if (!camelName.equals(originalKey)) {
-                usedTypes.add("JsonProperty");
-                sb.append("    @JsonProperty(\"")
-                      .append(SourceConventions.javaStringLiteral(originalKey))
-                      .append("\")\n");
+                if (SourceConventions.isMappableKey(originalKey)) {
+                    usedTypes.add("JsonProperty");
+                    sb.append("    @JsonProperty(\"")
+                          .append(SourceConventions.javaStringLiteral(originalKey))
+                          .append("\")\n");
+                } else {
+                    sb.append("    // ").append(SourceConventions.UNMAPPABLE_KEY_NOTE).append("\n");
+                }
             }
             sb.append("    private ").append(javaType).append(" ").append(camelName).append(";\n");
         }

@@ -36,7 +36,7 @@ public class JsonXmlConverter {
         // No INDENT_OUTPUT: this mapper only ever writes the internal JSON
         // pivot, which the next stage re-parses and nobody reads. Indenting it
         // measured 1.29-1.45x the compact size for no benefit.
-        jsonMapper = new ObjectMapper();
+        jsonMapper = PivotJson.mapper();
         xmlMapper  = new XmlMapper();
         xmlMapper.enable(SerializationFeature.INDENT_OUTPUT);
     }

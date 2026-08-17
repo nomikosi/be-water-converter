@@ -48,6 +48,9 @@ public class KotlinDataClassGenerator {
     /** Name of the generated root class. */
     public static final String ROOT_CLASS_NAME = "Root";
 
+    // A plain mapper on purpose: PivotJson keeps decimals as BigDecimal,
+    // which is right for carrying values through a conversion but would
+    // retype every JSON 1.5 here, and these classify number SHAPES.
     private final ObjectMapper jsonMapper = new ObjectMapper();
 
     /**
@@ -60,6 +63,19 @@ public class KotlinDataClassGenerator {
           "if", "in", "interface", "is", "null", "object", "package", "return",
           "super", "this", "throw", "true", "try", "typealias", "typeof", "val",
           "var", "when", "while");
+
+    /**
+     * Every type name this generator can emit: the simple names of the imports
+     * in {@link #generate} plus the types {@link #resolveType} returns. A
+     * generated class may take none of them — {@code data class List} shadows
+     * the auto-imported {@code kotlin.collections.List}, so every
+     * {@code List<…>} in the same file then fails to resolve.
+     */
+    static final Set<String> RESERVED_TYPE_NAMES = Set.of(
+          "JsonProperty",
+          "BigDecimal", "BigInteger",
+          "LocalDate", "LocalDateTime", "OffsetDateTime",
+          "Any", "Boolean", "Double", "Float", "Int", "List", "Long", "String");
 
     /** Kotlin identifiers, unlike Java's, do not admit {@code $}. */
     private static final Pattern ILLEGAL_IN_IDENTIFIER = Pattern.compile("[^a-zA-Z0-9_]");
@@ -92,7 +108,7 @@ public class KotlinDataClassGenerator {
 
     private String generate(JsonNode root, boolean detectDates) {
         StructureModel model = StructureModel.from(root, ROOT_CLASS_NAME,
-              key -> capitalize(toCamelCase(key)));
+              key -> capitalize(toCamelCase(key)), RESERVED_TYPE_NAMES);
 
         Set<String> usedTypes = new LinkedHashSet<>();
         StringBuilder body = new StringBuilder();
@@ -131,10 +147,14 @@ public class KotlinDataClassGenerator {
             String type = resolveType(e.getValue(), originalKey, detectDates, usedTypes, model);
 
             if (!propertyName.equals(originalKey)) {
-                usedTypes.add("JsonProperty");
-                sb.append("    @JsonProperty(\"")
-                      .append(SourceConventions.kotlinStringLiteral(originalKey))
-                      .append("\")\n");
+                if (SourceConventions.isMappableKey(originalKey)) {
+                    usedTypes.add("JsonProperty");
+                    sb.append("    @JsonProperty(\"")
+                          .append(SourceConventions.kotlinStringLiteral(originalKey))
+                          .append("\")\n");
+                } else {
+                    sb.append("    // ").append(SourceConventions.UNMAPPABLE_KEY_NOTE).append("\n");
+                }
             }
             sb.append("    val ").append(propertyName).append(": ").append(type);
             if (--remaining > 0) sb.append(',');

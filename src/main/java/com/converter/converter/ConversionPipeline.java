@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 
 import java.io.StringReader;
 import java.io.StringWriter;
@@ -67,7 +68,11 @@ public class ConversionPipeline {
               // STRING "Infinity", 1e-400 into 0.0, and long decimals lost
               // digits — including inside canonicalJson, which made Compare
               // report differing documents as equal.
-              .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+              .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+              // Keeping BigDecimal is not enough on its own: the default node
+              // factory calls stripTrailingZeros, which rewrote 1.0 as 1 and
+              // 100.00 as 1E+2 — and Format wrote that back over the document.
+              .nodeFactory(JsonNodeFactory.withExactBigDecimals(true));
     }
 
     /**

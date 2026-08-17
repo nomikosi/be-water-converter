@@ -39,7 +39,7 @@ public class JsonSchemaGenerator {
     public static final String SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema";
 
     private final ObjectMapper jsonMapper =
-          new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+          PivotJson.mapper().enable(SerializationFeature.INDENT_OUTPUT);
 
     public String fromJson(String json) throws Exception {
         return fromJson(json, true);

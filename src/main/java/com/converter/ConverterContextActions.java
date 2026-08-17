@@ -340,9 +340,25 @@ public final class ConverterContextActions {
             // mid-conversion otherwise reached CommandProcessor with a disposed
             // project, which surfaces as an IDE internal-error report while the
             // scratch file is never created.
-            ApplicationManager.getApplication().invokeLater(
-                  () -> ConverterScratchFiles.openAsScratch(project, sourceName, target, finalResult),
-                  project.getDisposed());
+            ApplicationManager.getApplication().invokeLater(() -> {
+                try {
+                    // Declining the size confirmation is a choice, not a failure,
+                    // so only a genuine refusal is reported.
+                    ConverterScratchFiles.Result opened = ConverterScratchFiles
+                          .openAsScratch(project, sourceName, target, finalResult);
+                    if (!opened.declined() && !opened.created())
+                        notifyError(project, "Could not create a scratch file for the "
+                              + target + " result.");
+                } catch (com.intellij.openapi.progress.ProcessCanceledException cancelled) {
+                    throw cancelled;
+                } catch (Throwable failure) {
+                    // Escaping this runnable would reach IdeEventQueue and be
+                    // reported as an IDE internal error rather than as ours.
+                    String message = failure.getMessage() == null
+                          ? failure.getClass().getSimpleName() : failure.getMessage();
+                    notifyError(project, "Could not open the " + target + " result: " + message);
+                }
+            }, project.getDisposed());
         }
     }
 }
