@@ -114,6 +114,15 @@ public class CsvConverter {
         ArrayNode arr = jsonMapper.createArrayNode();
         for (int r = 1; r < lines.size(); r++) {
             String[] cells = lines.get(r);
+            // Extra cells have nowhere to go: the loop below stops at the header
+            // count, so they were dropped and Format then wrote the truncated
+            // file back over the user's data.
+            if (cells.length > headers.size())
+                throw new IllegalArgumentException(String.format(
+                      "Row %d has %d values but the header declares %d columns, so %d would be "
+                      + "discarded. Add the missing header names, or quote the delimiter inside "
+                      + "the value if it was meant as text.",
+                      r + 1, cells.length, headers.size(), cells.length - headers.size()));
             ObjectNode obj = arr.addObject();
             // Ragged rows keep the old behaviour: a missing trailing cell means
             // the key is absent rather than present-and-empty.
@@ -177,11 +186,22 @@ public class CsvConverter {
             throw new IllegalArgumentException(
                   "JSON must be an array of objects or a single object for CSV output");
 
+        // A CSV row is an object's fields, so an element that is not an object
+        // has no row to become. Dropping them returned "" for [1,2,3] and the
+        // panel reported that as a successful conversion into a blank pane.
+        int nonObjects = 0;
+        for (JsonNode element : root) if (!element.isObject()) nonObjects++;
+        if (nonObjects > 0)
+            throw new IllegalArgumentException(nonObjects == root.size()
+                  ? "CSV rows come from objects, and no element of this array is one. "
+                        + "An array of values has no columns to write."
+                  : nonObjects + " of the " + root.size() + " elements are not objects, so they "
+                        + "have no row to become. Wrap each value in an object first.");
+
         // Expand every top-level element according to the chosen mode
         List<Map<String, String>> rows = new ArrayList<>();
         for (JsonNode element : root) {
             checkInterrupted();
-            if (!element.isObject()) continue;
             List<Map<String, String>> expanded =
                   (mode == CsvMode.CROSS_JOIN)
                         ? expandCrossJoin(element, "")
@@ -189,7 +209,11 @@ public class CsvConverter {
             rows.addAll(expanded);
         }
 
-        if (rows.isEmpty()) return "";
+        // Returning "" here reported an empty document as a successful
+        // conversion. An empty root array is the only way to reach this now.
+        if (rows.isEmpty())
+            throw new IllegalArgumentException(
+                  "Nothing to write: the input has no rows to turn into CSV.");
 
         // Collect ordered headers (insertion order from first row, then rest)
         LinkedHashSet<String> headers = new LinkedHashSet<>();
