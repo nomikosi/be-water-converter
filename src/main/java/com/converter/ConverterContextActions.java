@@ -322,10 +322,20 @@ public final class ConverterContextActions {
             String result;
             try {
                 ConversionPipeline pipeline = new ConversionPipeline();
-                String pivot = pipeline.normalizeToJson(text, inputFormat,
-                      ConversionOptions.DEFAULTS);
+                // The user's own choices, not DEFAULTS: converting from the
+                // Project view otherwise read a semicolon CSV as comma-separated
+                // and ignored Sort keys, Detect dates and Lombok, so the same
+                // document converted differently depending on the entry point.
+                // The subtree filter is deliberately not carried over — it
+                // belongs to the document open in the panel.
+                ConversionOptions options = ConverterPanel.persistedOptions();
+                String pivot = pipeline.normalizeToJson(text, inputFormat, options);
                 indicator.checkCanceled();
-                result = pipeline.renderFromJson(pivot, target, ConversionOptions.DEFAULTS);
+                result = pipeline.renderFromJson(pivot, target, options);
+                // Checked again: cancelling during the render used to do nothing
+                // and the result was delivered anyway, so the progress bar
+                // advertised a Cancel that did not cancel.
+                indicator.checkCanceled();
             } catch (com.intellij.openapi.progress.ProcessCanceledException cancelled) {
                 throw cancelled;
             } catch (Exception failure) {

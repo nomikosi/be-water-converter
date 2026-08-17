@@ -52,6 +52,31 @@ class ProtoConverterValidationTest {
               .hasMessageContaining("0 '}'");
     }
 
+    @Test @DisplayName("A well-formed field missing its ';' is reported, not silently dropped")
+    void unterminatedFieldIsReported() {
+        // STATEMENT_PATTERN does not need the semicolon but FIELD_PATTERN does,
+        // so validation passed and extraction found nothing: the message came
+        // back as {} with the field gone.
+        assertThatThrownBy(() -> converter.protoToJson("message M {\n  string a = 1\n}"))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("missing its terminating ';'");
+    }
+
+    @Test @DisplayName("A nested message nothing references is still validated")
+    void unreferencedNestedMessageIsValidated() {
+        // buildMessageNode validated only as it descended, so a nested message
+        // no field pointed at was never checked at all.
+        assertThatThrownBy(() -> converter.protoToJson(
+              "message Outer {\n  string ok = 1;\n  message Inner {\n    !!! garbage\n  }\n}"))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("Inner");
+        assertThatThrownBy(() -> converter.protoToJson(
+              "message Outer {\n  string ok = 1;\n"
+              + "  message Inner {\n    string a = 1;\n    string b = 1;\n  }\n}"))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("Duplicate field number");
+    }
+
     @Test @DisplayName("Malformed field reports the message name and offending statement")
     void malformedField() {
         String proto = "message Person { string name = 1; int32 age }";

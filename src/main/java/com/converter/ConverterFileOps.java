@@ -51,6 +51,9 @@ final class ConverterFileOps {
     /** Files larger than this trigger a confirmation before loading (whole pipeline is in-memory). */
     private static final long LARGE_FILE_WARNING_BYTES = 10L * 1024 * 1024;
 
+    /** File content, and whether reading it needed the Latin-1 fallback. */
+    private record Loaded(String text, boolean latin1) {}
+
     private static final Set<String> SUPPORTED_EXTENSIONS =
           Set.of("json", "xml", "yaml", "yml", "csv", "toml", "proto");
 
@@ -128,7 +131,17 @@ final class ConverterFileOps {
         // Read off the EDT so a large or slow-network file cannot freeze the IDE.
         runOffEdt(() -> {
             try {
-                return Files.readString(file.toPath(), StandardCharsets.UTF_8);
+                return new Loaded(Files.readString(file.toPath(), StandardCharsets.UTF_8), false);
+            } catch (java.nio.charset.MalformedInputException notUtf8) {
+                // A non-UTF-8 file failed with "Input length = 1", which says
+                // nothing about the cause. Latin-1 maps every byte, so the file
+                // opens; the status line says which encoding was used.
+                try {
+                    return new Loaded(
+                          Files.readString(file.toPath(), StandardCharsets.ISO_8859_1), true);
+                } catch (IOException ex) {
+                    throw new java.util.concurrent.CompletionException(ex);
+                }
             } catch (IOException ex) {
                 throw new java.util.concurrent.CompletionException(ex);
             }
@@ -137,7 +150,8 @@ final class ConverterFileOps {
                 host.status("Failed to open file: " + cause.getMessage(), false);
                 return;
             }
-            host.loaded(content, detectFormat(file.getName()), file.getName());
+            host.loaded(content.text(), detectFormat(file.getName()), file.getName()
+                  + (content.latin1() ? " (not valid UTF-8 — read as ISO-8859-1)" : ""));
         });
     }
 
@@ -182,6 +196,27 @@ final class ConverterFileOps {
                     }
                 }
                 return original != null && original.importData(support);
+            }
+
+            // The export half must be delegated too. TransferHandler's defaults
+            // are "no source actions, nothing to transfer", so overriding only
+            // the import half left Copy, Cut and drag-out dead in the editor.
+            //
+            // Delegating the PUBLIC entry points is what does it: each one calls
+            // the original's own protected createTransferable/exportDone, which
+            // a subclass cannot reach across instances anyway.
+            @Override public int getSourceActions(JComponent c) {
+                return original == null ? NONE : original.getSourceActions(c);
+            }
+
+            @Override public void exportAsDrag(JComponent c, java.awt.event.InputEvent e, int action) {
+                if (original != null) original.exportAsDrag(c, e, action);
+            }
+
+            @Override public void exportToClipboard(JComponent c,
+                  java.awt.datatransfer.Clipboard clip, int action) {
+                if (original != null) original.exportToClipboard(c, clip, action);
+                else super.exportToClipboard(c, clip, action);
             }
         };
     }

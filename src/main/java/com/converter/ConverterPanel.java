@@ -71,6 +71,13 @@ public class ConverterPanel implements Disposable {
      */
     private static final int PASTE_MIN_CHARS = 12;
 
+    /**
+     * How much of a pasted document format detection reads. Its markers are
+     * structural and sit near the top, and scanning megabytes of it on the
+     * EDT stalled the editor.
+     */
+    private static final int DETECT_SAMPLE_CHARS = 64 * 1024;
+
     static final String FMT_JSON  = ConversionPipeline.FMT_JSON;
     static final String FMT_XML   = ConversionPipeline.FMT_XML;
     static final String FMT_YAML  = ConversionPipeline.FMT_YAML;
@@ -175,6 +182,8 @@ public class ConverterPanel implements Disposable {
     private final PropertyChangeListener lafListener;
     private volatile boolean disposed;
     private volatile Thread convertWorker;
+    /** Guards convertWorker so a cancel cannot interrupt the pool's next task. */
+    private final Object workerLock = new Object();
     /** Suppressed while the panel itself replaces the input (file load, history restore). */
     private boolean autoDetectFormat = true;
 
@@ -543,6 +552,38 @@ public class ConverterPanel implements Disposable {
         });
     }
 
+    /**
+     * The options the user last chose in the tool window, for callers that have
+     * no panel of their own.
+     *
+     * <p>The context-menu conversions used {@code ConversionOptions.DEFAULTS},
+     * so a semicolon CSV was read and written as comma-separated and Sort keys,
+     * Detect dates and Lombok were all ignored — the same document converted two
+     * different ways depending on which entry point ran it.
+     */
+    static ConversionOptions persistedOptions() {
+        CsvConverter.CsvFormat delimiter = CsvConverter.CsvFormat.DEFAULT;
+        String saved = loadProp(PROP_CSV_DELIMITER);
+        if (saved != null) {
+            try { delimiter = CsvDelimiter.valueOf(saved).format; }
+            catch (IllegalArgumentException unknownName) { /* keep the default */ }
+        }
+        CsvConverter.CsvMode mode = CsvConverter.CsvMode.FLAT_FIRST;
+        String savedMode = loadProp(PROP_CSV_MODE);
+        if (savedMode != null) {
+            try { mode = CsvConverter.CsvMode.valueOf(savedMode); }
+            catch (IllegalArgumentException unknownName) { /* keep the default */ }
+        }
+        // Absent means "never set", and these two default to on in the UI.
+        boolean inferTypes  = loadProp(PROP_INFER_TYPES) == null
+              || "true".equals(loadProp(PROP_INFER_TYPES));
+        boolean detectDates = loadProp(PROP_DETECT_DATES) == null
+              || "true".equals(loadProp(PROP_DETECT_DATES));
+        return new ConversionOptions(mode, delimiter,
+              "true".equals(loadProp(PROP_LOMBOK)), detectDates, inferTypes,
+              "true".equals(loadProp(PROP_SORT_KEYS)), "");
+    }
+
     private static String loadProp(String key) {
         try {
             return com.intellij.ide.util.PropertiesComponent.getInstance().getValue(key);
@@ -716,10 +757,20 @@ public class ConverterPanel implements Disposable {
         inputArea.getDocument().addDocumentListener(new DocumentListener() {
             @Override public void insertUpdate(DocumentEvent e) {
                 if (e.getLength() < PASTE_MIN_CHARS) return;
-                // The document is locked during the event; defer the combo change.
+                // The document is locked during the event; defer the read.
                 SwingUtilities.invokeLater(() -> {
                     if (disposed || !autoDetectFormat) return;
-                    String detected = ConversionPipeline.detectFormat(inputArea.getText());
+                    // Sniffing runs regexes over the whole string, which on a
+                    // multi-megabyte paste froze the EDT for hundreds of
+                    // milliseconds. Every marker detectFormat looks for is
+                    // structural and appears near the top, so a prefix decides
+                    // it just as well and bounds the cost. Kept synchronous:
+                    // deferring it to a pool made the format flip after the
+                    // paste had already settled.
+                    String text = inputArea.getText();
+                    String head = text.length() > DETECT_SAMPLE_CHARS
+                          ? text.substring(0, DETECT_SAMPLE_CHARS) : text;
+                    String detected = ConversionPipeline.detectFormat(head);
                     if (detected == null || detected.equals(inputCombo.getSelectedItem())) return;
                     inputCombo.setSelectedItem(detected);
                     setStatus("Detected " + detected + " input", true);
@@ -984,8 +1035,10 @@ public class ConverterPanel implements Disposable {
                   } catch (Exception ex) {
                       throw new java.util.concurrent.CompletionException(ex);
                   } finally {
-                      convertWorker = null;
-                      Thread.interrupted(); // clear a late cancel so the pooled thread stays clean
+                      synchronized (workerLock) {
+                          convertWorker = null;
+                          Thread.interrupted();   // clear a late cancel; the thread is shared
+                      }
                   }
               }, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
               .whenComplete((result, error) ->
@@ -999,7 +1052,7 @@ public class ConverterPanel implements Disposable {
                             if (cause instanceof CancellationException) {
                                 setStatusWarn("Conversion cancelled");
                             } else {
-                                showError(cause.getMessage());
+                                showError(describe(cause));
                                 jumpToErrorLocation(cause);
                             }
                         } else {
@@ -1011,10 +1064,15 @@ public class ConverterPanel implements Disposable {
                             outputArea.setCaretPosition(0);
                             outputFormatLabel.setText(outFmt);
                             outputFormatLabel.repaint();
-                            history.push(new ConversionHistory.Entry(
+                            // push() refuses entries over its size cap. Discarding
+                            // the answer meant a large conversion simply was not
+                            // in the history later, with nothing having said so \u2014
+                            // restoreFromHistory already reports the same refusal.
+                            boolean kept = history.push(new ConversionHistory.Entry(
                                   inFmt, outFmt, rawInput, result, java.time.LocalTime.now()));
                             setStatus("Converted " + inFmt + " \u2192 " + outFmt
-                                  + (huge ? "  (syntax highlighting off for large output)" : ""), true);
+                                  + (huge ? "  (syntax highlighting off for large output)" : "")
+                                  + (kept ? "" : "  (too large for the history)"), true);
                         }
                     }));
     }
@@ -1033,8 +1091,13 @@ public class ConverterPanel implements Disposable {
     private void cancelConvert() {
         if (!converting.get()) return;
         cancelRequested.set(true);
-        Thread worker = convertWorker;
-        if (worker != null) worker.interrupt();
+        // Interrupting under the same lock the worker clears itself under. The
+        // thread belongs to the shared application pool, so once the task has
+        // finished the interrupt would land on whatever unrelated work that
+        // thread picked up next.
+        synchronized (workerLock) {
+            if (convertWorker != null) convertWorker.interrupt();
+        }
         setStatusWarn("Cancelling…");
     }
 
@@ -1060,7 +1123,7 @@ public class ConverterPanel implements Disposable {
             }
         }, (formatted, failure) -> {
             if (failure != null) {
-                showError("Format failed: " + failure.getMessage());
+                showError("Format failed: " + describe(failure));
                 jumpToErrorLocation(failure);
                 return;
             }
@@ -1161,9 +1224,11 @@ public class ConverterPanel implements Disposable {
             try {
                 ConverterDiff.show(project, "Be Water: " + inFmt + " vs " + outFmt,
                       inFmt + " (input)", sides[0], outFmt + " (output)", sides[1]);
+            } catch (com.intellij.openapi.progress.ProcessCanceledException cancelled) {
+                throw cancelled;   // control flow: it must reach the platform
             } catch (Throwable noIde) {
                 // No running IDE (tests, standalone): the comparison itself still ran.
-                showError("Compare failed: " + noIde.getMessage());
+                showError("Compare failed: " + describe(noIde));
             }
         });
     }
@@ -1256,6 +1321,10 @@ public class ConverterPanel implements Disposable {
         inputCombo.setSelectedItem(FMT_JSON);
         rebuildOutputCombo(FMT_JSON);
         outputCombo.setSelectedItem(FMT_XML);
+        // The subtree filter belongs to the document that was just cleared, not
+        // to the preferences. Leaving it armed silently narrowed — or rejected —
+        // the next, unrelated document the user pasted in.
+        filterField.setText("");
         setStatus("Cleared", true);
     }
 
@@ -1393,6 +1462,15 @@ public class ConverterPanel implements Disposable {
             // The reported position does not exist in the current document
             // (input edited since): leave the caret alone.
         }
+    }
+
+    /**
+     * A failure's message, or its class name when it carries none. "null" and
+     * "Unknown error" told the user nothing about what had actually gone wrong.
+     */
+    private static String describe(Throwable failure) {
+        String message = failure.getMessage();
+        return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
     }
 
     private void showError(String message) {

@@ -270,6 +270,10 @@ public class ConversionPipeline {
                   + "TOML has date and time types and the JSON step this uses does not. "
                   + "The document is left as it is.");
         String pivot = toml.tomlToJson(input);
+        // jsonToToml renders an empty table as the literal "# empty document",
+        // which as a FORMAT replaced the user's own comments with that sentence.
+        // There is no layout to apply to a document with no values anyway.
+        if (parseJson(pivot).isEmpty()) return input;
         return toml.jsonToToml(sortKeys ? sortKeys(pivot) : pivot);
     }
 

@@ -72,6 +72,14 @@ class FormatAndDetectionTest {
               .contains("1979-05-27");
     }
 
+    @Test @DisplayName("Format keeps a comment-only TOML file rather than replacing it")
+    void commentOnlyTomlSurvivesFormat() throws Exception {
+        // jsonToToml renders an empty table as the literal "# empty document",
+        // so Format replaced the user's own comments with that sentence.
+        assertThat(pipeline.formatInput("# just a note\n", ConversionPipeline.FMT_TOML, opts))
+              .contains("just a note").doesNotContain("empty document");
+    }
+
     @Test @DisplayName("a source file embedded in YAML is not detected as Protobuf")
     void embeddedPackageLineIsNotProto() {
         // "package x;" is ordinary Java, Kotlin and Go, and the marker was

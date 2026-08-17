@@ -130,6 +130,12 @@ public class ProtoConverter {
         for (Block en : findNamedBlocks(clean, "enum")) registerEnum(en, enumDefaults);
         for (Block msg : topMessages) registerAll(msg, registry, enumDefaults);
 
+        // Every message is validated, not only the ones a field happens to
+        // reference. buildMessageNode validates as it descends, so a nested
+        // message nothing pointed at was never checked at all — its javadoc
+        // said each message body is validated, and it was not.
+        for (Block msg : topMessages) validateTree(msg);
+
         ObjectNode root = jsonMapper.createObjectNode();
         for (Block msg : topMessages) {
             root.set(msg.name, buildMessageNode(msg, registry, enumDefaults, new HashSet<>()));
@@ -379,7 +385,32 @@ public class ProtoConverter {
      * duplicate field numbers; {@code seenNumbers} is shared across the flat
      * body and all oneof bodies of the same message.
      */
+    /** Validates a message and every message nested inside it, referenced or not. */
+    private void validateTree(Block msg) {
+        List<Block> oneofs = findNamedBlocks(msg.body, "oneof");
+        Set<String> seenNumbers = new HashSet<>();
+        validateMessageBody(msg.name, stripBlocks(msg.body, "message", "oneof", "enum"), seenNumbers);
+        for (Block oneof : oneofs) validateMessageBody(msg.name, oneof.body, seenNumbers);
+        for (Block nested : findNamedBlocks(msg.body, "message")) validateTree(nested);
+    }
+
     private void validateMessageBody(String messageName, String body, Set<String> seenNumbers) {
+        // Text after the last ';' is a statement that never terminated. It
+        // validated fine — STATEMENT_PATTERN does not require the semicolon —
+        // while addFields uses FIELD_PATTERN, which does, so the field was
+        // silently dropped and "message M { string a = 1 }" produced {}.
+        int lastSemicolon = body.lastIndexOf(';');
+        String trailing = (lastSemicolon < 0 ? body : body.substring(lastSemicolon + 1)).trim();
+        // Only when it is otherwise a WELL-FORMED field. A malformed one falls
+        // through to the loop below, whose message names the expected form and
+        // is the more useful of the two.
+        if (!trailing.isEmpty() && !trailing.contains("{") && !trailing.contains("}")
+              && !IGNORED_STATEMENT.matcher(trailing).matches()
+              && STATEMENT_PATTERN.matcher(trailing).matches())
+            throw new IllegalArgumentException(
+                  "Field \"" + trailing + "\" in message '" + messageName + "' is missing its "
+                  + "terminating ';'. Without it the field cannot be read and would be dropped.");
+
         for (String rawStatement : body.split(";")) {
             String stmt = rawStatement.trim();
             if (stmt.isEmpty()
