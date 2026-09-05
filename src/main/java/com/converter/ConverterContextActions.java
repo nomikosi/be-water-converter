@@ -339,6 +339,15 @@ public final class ConverterContextActions {
                 }
                 String pivot = pipeline.normalizeToJson(text, inputFormat, options);
                 indicator.checkCanceled();
+                // The same row-count confirmation the tool window gives: this
+                // path went straight to the Cartesian product, so a CROSS_JOIN
+                // over a few nested arrays could run away with nothing asked.
+                if (ConversionPipeline.FMT_CSV.equals(target)) {
+                    long estimate = pipeline.estimateCsvRows(pipeline.parseJson(pivot), options.csvMode());
+                    if (estimate > ConverterPanel.persistedRowWarningThreshold()
+                          && !confirmRows(project, options.csvMode(), estimate)) return;
+                    indicator.checkCanceled();
+                }
                 result = pipeline.renderFromJson(pivot, target, options);
                 // Checked again: cancelling during the render used to do nothing
                 // and the result was delivered anyway, so the progress bar
@@ -354,6 +363,23 @@ public final class ConverterContextActions {
                 return;
             }
             String finalResult = result;
+            deliver(project, sourceName, finalResult);
+        }
+
+        /** Asks on the EDT from the background task; false when declined or the project is gone. */
+        private static boolean confirmRows(Project project, com.converter.converter.CsvConverter.CsvMode mode,
+              long estimate) {
+            java.util.concurrent.atomic.AtomicBoolean proceed = new java.util.concurrent.atomic.AtomicBoolean(false);
+            if (project.isDisposed()) return false;
+            ApplicationManager.getApplication().invokeAndWait(() -> proceed.set(
+                  com.intellij.openapi.ui.Messages.showYesNoDialog(project,
+                        String.format("%s will produce ~%,d rows. Continue?", mode, estimate),
+                        "Row Count Warning", com.intellij.openapi.ui.Messages.getWarningIcon())
+                        == com.intellij.openapi.ui.Messages.YES));
+            return proceed.get();
+        }
+
+        private void deliver(Project project, String sourceName, String finalResult) {
             // Guarded on the project, not the application: closing the project
             // mid-conversion otherwise reached CommandProcessor with a disposed
             // project, which surfaces as an IDE internal-error report while the

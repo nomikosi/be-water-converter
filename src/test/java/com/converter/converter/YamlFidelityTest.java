@@ -144,15 +144,44 @@ class YamlFidelityTest {
         assertThat(converter.yamlToJson("--- {a: 1}\n---\n")).isEqualTo("{\"a\":1}");
     }
 
-    @Test @DisplayName("YAML 1.1 values that were never ambiguous still resolve")
-    void ordinaryResolutionUnchanged() throws Exception {
-        assertThat(converter.yamlToJson("a: yes\nb: no\nc: true\n"))
-              .isEqualTo("{\"a\":true,\"b\":false,\"c\":true}");
+    @Test @DisplayName("YAML 1.2 booleans resolve; the 1.1 yes/no/on/off words are text")
+    void booleansAreYaml12() throws Exception {
+        assertThat(converter.yamlToJson("a: true\nb: False\nc: yes\nd: no\ne: on\nf: off\n"))
+              .isEqualTo("{\"a\":true,\"b\":false,\"c\":\"yes\",\"d\":\"no\",\"e\":\"on\",\"f\":\"off\"}");
+        // The GitHub Actions trigger key, which the 1.1 rule turned into "true".
+        assertThat(converter.yamlToJson("on:\n  push:\n    branches: [main]\n"))
+              .isEqualTo("{\"on\":{\"push\":{\"branches\":[\"main\"]}}}");
         assertThat(converter.yamlToJson("a: null\nb: ~\nc: 42\nd: 1.5\ne: 0x1F\n"))
               .isEqualTo("{\"a\":null,\"b\":null,\"c\":42,\"d\":1.5,\"e\":31}");
         // Anchors and merge keys still work — they are why this uses the composer.
         assertThat(converter.yamlToJson("base: &b {x: 1}\nuse:\n  <<: *b\n  y: 2\n"))
               .contains("\"x\":1").contains("\"y\":2");
+    }
+
+    @Test @DisplayName("an anchor that contains its own alias is refused, not a stack overflow")
+    void cyclesAreRefused() {
+        assertThatThrownBy(() -> converter.yamlToJson("a: &a\n  b: *a\n"))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("refers to itself");
+        assertThatThrownBy(() -> converter.yamlToJson("a: &a [1, *a]\n"))
+              .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test @DisplayName("aliases that would expand past the limit are refused before any copy is made")
+    void runawayExpansionIsRefused() throws Exception {
+        // Three aliases per level over thirteen levels is 39 aliases — under
+        // SnakeYAML's own limit of 50 — and 3^13 copies of the innermost list.
+        StringBuilder bomb = new StringBuilder("a0: &a0 [x, x, x]\n");
+        for (int level = 1; level <= 13; level++)
+            bomb.append("a").append(level).append(": &a").append(level)
+                  .append(" [*a").append(level - 1).append(", *a").append(level - 1)
+                  .append(", *a").append(level - 1).append("]\n");
+        assertThatThrownBy(() -> converter.yamlToJson(bomb.toString()))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("expands to over");
+        // Ordinary reuse of an anchor is nowhere near the limit.
+        assertThat(converter.yamlToJson("base: &b {x: 1, y: 2}\np: *b\nq: *b\nr: *b\n"))
+              .contains("\"r\":{\"x\":1,\"y\":2}");
     }
 
     @Test @DisplayName("keys that differ in YAML but collide as JSON are refused")

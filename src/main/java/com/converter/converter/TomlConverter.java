@@ -153,6 +153,14 @@ public class TomlConverter {
         while (!triple && c == '"' && end > 0 && countTrailingBackslashes(toml, end) % 2 == 1)
             end = toml.indexOf(close, end + 1);
         if (end < 0) end = n - close.length();          // unterminated: the rest is string
+        // A multi-line string may end with one or two quote characters right
+        // before its delimiter ("""they said "hi"""" is legal TOML), so the
+        // closing delimiter is the LAST three of the run. Taking the first three
+        // left a stray quote that opened a phantom string over the rest of the
+        // document, and a 19-digit integer behind it slipped past the guard.
+        if (triple)
+            for (int extra = 0; extra < 2 && end + close.length() < n
+                  && toml.charAt(end + close.length()) == c; extra++) end++;
         return Math.min(n, end + close.length());
     }
 

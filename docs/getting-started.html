@@ -17,7 +17,8 @@
     <li><b>Open</b> a file from the toolbar button</li>
 </ul>
 
-<p>The source format is auto-detected from the file extension.</p>
+<p>The source format is auto-detected from the file extension, or from the content itself for
+    pasted text; for CSV the delimiter (comma, semicolon or tab) is detected as well.</p>
 
 <h2>4. Convert</h2>
 <p>Select the source format in the <b>From</b> dropdown and the target format in the
@@ -49,15 +50,18 @@
     restarts:</p>
 <ul>
     <li><b>CSV output</b> choose between <code>FLAT_FIRST</code> (expands the first array only) and
-        <code>CROSS_JOIN</code> (full Cartesian product). In <code>CROSS_JOIN</code> mode, adjust the
-        <b>Row warning</b> threshold to control when the confirmation dialog appears.</li>
+        <code>CROSS_JOIN</code> (full Cartesian product). The <b>Row warning</b> threshold controls
+        when the confirmation dialog appears; it applies to both modes.</li>
+    <li><b>CSV on either side</b> choose the <b>Delimiter</b>: comma, semicolon or tab.</li>
     <li><b>CSV / XML input</b> toggle <b>Infer types</b> to convert values that look like numbers,
         booleans, or <code>null</code> into typed JSON values (leading-zero values like
         <code>007</code> always stay strings).</li>
-    <li><b>Java POJO</b> toggle <b>Lombok annotations</b> to add <code>@Data</code>,
-        <code>@NoArgsConstructor</code>, and <code>@AllArgsConstructor</code>, and
-        <b>Detect dates</b> to type ISO-8601 values as <code>LocalDate</code> /
-        <code>LocalDateTime</code> / <code>OffsetDateTime</code>.</li>
+    <li><b>Java POJO and Kotlin</b> toggle <b>Detect dates</b> to type ISO-8601 values as
+        <code>LocalDate</code> / <code>LocalDateTime</code> / <code>OffsetDateTime</code>; Java POJO
+        output can also add <b>Lombok annotations</b> (<code>@Data</code>,
+        <code>@NoArgsConstructor</code>, and <code>@AllArgsConstructor</code>).</li>
+    <li><b>Every conversion</b> can <b>Sort keys</b>, and a <b>Filter</b> path such as
+        <code>users[0].name</code> converts only part of the document.</li>
 </ul>
 
 <h2>Input leniency</h2>
@@ -67,5 +71,11 @@
 
 <h2>Swap behavior</h2>
 <p>The swap button exchanges input and output when the output format can also be parsed as
-    an input format. Generated <b>Java POJO</b> output is output-only, so it cannot be swapped
-    back into the input editor as a source format.</p>
+    an input format. Generated <b>Java POJO</b>, <b>Kotlin</b> and <b>JSON Schema</b> output is
+    output-only, so it cannot be swapped back into the input editor as a source format.</p>
+
+<h2>Format</h2>
+<p>The <b>Format</b> button re-lays-out the input in its own format without changing what it
+    says. Where that is impossible — a TOML date or hex literal, YAML <code>.inf</code>, XML text
+    mixed with child elements — Format refuses and leaves the editor alone, and before it drops
+    the comments of a YAML, TOML or JSON document it says how many and asks first.</p>

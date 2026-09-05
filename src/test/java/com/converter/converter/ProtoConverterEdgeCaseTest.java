@@ -110,18 +110,20 @@ class ProtoConverterEdgeCaseTest {
 
     // ── Field name sanitization (v1.4.0) ──────────────────────────────────
 
-    @Test @DisplayName("JSON->Proto: kebab and space keys become valid identifiers")
+    @Test @DisplayName("JSON->Proto: kebab and space keys become valid identifiers, and keep their key")
     void jsonToProtoSanitizesFieldNames() throws Exception {
         String result = converter.jsonToProto("{\"first-name\":\"x\",\"last name\":\"y\"}");
-        assertThat(result).contains("string first_name = 1;")
-              .contains("string last_name = 2;")
-              .doesNotContain("first-name");
+        // The original key survives only inside json_name; the identifier is clean.
+        assertThat(result).contains("string first_name = 1 [json_name = \"first-name\"];")
+              .contains("string last_name = 2 [json_name = \"last name\"];")
+              .doesNotContain("string first-name");
     }
 
     @Test @DisplayName("JSON->Proto: keys colliding after sanitization are deduplicated")
     void jsonToProtoDeduplicatesFieldNames() throws Exception {
         String result = converter.jsonToProto("{\"a-b\":1,\"a b\":2}");
-        assertThat(result).contains("a_b = 1;").contains("a_b_2 = 2;");
+        assertThat(result).contains("a_b = 1 [json_name = \"a-b\"];")
+              .contains("a_b_2 = 2 [json_name = \"a b\"];");
     }
 
     @Test @DisplayName("JSON->Proto: nested messages colliding on name are deduplicated")

@@ -61,10 +61,14 @@ rendered to the requested target format. JSON input is parsed leniently — comm
 trailing commas, single quotes, and unquoted field names are accepted — and additionally
 passes through an auto-close step that repairs unclosed `{` / `[` brackets and
 unterminated strings before parsing. Multi-document YAML (`---`-separated, e.g.
-Kubernetes manifests) converts to a JSON array with one element per document. JSON keys
-that are not valid XML element names or Protobuf identifiers (spaces, kebab-case,
-leading digits) are sanitized when rendering to those formats, so the output is always
-well-formed.
+Kubernetes manifests) converts to a JSON array with one element per document. YAML is read
+by the 1.2 core schema: `yes`, `no`, `on` and `off` are text (so a GitHub Actions `on:` key
+stays `on`), `12:30:00` and `0777` are text, floats keep the digits they were written with,
+and anchors and merge keys are expanded in place. A document whose aliases would expand to
+more than two million values, or whose anchors form a cycle, is refused rather than
+converted. JSON keys that are not valid XML element names or Protobuf identifiers (spaces,
+kebab-case, leading digits) are sanitized when rendering to those formats, so the output is
+always well-formed.
 
 ## Features
 
@@ -295,6 +299,12 @@ the root class is declared `public` — Java permits at most one public top-leve
 file. Two nested objects that would claim the same class name each get their own class
 (`User`, `User2`) rather than sharing the first one's fields.
 
+Arrays are typed from every element, not just the first: objects in an array contribute the
+union of their keys to one class, numbers widen to the widest kind seen (`[1, 2.5]` is a
+`List<Double>`), two dates of the same kind stay that kind, and elements of genuinely
+different kinds fall back to `List<Object>`. The test suite compiles the generated Java
+with `javac` rather than only checking for substrings.
+
 ### JSON Schema generation
 
 `JSON Schema` output infers a [draft 2020-12](https://json-schema.org/draft/2020-12/schema)
@@ -317,7 +327,11 @@ because Kotlin allows several top-level declarations per file. An object with no
 becomes a plain `class` rather than a `data class`, since a data class must declare at least
 one parameter. And a value that appeared as `null` in the example is typed `Any?` — the one
 case where an example positively demonstrates nullability; everything else is non-null,
-because an example can only show what *was* present.
+because an example can only show what *was* present. Arrays of objects are merged the same
+way as for Java, and here the merge can say more: a key that some element lacked, or held
+as `null`, is typed nullable (`Int?`), an array with a `null` element becomes
+`List<Int?>`, and a key present in every element stays non-null. An object with more
+properties than a primary constructor can take is emitted with a note saying so.
 
 Hard keywords (`when`, `class`, `is`, `fun`, …) are renamed with a `Value` suffix and mapped
 back with `@JsonProperty`; soft keywords such as `data`, `value` and `sealed` are legal
@@ -345,10 +359,14 @@ The Protobuf converter works structurally in both directions without invoking `p
   level, so two messages can each declare their own `Inner` or `Status`; dotted references
   such as `Outer.Inner`, with or without a package prefix, descend the same way.
 - **`jsonToProto`** walks a JSON tree and emits a proto3 schema with inline nested
-  messages and repeated fields.
+  messages and repeated fields. A repeated message is typed from every element of the
+  array. A key the field name cannot spell (`first-name`, `1st`, or two keys that sanitize
+  to the same name) keeps its original key through a `json_name` option, which is how
+  proto3's JSON mapping reads it back.
 
 Malformed Protobuf input fails with targeted validation messages (unbalanced braces,
-malformed field statements, duplicate field numbers) instead of being silently skipped.
+malformed field statements, duplicate field numbers, field numbers outside protoc's rules:
+`0`, `19000`–`19999`, above `536870911`) instead of being silently skipped.
 
 #### Nested message example
 
@@ -428,6 +446,7 @@ Produces:
 | `KotlinDataClassGenerator` | Kotlin data class generation from structured JSON. |
 | `JsonSchemaGenerator` | JSON Schema (draft 2020-12) inference. |
 | `StructureModel` / `SourceConventions` | Type discovery and identifier rules shared by the Java and Kotlin generators. |
+| `ArrayShapes` | The merged shape of an array's elements, for the generators and the Protobuf writer. |
 | `ScalarInference` | Shared string→typed-value inference for CSV and XML input. |
 
 ## Development

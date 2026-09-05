@@ -106,7 +106,7 @@ final class ConverterFileOps {
         // slow network target would otherwise freeze the IDE.
         runOffEdt(() -> {
             try {
-                Files.writeString(file.toPath(), output, StandardCharsets.UTF_8);
+                writeAtomically(file.toPath(), output);
                 return null;
             } catch (IOException ex) {
                 throw new java.util.concurrent.CompletionException(ex);
@@ -122,6 +122,26 @@ final class ConverterFileOps {
             // showing it kept the old text, until something else refreshed.
             refreshInVfs(file);
         });
+    }
+
+    /**
+     * Writes through a sibling temporary file and a rename, so a crash or a
+     * full disk part-way through leaves the previous file intact rather than a
+     * truncated one. Writing straight over the target truncated it first.
+     */
+    private static void writeAtomically(java.nio.file.Path target, String text) throws IOException {
+        java.nio.file.Path temp = target.resolveSibling(target.getFileName() + ".bewater.tmp");
+        try {
+            Files.writeString(temp, text, StandardCharsets.UTF_8);
+            try {
+                Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                      java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException notAtomicHere) {
+                Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temp);
+        }
     }
 
     private static void refreshInVfs(File file) {

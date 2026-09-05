@@ -22,6 +22,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Type names resolve the way protoc resolves them: a message's own nested
@@ -151,5 +153,54 @@ class ProtoScopingTest {
         JsonNode tree = convert("message Node { string v = 1; Node next = 2; }");
         assertThat(tree.at("/Node/next").isObject()).isTrue();
         assertThat(tree.at("/Node/next").isEmpty()).isTrue();
+    }
+
+    @Test @DisplayName("a oneof inside a nested message belongs to that message")
+    void nestedOneofStaysNested() throws Exception {
+        // Searched over the raw body, the inner oneof was added to the OUTER
+        // message — and validated against its numbers, so "int32 x = 1" inside
+        // B was reported as a duplicate of A's own field 1.
+        JsonNode tree = convert("""
+              message A {
+                int32 a = 1;
+                message B {
+                  oneof o { int32 x = 1; string y = 2; }
+                }
+                B b = 2;
+              }
+              """);
+        assertThat(tree.at("/A").has("x")).isFalse();
+        assertThat(tree.at("/A/b").has("x")).isTrue();
+        assertThat(tree.at("/A/b").has("y")).isTrue();
+    }
+
+    @Test @DisplayName("field numbers protoc rejects are rejected here too")
+    void illegalFieldNumbersAreRefused() {
+        for (String schema : new String[]{
+              "message A { int32 a = 0; }",
+              "message A { int32 a = 19500; }",
+              "message A { int32 a = 536870912; }",
+              "message A { int32 a = 99999999999999999999; }"}) {
+            assertThatThrownBy(() -> converter.protoToJson(schema))
+                  .describedAs(schema)
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("is not allowed");
+        }
+        assertThatCode(() -> converter.protoToJson(
+              "message A { int32 a = 1; int32 b = 536870911; int32 c = 18999; int32 d = 20000; }"))
+              .doesNotThrowAnyException();
+    }
+
+    @Test @DisplayName("JSON->Proto keeps a key its field name could not spell, via json_name")
+    void jsonNameCarriesTheOriginalKey() throws Exception {
+        String schema = converter.jsonToProto(
+              "{\"first-name\":\"a\",\"1st\":2,\"plain\":3,\"a b\":1,\"a_b\":2}");
+        assertThat(schema).contains("string first_name = 1 [json_name = \"first-name\"];");
+        assertThat(schema).contains("int32 _1st = 2 [json_name = \"1st\"];");
+        assertThat(schema).contains("int32 plain = 3;");
+        // Two keys that sanitise to the same name each keep their own.
+        assertThat(schema).contains("[json_name = \"a b\"]").contains("[json_name = \"a_b\"]");
+        // The schema still reads back.
+        assertThat(converter.protoToJson(schema)).contains("first_name");
     }
 }

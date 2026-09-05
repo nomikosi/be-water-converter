@@ -68,9 +68,12 @@ public class JsonYamlConverter {
     // subclass below an unqualified INT is the INHERITED one: a first version
     // of this shared the short names and silently registered YAML 1.1's rules.
 
+    // YAML 1.2's booleans only. Under 1.1 yes/no/on/off were booleans as well,
+    // which turned the "on:" key of every GitHub Actions workflow into "true"
+    // and a value of no into false — the Norway problem. Modern parsers read
+    // them as the text they are, and so does this.
     private static final Pattern CORE_BOOL = Pattern.compile(
-          "^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE"
-          + "|on|On|ON|off|Off|OFF)$");
+          "^(?:true|True|TRUE|false|False|FALSE)$");
 
     // Neither the sexagesimal "[-+]?[1-9][0-9_]*(:[0-5]?[0-9])+" nor bare
     // octal "0[0-7_]+", so 12:30:00 and 0777 stay the text they were written
@@ -190,6 +193,7 @@ public class JsonYamlConverter {
 
         List<JsonNode> docs = new ArrayList<>();
         for (Object document : composer().loadAll(ConversionPipeline.stripBom(yaml))) {
+            rejectRunawayAliases(document, yaml.length());
             JsonNode node = document == null ? null : jsonMapper.valueToTree(document);
             if (node == null || node.isMissingNode()) node = jsonMapper.nullNode();
             rejectCollidingKeys(document, node);
@@ -208,6 +212,66 @@ public class JsonYamlConverter {
         if (docs.isEmpty() || docs.stream().allMatch(JsonNode::isNull))
             throw new IllegalArgumentException("Input YAML contains no documents");
         return docs;
+    }
+
+    /**
+     * Values an alias-built document may expand to before it is refused. A
+     * document without aliases cannot get near this without being tens of
+     * megabytes, which the open-file warning already covers.
+     */
+    static final long MAX_EXPANDED_VALUES = 2_000_000;
+
+    /**
+     * Refuses the two things aliases can do that JSON cannot follow.
+     *
+     * <p>SnakeYAML builds the graph with shared references, so it is small in
+     * memory whatever the aliases say; it is {@code valueToTree} that copies
+     * every alias out into a tree. Its alias limit counts aliases, not what
+     * they expand to: ten anchors each referring ten times to the previous one
+     * stay well under it and expand to ten billion values. And an anchor that
+     * contains its own alias is a cycle, which the copy followed until the
+     * stack overflowed.
+     */
+    private static void rejectRunawayAliases(Object document, int sourceLength) {
+        java.util.IdentityHashMap<Object, Long> sizes = new java.util.IdentityHashMap<>();
+        java.util.Set<Object> open = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        long[] distinct = {0};
+        long expanded = expandedSize(document, sizes, open, distinct);
+        // Only alias expansion is refused: a plain document this large is the
+        // user's own data, and the factor-of-two test is what tells them apart.
+        if (expanded > MAX_EXPANDED_VALUES && expanded > 2 * distinct[0])
+            throw new IllegalArgumentException(String.format(
+                  "This YAML expands to over %,d values through its aliases (%,d were written in a "
+                  + "%,d-character document), which is too many to convert. Reduce the aliasing, "
+                  + "or convert the anchored parts separately.",
+                  MAX_EXPANDED_VALUES, distinct[0], sourceLength));
+    }
+
+    /**
+     * Values in the fully expanded tree, memoised per container so a shared
+     * anchor is measured once and charged at every alias. {@code distinct}
+     * accumulates what was actually written, for the ratio above.
+     */
+    private static long expandedSize(Object node, java.util.IdentityHashMap<Object, Long> sizes,
+          java.util.Set<Object> open, long[] distinct) {
+        boolean container = node instanceof java.util.Map<?, ?> || node instanceof List<?>;
+        if (!container) {
+            distinct[0]++;
+            return 1;
+        }
+        Long known = sizes.get(node);
+        if (known != null) return known;
+        if (!open.add(node))
+            throw new IllegalArgumentException(
+                  "This YAML refers to itself: an alias points at an anchor that contains it. "
+                  + "JSON has no way to write a cycle, so the document cannot be converted.");
+        distinct[0]++;
+        long total = 1;
+        Iterable<?> children = node instanceof java.util.Map<?, ?> map ? map.values() : (List<?>) node;
+        for (Object child : children) total += expandedSize(child, sizes, open, distinct);
+        open.remove(node);
+        sizes.put(node, total);
+        return total;
     }
 
     private static Yaml composer() {
@@ -268,12 +332,11 @@ public class JsonYamlConverter {
      * three silently changed values that every modern YAML producer means as
      * text, and JSON has no date type to receive the third.
      *
-     * <p>This drops exactly those: the sexagesimal alternatives, bare octal, and
-     * the timestamp resolver. Booleans, null, plain integers, floats, merge keys
-     * and {@code 0x}/{@code 0b} forms all still resolve, so {@code yes} is still
-     * a boolean and nothing else about reading YAML changes. Tag.TIMESTAMP is
-     * deliberately absent: it produced a java.util.Date that JSON then had to
-     * render as a string anyway, in a format the document never used.
+     * <p>This drops exactly those, plus the yes/no/on/off booleans: null, plain
+     * integers, floats, merge keys and {@code 0x}/{@code 0b} forms all still
+     * resolve, and true/false are still booleans. Tag.TIMESTAMP is deliberately
+     * absent: it produced a java.util.Date that JSON then had to render as a
+     * string anyway, in a format the document never used.
      */
     private static final class CoreScalarResolver extends org.yaml.snakeyaml.resolver.Resolver {
         @Override protected void addImplicitResolvers() {

@@ -302,7 +302,7 @@ public class ConversionPipeline {
      * ever match, so the rest were still retyped.
      */
     private static final Pattern TOML_DATE = Pattern.compile(
-          "(?<=[=\\[,{]|\\A)\\s*(\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}:\\d{2}\\S*)?"
+          "(?<=[=\\[,{]|\\A)\\s*+(\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}:\\d{2}\\S*)?"
           + "|\\d{2}:\\d{2}:\\d{2}\\S*)\\s*(?=$|[,}\\]#\\r\\n])",
           Pattern.MULTILINE);
 
@@ -314,7 +314,7 @@ public class ConversionPipeline {
      * such as {@code my_key} is never mistaken for a value.
      */
     private static final Pattern TOML_NON_DECIMAL = Pattern.compile(
-          "(?<=[=\\[,{])\\s*([+-]?0[xob][0-9A-Fa-f_]+"
+          "(?<=[=\\[,{])\\s*+([+-]?0[xob][0-9A-Fa-f_]+"
           + "|[+-]?(?=[0-9.eE+\\-]*_)[0-9][0-9_.eE+\\-]*"
           + "|[+-]?(?:inf|nan))\\s*(?=$|[,}\\]#\\r\\n])",
           Pattern.MULTILINE);
@@ -392,12 +392,18 @@ public class ConversionPipeline {
      * k8s ConfigMap carrying a source file — as Protobuf. The remaining markers
      * are ones nothing else writes at the start of a line.
      */
-    private static final java.util.regex.Pattern PROTO_MARKER = java.util.regex.Pattern.compile(
-          "(?m)^\\s*(syntax\\s*=\\s*[\"']proto[23][\"']|message\\s+\\w+\\s*\\{|enum\\s+\\w+\\s*\\{)");
-    private static final java.util.regex.Pattern TOML_MARKER = java.util.regex.Pattern.compile(
-          "(?m)^\\s*(\\[[^]]+]\\s*$|[A-Za-z_][\\w.-]*\\s*=)");
-    private static final java.util.regex.Pattern YAML_MARKER = java.util.regex.Pattern.compile(
-          "(?m)^\\s*(-\\s+\\S|[A-Za-z_][\\w.-]*\\s*:(\\s|$))");
+    //
+    // Leading whitespace is horizontal and possessive on purpose. As "^\s*" the
+    // markers ran over every blank line that followed a line start, failed,
+    // and backtracked through the run one character at a time — quadratic in
+    // the number of blank lines, and 16,000 of them took seven seconds on the
+    // EDT. "[ \t]*+" stops at the line's own end and never backtracks.
+    private static final Pattern PROTO_MARKER = Pattern.compile(
+          "(?m)^[ \\t]*+(syntax\\s*+=\\s*+[\"']proto[23][\"']|message\\s++\\w+\\s*+\\{|enum\\s++\\w+\\s*+\\{)");
+    private static final Pattern TOML_MARKER = Pattern.compile(
+          "(?m)^[ \\t]*+(\\[[^]]+][ \\t]*+$|[A-Za-z_][\\w.-]*+[ \\t]*+=)");
+    private static final Pattern YAML_MARKER = Pattern.compile(
+          "(?m)^[ \\t]*+(-\\s++\\S|[A-Za-z_][\\w.-]*+[ \\t]*+:(\\s|$))");
 
     /**
      * First line that is neither blank nor a comment. {@code #} introduces a
@@ -416,8 +422,8 @@ public class ConversionPipeline {
     /** A lone [table] or [[array.of.tables]] header on line 1, plus a later 'key =' line. */
     private static final java.util.regex.Pattern TOML_TABLE_HEADER =
           java.util.regex.Pattern.compile("^\\[\\[?[^\\[\\]]+]]?$");
-    private static final java.util.regex.Pattern TOML_KEY_VALUE =
-          java.util.regex.Pattern.compile("(?m)^\\s*[A-Za-z_\"'][\\w.\\-\"']*\\s*=");
+    private static final Pattern TOML_KEY_VALUE =
+          Pattern.compile("(?m)^[ \\t]*+[A-Za-z_\"'][\\w.\\-\"']*+[ \\t]*+=");
 
     private static boolean looksLikeTomlTable(String s) {
         int newline = s.indexOf('\n');

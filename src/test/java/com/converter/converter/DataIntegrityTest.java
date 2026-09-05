@@ -211,6 +211,54 @@ class DataIntegrityTest {
         assertThat(pipeline.parseJson(out).get("v").decimalValue().signum()).isEqualTo(1);
     }
 
+    @Test @DisplayName("the TOML 19-digit guard is not fooled by a multi-line string ending in quotes")
+    void tomlGuardSurvivesQuotedMultilineStrings() throws Exception {
+        // """they said "hi"""" is legal TOML. Taking the first three quotes as
+        // the delimiter left a stray one that opened a phantom string over the
+        // rest of the document, and the integer behind it came back as 0.
+        for (String doc : new String[]{
+              "s = \"\"\"a \"\"\"\"\nid = 1723600000000000000\n",
+              "s = \"\"\"a \"\"\"\"\"\nid = 1723600000000000000\n",
+              "s = '''a ''''\nid = 1723600000000000000\n",
+              "s = \"\"\"a \\\"\"\"\"\nid = 1723600000000000000\n"}) {
+            assertThatThrownBy(() -> pipeline.normalizeToJson(doc, ConversionPipeline.FMT_TOML,
+                  ConversionOptions.DEFAULTS))
+                  .describedAs(doc)
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("cannot be read correctly");
+        }
+        // The string itself still reads back whole.
+        assertThat(pipeline.normalizeToJson("s = \"\"\"a \"\"\"\"\nn = 1\n",
+              ConversionPipeline.FMT_TOML, ConversionOptions.DEFAULTS))
+              .contains("\"s\":\"a \\\"\"").contains("\"n\":1");
+    }
+
+    // ── XML names ─────────────────────────────────────────────────────────
+
+    @Test @DisplayName("XML prefixes bound to the same namespace are the same name")
+    void xmlNamespaceIdentityIsTheUri() throws Exception {
+        // Two prefixes for one namespace are one repeated element — a list —
+        // and were refused as a collision because only the prefixes were compared.
+        JsonNode tree = pivot("<r xmlns:a=\"urn:x\" xmlns:b=\"urn:x\"><a:v>1</a:v><b:v>2</b:v></r>",
+              ConversionPipeline.FMT_XML);
+        assertThat(tree.get("v").isArray()).isTrue();
+        assertThat(tree.get("v")).hasSize(2);
+        // A default namespace and a prefix for the same URI, likewise.
+        assertThat(pivot("<r xmlns=\"urn:x\" xmlns:b=\"urn:x\"><v>1</v><b:v>2</b:v></r>",
+              ConversionPipeline.FMT_XML).get("v")).hasSize(2);
+        // Different namespaces with the same local name are still refused.
+        assertThatThrownBy(() -> pivot(
+              "<r xmlns:a=\"urn:x\" xmlns:b=\"urn:y\"><a:v>1</a:v><b:v>2</b:v></r>",
+              ConversionPipeline.FMT_XML))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("<a:v>").hasMessageContaining("<b:v>");
+        // The same prefix bound to two namespaces in nested scopes is two names.
+        assertThatThrownBy(() -> pivot(
+              "<r xmlns:p=\"urn:x\"><p:v>1</p:v><p:v xmlns:p=\"urn:y\">2</p:v></r>",
+              ConversionPipeline.FMT_XML))
+              .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test @DisplayName("Compare no longer calls documents equal when they differ past digit 17")
     void comparePrecision() throws Exception {
         assertThat(pipeline.canonicalJson("{\"v\":0.12345678901234567}", ConversionPipeline.FMT_JSON))

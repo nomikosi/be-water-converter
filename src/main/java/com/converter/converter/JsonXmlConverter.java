@@ -131,7 +131,7 @@ public class JsonXmlConverter {
         }
         // One frame per open element: the names its children and attributes have
         // claimed so far, since those all land in the same JSON object.
-        Deque<Map<String, String>> stack = new ArrayDeque<>();
+        Deque<Map<String, Name>> stack = new ArrayDeque<>();
         try {
             while (reader.hasNext()) {
                 if (reader.next() != javax.xml.stream.XMLStreamConstants.START_ELEMENT) {
@@ -139,15 +139,15 @@ public class JsonXmlConverter {
                           && !stack.isEmpty()) stack.pop();
                     continue;
                 }
-                String qName = qualified(reader.getPrefix(), reader.getLocalName());
                 if (!stack.isEmpty())
-                    claim(stack.peek(), reader.getLocalName(), qName, true);
+                    claim(stack.peek(), reader.getLocalName(), new Name(
+                          reader.getNamespaceURI(), reader.getPrefix(), reader.getLocalName(), false));
 
-                Map<String, String> frame = new java.util.HashMap<>();
+                Map<String, Name> frame = new java.util.HashMap<>();
                 for (int i = 0; i < reader.getAttributeCount(); i++)
-                    claim(frame, reader.getAttributeLocalName(i),
-                          qualified(reader.getAttributePrefix(i), reader.getAttributeLocalName(i)),
-                          false);
+                    claim(frame, reader.getAttributeLocalName(i), new Name(
+                          reader.getAttributeNamespace(i), reader.getAttributePrefix(i),
+                          reader.getAttributeLocalName(i), true));
                 stack.push(frame);
             }
         } catch (javax.xml.stream.XMLStreamException notParseableHere) {
@@ -158,35 +158,43 @@ public class JsonXmlConverter {
     }
 
     /**
-     * Records one name in a frame, refusing when a different XML name has
-     * already claimed the same JSON key.
-     *
-     * @param repeatable true for child elements, where the SAME name appearing
-     *                   twice is an ordinary list rather than a collision.
-     *                   Attributes are unique per element, so a repeat there can
-     *                   only be a differing prefix.
+     * An XML name as XML sees it: the namespace URI and local part decide
+     * identity, the prefix is only how the document spelled it. Comparing
+     * prefixes refused {@code <a:v>} beside {@code <b:v>} when both prefixes
+     * were bound to the same namespace — one repeated element, which Jackson
+     * lists correctly — and would have merged the same prefix bound to two
+     * namespaces in different scopes.
      */
-    private static void claim(Map<String, String> frame, String local, String qName,
-          boolean repeatable) {
-        // Attributes are marked, so an attribute "a" and a child <a> — which
-        // spell the same qualified name but are different things, and do collide
-        // — are not mistaken for the same name repeating.
-        String entry = repeatable ? qName : "@" + qName;
-        String previous = frame.put(local, entry);
-        if (previous == null || (repeatable && previous.equals(entry))) return;
+    private record Name(String namespace, String prefix, String local, boolean attribute) {
+        boolean sameAs(Name other) {
+            return attribute == other.attribute && local.equals(other.local)
+                  && java.util.Objects.equals(blankToNull(namespace), blankToNull(other.namespace));
+        }
+
+        private static String blankToNull(String s) {
+            return s == null || s.isEmpty() ? null : s;
+        }
+
+        String describe() {
+            String spelled = prefix == null || prefix.isEmpty() ? local : prefix + ":" + local;
+            return attribute ? "the attribute " + spelled : "the element <" + spelled + ">";
+        }
+    }
+
+    /**
+     * Records one name in a frame, refusing when a different XML name has
+     * already claimed the same JSON key. The SAME child element appearing twice
+     * is an ordinary list rather than a collision; attributes are unique per
+     * element, and an attribute "a" beside a child <a> — the same spelling,
+     * different things — does collide.
+     */
+    private static void claim(Map<String, Name> frame, String local, Name name) {
+        Name previous = frame.put(local, name);
+        if (previous == null || (!name.attribute() && previous.sameAs(name))) return;
         throw new IllegalArgumentException(
-              "This XML holds both " + describe(previous) + " and " + describe(entry)
+              "This XML holds both " + previous.describe() + " and " + name.describe()
               + ", which are different in XML but the same key \"" + local + "\" in JSON, so "
               + "converting would merge them. Rename one, or convert the sections separately.");
-    }
-
-    private static String describe(String entry) {
-        return entry.startsWith("@")
-              ? "the attribute " + entry.substring(1) : "the element <" + entry + ">";
-    }
-
-    private static String qualified(String prefix, String local) {
-        return prefix == null || prefix.isEmpty() ? local : prefix + ":" + local;
     }
 
     private JsonNode sanitizeKeysForXml(JsonNode node) {

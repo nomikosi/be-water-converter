@@ -143,6 +143,15 @@ tasks.withType(PrepareSandboxTask).configureEach {
     disabledPlugins.add("org.jetbrains.plugins.emojipicker")
 }
 
+// ── Serialise the two instrumentation tasks ───────────────────────────────
+// With the configuration cache on, Gradle runs a project's tasks in parallel,
+// and instrumentCode and instrumentTestCode share the platform plugin's
+// instrumenter. Run together they failed intermittently with a
+// ConcurrentModificationException or a bare "1 >= 1" from inside it.
+tasks.named('instrumentTestCode') {
+    mustRunAfter tasks.named('instrumentCode')
+}
+
 
 java {
     toolchain {

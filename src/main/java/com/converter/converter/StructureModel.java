@@ -32,6 +32,11 @@ import java.util.function.UnaryOperator;
  * target language, so every code generator shares this. Keeping it in one place
  * also keeps the collision handling in one place: naming was keyed on the type
  * name once, which silently gave two differently-shaped objects the same class.
+ *
+ * <p>Arrays are typed from the merged shape of every element, see
+ * {@link ArrayShapes}; the generators reach that shape through
+ * {@link #elementOf} so the object they type a field from is the one that was
+ * named here.
  */
 public final class StructureModel {
 
@@ -45,6 +50,8 @@ public final class StructureModel {
      */
     private final Map<JsonNode, String> names = new IdentityHashMap<>();
 
+    private final ArrayShapes shapes = new ArrayShapes();
+
     private final UnaryOperator<String> typeNamer;
 
     /** Names a generated type may not take; see {@link #from}. */
@@ -56,6 +63,9 @@ public final class StructureModel {
     }
 
     /**
+     * @param root          the document. A root array is unwrapped to the merged
+     *                      shape of its elements, all the way down, so an array
+     *                      of arrays of objects still yields a root type.
      * @param typeNamer     maps a JSON key to a type name in the target
      *                      language's conventions; supplied by the generator
      *                      because keyword and identifier rules differ per
@@ -70,13 +80,20 @@ public final class StructureModel {
      */
     public static StructureModel from(JsonNode root, String rootName,
           UnaryOperator<String> typeNamer, Set<String> reservedNames) {
+        StructureModel model = new StructureModel(typeNamer, reservedNames);
+        JsonNode rootObject = root;
+        while (rootObject != null && rootObject.isArray()) {
+            JsonNode element = model.shapes.elementOf(rootObject);
+            if (element == null)
+                throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
+            rootObject = element;
+        }
         // A scalar implies no type at all, so generation would otherwise return
         // an empty string and the panel would report that as a conversion.
-        if (root == null || !root.isObject())
+        if (rootObject == null || !rootObject.isObject())
             throw new IllegalArgumentException(
                   "Nothing to generate: the input must be a JSON object, or an array of objects.");
-        StructureModel model = new StructureModel(typeNamer, reservedNames);
-        model.collect(root, rootName);
+        model.collect(rootObject, rootName);
         return model;
     }
 
@@ -91,20 +108,13 @@ public final class StructureModel {
             if (child.isObject()) {
                 collect(child, childName);
             } else if (child.isArray()) {
-                // Arrays are typed from their first element; see the generators'
-                // tests, which pin that this is deliberate. Nesting has to be
-                // followed all the way down, because the generators type
-                // [[{...}]] as List<List<Row>> and that Row still needs a type.
-                collect(firstElement(child), childName);
+                // Nesting has to be followed all the way down, because the
+                // generators type [[{...}]] as List<List<Row>> and that Row
+                // still needs a type.
+                JsonNode element = shapes.unwrap(child);
+                if (element != null) collect(element, childName);
             }
         }
-    }
-
-    /** The element an array is typed from, unwrapping arrays of arrays. */
-    private static JsonNode firstElement(JsonNode array) {
-        JsonNode node = array;
-        while (node.isArray() && !node.isEmpty()) node = node.get(0);
-        return node;
     }
 
     /** Suffixes a counter when the desired name is already taken. */
@@ -128,5 +138,30 @@ public final class StructureModel {
     /** The name assigned to this exact node, or null if it is not a discovered type. */
     public String nameOf(JsonNode node) {
         return names.get(node);
+    }
+
+    /**
+     * The shape an array's elements are typed from — every element merged — or
+     * null for an array with nothing to type from. A generator must type a
+     * collection through this, not through {@code get(0)}, or the object it
+     * types from will not be the one that was named.
+     */
+    public JsonNode elementOf(JsonNode array) {
+        return shapes.elementOf(array);
+    }
+
+    /** True when the example showed a null among this array's elements. */
+    public boolean hasNullElement(JsonNode array) {
+        return shapes.hasNullElement(array);
+    }
+
+    /**
+     * True when the example positively showed this key to be optional: some
+     * element of the array the object was merged from lacked it, or had it as
+     * null. A key seen in every element is not known to be optional — an
+     * example can only show what was present.
+     */
+    public boolean isOptional(JsonNode object, String key) {
+        return shapes.isOptional(object, key);
     }
 }

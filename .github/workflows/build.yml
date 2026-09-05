@@ -25,6 +25,11 @@ jobs:
       - name: Run tests and build plugin
         run: ./gradlew check buildPlugin --console=plain
 
+      # Cheap descriptor and project-configuration checks that used to run only
+      # on a release tag, where a failure is expensive to discover.
+      - name: Verify plugin structure and configuration
+        run: ./gradlew verifyPluginStructure verifyPluginProjectConfiguration --console=plain
+
       - name: Upload plugin ZIP
         uses: actions/upload-artifact@v4
         with:

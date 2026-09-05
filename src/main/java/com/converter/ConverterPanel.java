@@ -469,8 +469,12 @@ public class ConverterPanel implements Disposable {
         // completion on a pooled thread, and the CSV row-warning path could put
         // up an application-modal dialog owned by the shared frame.
         cancelRequested.set(true);
-        Thread worker = convertWorker;
-        if (worker != null) worker.interrupt();
+        // Under the same lock the worker clears itself under, for the reason
+        // cancelConvert gives: the thread belongs to the shared pool, and an
+        // interrupt landing after the task finished would hit its next job.
+        synchronized (workerLock) {
+            if (convertWorker != null) convertWorker.interrupt();
+        }
         UIManager.removePropertyChangeListener(lafListener);
     }
 
@@ -600,6 +604,18 @@ public class ConverterPanel implements Disposable {
         return new ConversionOptions(mode, delimiter,
               "true".equals(loadProp(PROP_LOMBOK)), detectDates, inferTypes,
               "true".equals(loadProp(PROP_SORT_KEYS)), "");
+    }
+
+    /** The row count above which a CSV conversion asks first, as last set in the tool window. */
+    static long persistedRowWarningThreshold() {
+        String saved = loadProp(PROP_ROW_THRESHOLD);
+        if (saved != null) {
+            try {
+                long value = Long.parseLong(saved);
+                if (value >= 10L && value <= 10_000_000L) return value;
+            } catch (NumberFormatException ignored) { /* keep the default */ }
+        }
+        return DEFAULT_ROW_WARNING_THRESHOLD;
     }
 
     private static String loadProp(String key) {

@@ -17,6 +17,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The tag names the release; build.gradle names the plugin version that
+      # gets published. Publishing one under the other is not recoverable on
+      # the Marketplace, so they have to agree before anything runs.
+      - name: Check that the tag matches the plugin version
+        run: |
+          version=$(sed -n "s/^version = '\(.*\)'$/\1/p" build.gradle)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version $version in build.gradle" >&2
+            exit 1
+          fi
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:

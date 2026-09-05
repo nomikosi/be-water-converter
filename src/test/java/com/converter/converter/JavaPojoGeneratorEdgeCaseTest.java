@@ -168,14 +168,16 @@ class JavaPojoGeneratorEdgeCaseTest {
         assertThat(generator.fromJson("{\"meta\":{}}")).contains("meta");
     }
 
-    @Test @DisplayName("JSON->POJO: a mixed array is typed from its first element")
+    @Test @DisplayName("JSON->POJO: a mixed array widens to List<Object>")
     void mixedTypeArray() throws Exception {
-        // Pinning deliberate behaviour, not endorsing it: the POJO generator
-        // samples element 0 while JsonSchemaGenerator emits anyOf for the same
-        // input. Only one of those positions was recorded by a test before.
-        // The generated List<Integer> cannot deserialize the document it came
-        // from; widening it is a behaviour decision, not a bug fix.
+        // Typed from element 0 this was List<Integer>, which could not
+        // deserialize the document it came from. Every element counts now, and
+        // kinds that share no type fall back to Object — the same position
+        // JsonSchemaGenerator takes with anyOf for this input.
         assertThat(generator.fromJson("{\"data\":[1,\"two\",true]}"))
+              .contains("private List<Object> data;");
+        // A uniform array is still typed precisely.
+        assertThat(generator.fromJson("{\"data\":[1,2,3]}"))
               .contains("private List<Integer> data;");
     }
 

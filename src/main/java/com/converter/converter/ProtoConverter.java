@@ -251,7 +251,8 @@ public class ProtoConverter {
             // left two paths that could disagree about which error a user sees.
             addFields(flatBody, node, msg.inner, resolving);
 
-            for (Block oneof : findNamedBlocks(msg.body, "oneof"))
+            // This message's own oneofs, not those of the messages nested in it.
+            for (Block oneof : findNamedBlocks(stripBlocks(msg.body, "message"), "oneof"))
                 addFields(oneof.body, node, msg.inner, resolving);
         } finally {
             resolving.remove(msg);
@@ -452,7 +453,10 @@ public class ProtoConverter {
      */
     /** Validates a message and every message nested inside it, referenced or not. */
     private void validateTree(Block msg) {
-        List<Block> oneofs = findNamedBlocks(msg.body, "oneof");
+        // Only this message's own oneofs: searched over the raw body, a oneof
+        // inside a nested message was validated against THIS message's numbers,
+        // so an inner "int32 x = 1" was reported as a duplicate of the outer one.
+        List<Block> oneofs = findNamedBlocks(stripBlocks(msg.body, "message"), "oneof");
         Set<String> seenNumbers = new HashSet<>();
         validateMessageBody(msg.name, stripBlocks(msg.body, "message", "oneof", "enum"), seenNumbers);
         for (Block oneof : oneofs) validateMessageBody(msg.name, oneof.body, seenNumbers);
@@ -489,11 +493,35 @@ public class ProtoConverter {
                     "Expected the form: [repeated] <type> <name> = <number>;");
 
             String number = m.group(2);
+            rejectIllegalNumber(messageName, stmt, number);
             if (!seenNumbers.add(number))
                 throw new IllegalArgumentException(
                     "Duplicate field number " + number + " in message '" + messageName +
                     "'. Each field must have a unique number.");
         }
+    }
+
+    /**
+     * protoc's rules for a field number: 1 to 2^29 - 1, with 19000 to 19999
+     * reserved for the implementation. A schema breaking them is not a schema
+     * protoc will compile, and reading it as one hid that.
+     */
+    private static void rejectIllegalNumber(String messageName, String stmt, String number) {
+        long value;
+        try {
+            value = Long.parseLong(number);
+        } catch (NumberFormatException tooLong) {
+            value = Long.MAX_VALUE;
+        }
+        String problem = value == 0 ? "field numbers start at 1"
+              : value > 536_870_911L ? "field numbers cannot exceed 536,870,911"
+              : value >= 19_000 && value <= 19_999
+                    ? "19000 to 19999 are reserved for the protobuf implementation"
+              : null;
+        if (problem != null)
+            throw new IllegalArgumentException(
+                  "Field number " + number + " in message '" + messageName + "' (\"" + stmt
+                  + "\") is not allowed: " + problem + ".");
     }
 
     // ── JSON -> proto ─────────────────────────────────────────────────────
@@ -503,12 +531,15 @@ public class ProtoConverter {
 
         // Peels every level, not just one: the POJO and data class generators
         // unwrap a root array of arrays all the way down, and the root must not
-        // disagree with the same shape one level in.
+        // disagree with the same shape one level in. Each level is the merged
+        // shape of every element, as in those generators.
+        ArrayShapes shapes = new ArrayShapes();
         int unwrapped = 0;
         while (root.isArray()) {
-            if (root.isEmpty())
+            JsonNode element = shapes.elementOf(root);
+            if (element == null)
                 throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
-            root = root.get(0);
+            root = element;
             unwrapped++;
         }
 
@@ -524,12 +555,12 @@ public class ProtoConverter {
 
         StringBuilder sb = new StringBuilder();
         sb.append("syntax = \"proto3\";\n\n");
-        generateMessage("Root", root, sb, 0);
+        generateMessage("Root", root, sb, 0, shapes);
         return sb.toString();
     }
 
     private void generateMessage(String msgName, JsonNode node,
-                                  StringBuilder sb, int indent) {
+                                  StringBuilder sb, int indent, ArrayShapes shapes) {
         String pad = "  ".repeat(indent);
         sb.append(pad).append("message ").append(msgName).append(" {\n");
 
@@ -552,7 +583,7 @@ public class ProtoConverter {
         Set<String> usedMessageNames       = new HashSet<>(usedFieldNames);
         for (Map.Entry<String, JsonNode> e : node.properties()) {
             JsonNode val  = e.getValue();
-            JsonNode leaf = arrayLeaf(val);
+            JsonNode leaf = shapes.unwrap(val);
             if (leaf != null && leaf.isObject()) {
                 childNames.put(e.getKey(),
                       uniqueName(protoMessageName(e.getKey()), "", usedMessageNames));
@@ -561,7 +592,7 @@ public class ProtoConverter {
             // first needs a message of its own to be repeated inside. Without
             // them the extra levels — and every field of the object at the
             // bottom — were silently replaced by "repeated string".
-            int depth = arrayDepth(val);
+            int depth = shapes.depth(val);
             if (depth > MAX_ARRAY_DEPTH)
                 throw new IllegalArgumentException(String.format(
                       "Field \"%s\" nests arrays %d deep. proto3 has no repeated-of-repeated, so "
@@ -580,11 +611,11 @@ public class ProtoConverter {
             JsonNode val       = e.getValue();
             String   childName = childNames.get(e.getKey());
             if (childName != null)
-                generateMessage(childName, arrayLeaf(val), sb, indent + 1);
+                generateMessage(childName, shapes.unwrap(val), sb, indent + 1, shapes);
 
             List<String> rows = rowNames.get(e.getKey());
             if (rows == null) continue;
-            String elemType = (childName != null) ? childName : jsonTypeToProto(arrayLeaf(val));
+            String elemType = (childName != null) ? childName : jsonTypeToProto(shapes.unwrap(val));
             for (String row : rows) {            // innermost level first
                 generateArrayWrapper(row, elemType, sb, indent + 1);
                 elemType = row;                  // the level above repeats this one
@@ -597,24 +628,36 @@ public class ProtoConverter {
             JsonNode val       = e.getValue();
             String   childName = childNames.get(e.getKey());
             String   fieldPad  = pad + "  ";
+            String   tail      = " = " + counter[0]++ + jsonName(e.getKey(), fieldName) + ";\n";
 
             if (val.isArray()) {
                 List<String> rows = rowNames.get(e.getKey());
                 // The outermost wrapper is what this field repeats; the inner
                 // ones are already chained to each other above.
                 String elemType = rows != null ? rows.get(rows.size() - 1)
-                      : (childName != null ? childName : jsonTypeToProto(arrayLeaf(val)));
+                      : (childName != null ? childName : jsonTypeToProto(shapes.unwrap(val)));
                 sb.append(fieldPad).append("repeated ").append(elemType).append(" ")
-                  .append(fieldName).append(" = ").append(counter[0]++).append(";\n");
+                  .append(fieldName).append(tail);
             } else if (val.isObject()) {
-                sb.append(fieldPad).append(childName).append(" ")
-                  .append(fieldName).append(" = ").append(counter[0]++).append(";\n");
+                sb.append(fieldPad).append(childName).append(" ").append(fieldName).append(tail);
             } else {
                 sb.append(fieldPad).append(jsonTypeToProto(val)).append(" ")
-                  .append(fieldName).append(" = ").append(counter[0]++).append(";\n");
+                  .append(fieldName).append(tail);
             }
         }
         sb.append(pad).append("}\n");
+    }
+
+    /**
+     * Carries a key the field name could not keep. protoc maps a field to JSON
+     * by its name (or its lowerCamelCase form), so {@code first-name} written
+     * as {@code first_name} would read a different key back, and two keys that
+     * sanitise to the same name lost one of them for good. {@code json_name}
+     * is the proto3 way to say which key a field is.
+     */
+    private static String jsonName(String key, String fieldName) {
+        if (key.equals(fieldName)) return "";
+        return " [json_name = \"" + SourceConventions.javaStringLiteral(key) + "\"]";
     }
 
     /**
@@ -636,27 +679,6 @@ public class ProtoConverter {
      * into a 50 MB schema of nothing but wrappers.
      */
     private static final int MAX_ARRAY_DEPTH = 8;
-
-    /** Nested array levels: 0 for a non-array, 1 for {@code [1]}, 2 for {@code [[1]]}. */
-    private static int arrayDepth(JsonNode node) {
-        int depth = 0;
-        while (node != null && node.isArray()) {
-            depth++;
-            node = node.isEmpty() ? null : node.get(0);
-        }
-        return depth;
-    }
-
-    /**
-     * The element an array bottoms out at — the node itself when it is not an
-     * array, and null when some level is empty and there is nothing to type
-     * from. Arrays are typed from their first element at every level, matching
-     * {@link StructureModel}.
-     */
-    private static JsonNode arrayLeaf(JsonNode node) {
-        while (node != null && node.isArray()) node = node.isEmpty() ? null : node.get(0);
-        return node;
-    }
 
     /** Suffixes a counter until {@code base} is unused, recording the result in {@code used}. */
     private String uniqueName(String base, String separator, Set<String> used) {

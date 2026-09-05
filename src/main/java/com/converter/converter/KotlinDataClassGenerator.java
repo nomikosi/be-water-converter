@@ -92,17 +92,18 @@ public class KotlinDataClassGenerator {
     public String fromJson(String json, boolean detectDates) throws Exception {
         if (json == null || json.isBlank())
             throw new IllegalArgumentException("Input must not be null or blank");
-        JsonNode root = jsonMapper.readTree(json);
-        // Peels every level, not just one: an array of arrays is typed from the
-        // first element of the innermost, the same rule StructureModel applies
-        // to a nested array under a key.
-        while (root.isArray()) {
-            if (root.isEmpty())
-                throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
-            root = root.get(0);
-        }
-        return generate(root, detectDates);
+        // A root array is unwrapped by StructureModel to the merged shape of
+        // its elements, the same rule it applies to a nested array under a key.
+        return generate(jsonMapper.readTree(json), detectDates);
     }
+
+    /**
+     * The JVM allows 255 parameter slots per method and the primary constructor
+     * of a data class takes one per property, so an object with more keys than
+     * this cannot be a data class at all. Emitted anyway, with a note, rather
+     * than silently switching to another shape.
+     */
+    static final int MAX_CONSTRUCTOR_PARAMETERS = 254;
 
     // ── Generation ────────────────────────────────────────────────────────
 
@@ -138,6 +139,10 @@ public class KotlinDataClassGenerator {
             return;
         }
 
+        if (node.size() > MAX_CONSTRUCTOR_PARAMETERS)
+            sb.append("// NOTE: ").append(node.size()).append(" properties exceed the JVM limit of ")
+              .append(MAX_CONSTRUCTOR_PARAMETERS)
+              .append(" constructor parameters; split this class before compiling.\n");
         sb.append("data class ").append(className).append("(\n");
         Set<String> usedNames = new LinkedHashSet<>();
         int remaining = node.size();
@@ -145,6 +150,9 @@ public class KotlinDataClassGenerator {
             String originalKey = e.getKey();
             String propertyName = uniqueName(toCamelCase(originalKey), usedNames);
             String type = resolveType(e.getValue(), originalKey, detectDates, usedTypes, model);
+            // Optional only when the example showed it: a key some sibling
+            // element lacked, or held as null. Present everywhere stays non-null.
+            if (model.isOptional(node, originalKey) && !type.endsWith("?")) type += "?";
 
             if (!propertyName.equals(originalKey)) {
                 if (SourceConventions.isMappableKey(originalKey)) {
@@ -196,10 +204,14 @@ public class KotlinDataClassGenerator {
             return assigned != null ? assigned : capitalize(toCamelCase(fieldName));
         }
         if (node.isArray()) {
-            if (node.isEmpty()) return "List<Any>";
-            // Typed from element 0, matching JavaPojoGenerator. JsonSchemaGenerator
-            // deliberately takes the other position (anyOf) for the same input.
-            return "List<" + resolveType(node.get(0), fieldName, detectDates, usedTypes, model) + ">";
+            // The merged shape of every element, matching JavaPojoGenerator; a
+            // null among them makes the element type nullable.
+            JsonNode element = model.elementOf(node);
+            boolean nullable = model.hasNullElement(node);
+            if (element == null) return nullable ? "List<Any?>" : "List<Any>";
+            String elementType = resolveType(element, fieldName, detectDates, usedTypes, model);
+            if (nullable && !elementType.endsWith("?")) elementType += "?";
+            return "List<" + elementType + ">";
         }
         return "Any";
     }

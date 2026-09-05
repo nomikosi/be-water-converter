@@ -162,6 +162,23 @@ class FormatAndDetectionTest {
         assertThat(pipeline.formatLosses("<r><!-- kept --></r>", ConversionPipeline.FMT_XML)).isNull();
     }
 
+    @Test @DisplayName("detection stays linear over long runs of blank lines")
+    void detectionIsNotQuadraticOverBlankLines() {
+        // "^\s*" in the markers ran over every blank line after each line start
+        // and backtracked through the run one character at a time: 16,000 blank
+        // lines took seven seconds, on the EDT, for a paste.
+        String text = "x\n" + "\n".repeat(16_000) + "a: 1\n";
+        long started = System.nanoTime();
+        assertThat(ConversionPipeline.detectFormat(text)).isEqualTo(ConversionPipeline.FMT_YAML);
+        long millis = (System.nanoTime() - started) / 1_000_000;
+        assertThat(millis).describedAs("detection took %d ms", millis).isLessThan(2_000);
+        // The markers still see an indented or a bare line for what it is.
+        assertThat(ConversionPipeline.detectFormat("x\n\n\n  key = 1\n"))
+              .isEqualTo(ConversionPipeline.FMT_TOML);
+        assertThat(ConversionPipeline.detectFormat("x\n-\n  a: 1\n"))
+              .isEqualTo(ConversionPipeline.FMT_YAML);
+    }
+
     @Test @DisplayName("semicolon- and tab-separated CSV are detected, with their delimiter")
     void csvDelimiterDetection() {
         // Only the comma was tried, so a semicolon file was not CSV at all.

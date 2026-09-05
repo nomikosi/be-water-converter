@@ -112,16 +112,9 @@ public class JavaPojoGenerator {
     public String fromJson(String json, boolean useLombok, boolean detectDates) throws Exception {
         if (json == null || json.isBlank())
             throw new IllegalArgumentException("Input must not be null or blank");
-        JsonNode root = jsonMapper.readTree(json);
-        // Peels every level, not just one: an array of arrays is typed from the
-        // first element of the innermost, the same rule StructureModel applies
-        // to a nested array under a key.
-        while (root.isArray()) {
-            if (root.isEmpty())
-                throw new IllegalArgumentException("JSON array is empty — nothing to generate.");
-            root = root.get(0);
-        }
-        return generate(root, "Root", useLombok, detectDates);
+        // A root array is unwrapped by StructureModel to the merged shape of
+        // its elements, the same rule it applies to a nested array under a key.
+        return generate(jsonMapper.readTree(json), "Root", useLombok, detectDates);
     }
 
     public String fromXml(String xml) throws Exception {
@@ -135,13 +128,8 @@ public class JavaPojoGenerator {
     public String fromXml(String xml, boolean useLombok, boolean detectDates) throws Exception {
         if (xml == null || xml.isBlank())
             throw new IllegalArgumentException("Input XML must not be null or blank");
-        JsonNode root = xmlMapper.readTree(xml.getBytes(StandardCharsets.UTF_8));
-        while (root.isArray()) {
-            if (root.isEmpty())
-                throw new IllegalArgumentException("XML array is empty — nothing to generate.");
-            root = root.get(0);
-        }
-        return generate(root, "Root", useLombok, detectDates);
+        return generate(xmlMapper.readTree(xml.getBytes(StandardCharsets.UTF_8)), "Root",
+              useLombok, detectDates);
     }
 
     // ── Internal generation ───────────────────────────────────────────────
@@ -195,7 +183,9 @@ public class JavaPojoGenerator {
         if (useLombok) {
             sb.append("@Data\n");
             sb.append("@NoArgsConstructor\n");
-            sb.append("@AllArgsConstructor\n");
+            // On a class with no fields the all-args constructor IS the no-args
+            // one, and Lombok then declares the same constructor twice.
+            if (!node.isEmpty()) sb.append("@AllArgsConstructor\n");
         }
         sb.append(isPublic ? "public class " : "class ").append(className).append(" {\n\n");
 
@@ -258,9 +248,11 @@ public class JavaPojoGenerator {
         }
         if (node.isArray()) {
             usedTypes.add("List");
-            if (node.isEmpty()) return "List<Object>";
-            return "List<" + resolveJavaType(node.get(0), fieldName, detectDates,
-                  usedTypes, model) + ">";
+            // The merged shape of every element, not element 0: [1,"two"] was
+            // List<Integer>, and an object appearing later with extra keys lost them.
+            JsonNode element = model.elementOf(node);
+            if (element == null) return "List<Object>";
+            return "List<" + resolveJavaType(element, fieldName, detectDates, usedTypes, model) + ">";
         }
         return "Object";
     }

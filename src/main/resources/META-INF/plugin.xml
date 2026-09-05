@@ -144,7 +144,30 @@
                 Project view.</li>
             <li><b>Open and Save talk to the IDE's file system</b> — opening a file with unsaved editor
                 changes loads the editor's text, and a saved file shows up in the project without a
-                manual sync. Format discards its result if the input was edited while it ran.</li>
+                manual sync. Saves go through a temporary file and a rename, so a failure part-way
+                leaves the previous file intact. Format discards its result if the input was edited
+                while it ran.</li>
+            <li><b>YAML booleans follow YAML 1.2</b> — <code>yes</code>, <code>no</code>,
+                <code>on</code> and <code>off</code> are text, so the <code>on:</code> key of a GitHub
+                Actions workflow no longer converts to <code>"true"</code>. Anchors that form a cycle,
+                or whose aliases would expand to millions of values, are refused instead of crashing
+                or exhausting memory.</li>
+            <li><b>Generated Java, Kotlin and Protobuf type arrays from every element</b> — objects
+                contribute the union of their keys, numbers widen, and mixed kinds fall back to
+                <code>Object</code>/<code>Any</code>. Kotlin marks a key that some element lacked as
+                nullable. Generated Java is compiled by javac in the test suite.</li>
+            <li><b>Protobuf</b> — a <code>oneof</code> inside a nested message no longer leaks into the
+                outer message (which reported a false duplicate field number); field numbers protoc
+                rejects (0, 19000–19999, above 536870911) are rejected; and JSON→Proto keeps a key its
+                field name cannot spell through <code>json_name</code>.</li>
+            <li><b>Fixed: a TOML multi-line string ending in a quote hid the rest of the document</b>
+                from the 19-digit integer guard, so such an integer came back as 0.</li>
+            <li><b>XML names are compared by namespace, not prefix</b> — two prefixes bound to the same
+                namespace are one repeated element, and are no longer refused as a collision.</li>
+            <li><b>Fixed: format detection froze the editor on a paste with thousands of blank
+                lines</b>; it is linear now.</li>
+            <li><b>Convert with Be Water asks before a large CSV</b> — the row-count confirmation the
+                tool window gives applies to context-menu conversions too.</li>
         </ul>
         <h3>1.4.1</h3>
         <ul>
