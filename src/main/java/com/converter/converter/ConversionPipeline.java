@@ -16,6 +16,7 @@
 
 package com.converter.converter;
 
+import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -28,6 +29,8 @@ import java.io.StringReader;
 import java.io.StringWriter;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * UI-independent conversion pipeline: normalises any supported input format
@@ -72,7 +75,11 @@ public class ConversionPipeline {
               // Keeping BigDecimal is not enough on its own: the default node
               // factory calls stripTrailingZeros, which rewrote 1.0 as 1 and
               // 100.00 as 1E+2 — and Format wrote that back over the document.
-              .nodeFactory(JsonNodeFactory.withExactBigDecimals(true));
+              .nodeFactory(new JsonNodeFactory(true))
+              // A repeated key kept only its last value, silently: {"a":1,"a":2}
+              // read as {"a":2}, and Format wrote the half-document back. The
+              // YAML reader already refuses duplicates; JSON now does the same.
+              .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION);
     }
 
     /**
@@ -237,12 +244,11 @@ public class ConversionPipeline {
             // with a single list and wrote it over the editor.
             case FMT_YAML  -> jsonYaml.formatPreservingDocuments(input, opts.sortKeys());
             case FMT_TOML  -> formatToml(input, opts.sortKeys());
-            // inferTypes is deliberately false: Format only re-lays-out the
-            // document. Inferring here rewrote the user's data in place —
-            // 1.50 became 1.5 and a literal "null" cell was erased.
-            case FMT_CSV   -> csv.jsonToCsv(
-                                    parseJson(csv.csvToJson(input, false, opts.csvFormat())),
-                                    CsvConverter.CsvMode.FLAT_FIRST, opts.csvFormat());
+            // Positional, never through the pivot: Format only re-lays-out the
+            // document. Going through objects keyed by header renamed headers,
+            // dropped the ones a ragged row lacked, and inferring types rewrote
+            // 1.50 as 1.5 and erased a literal "null" cell.
+            case FMT_CSV   -> csv.reformat(input, opts.csvFormat());
             case FMT_PROTO -> input.replaceAll("[ \t]+\n", "\n")
                                    .replaceAll("\n{3,}", "\n\n").trim();
             default        -> input;
@@ -263,11 +269,21 @@ public class ConversionPipeline {
      * a date into text, in the user's own file.
      */
     private String formatToml(String input, boolean sortKeys) throws Exception {
-        java.util.regex.Matcher dated = TOML_DATE.matcher(TomlConverter.maskStringsAndComments(input));
+        String scannable = TomlConverter.maskStringsAndComments(input);
+        Matcher dated = TOML_DATE.matcher(scannable);
         if (dated.find())
             throw new IllegalArgumentException(
                   "Format would rewrite the date " + dated.group().trim() + " as a quoted string: "
                   + "TOML has date and time types and the JSON step this uses does not. "
+                  + "The document is left as it is.");
+        // The same refusal for the number forms JSON cannot spell: 0xFF came
+        // back as 255, 1_000 as 1000, and inf as the STRING 'Infinity'.
+        Matcher literal = TOML_NON_DECIMAL.matcher(scannable);
+        if (literal.find())
+            throw new IllegalArgumentException(
+                  "Format would rewrite " + literal.group(1) + ": hexadecimal, octal, binary and "
+                  + "underscore-separated numbers come back as plain decimals, and inf and nan "
+                  + "as text, because the JSON step this uses has no other way to write them. "
                   + "The document is left as it is.");
         String pivot = toml.tomlToJson(input);
         // jsonToToml renders an empty table as the literal "# empty document",
@@ -285,10 +301,23 @@ public class ConversionPipeline {
      * {@code =} meant only the first element of {@code d = [1979-05-27, …]} could
      * ever match, so the rest were still retyped.
      */
-    private static final java.util.regex.Pattern TOML_DATE = java.util.regex.Pattern.compile(
+    private static final Pattern TOML_DATE = Pattern.compile(
           "(?<=[=\\[,{]|\\A)\\s*(\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}:\\d{2}\\S*)?"
           + "|\\d{2}:\\d{2}:\\d{2}\\S*)\\s*(?=$|[,}\\]#\\r\\n])",
-          java.util.regex.Pattern.MULTILINE);
+          Pattern.MULTILINE);
+
+    /**
+     * A TOML number in value position that JSON cannot carry as written: a
+     * hex, octal or binary literal, one with underscore separators (the
+     * lookahead requires an underscore somewhere in the run), or inf/nan.
+     * Anchored on what comes before, like {@link #TOML_DATE}, so a bare key
+     * such as {@code my_key} is never mistaken for a value.
+     */
+    private static final Pattern TOML_NON_DECIMAL = Pattern.compile(
+          "(?<=[=\\[,{])\\s*([+-]?0[xob][0-9A-Fa-f_]+"
+          + "|[+-]?(?=[0-9.eE+\\-]*_)[0-9][0-9_.eE+\\-]*"
+          + "|[+-]?(?:inf|nan))\\s*(?=$|[,}\\]#\\r\\n])",
+          Pattern.MULTILINE);
 
     /** Parses the JSON pivot once for callers that need the tree (row estimates). */
     public JsonNode parseJson(String json) throws Exception {
@@ -334,8 +363,25 @@ public class ConversionPipeline {
 
         // CSV last: it is the weakest signal, so require a delimiter in the
         // header line and a consistent column count on the following line.
-        if (looksLikeCsv(s)) return FMT_CSV;
+        if (detectCsvDelimiter(s) != null) return FMT_CSV;
 
+        return null;
+    }
+
+    /** Delimiters tried in order; comma first, since it is also the default option. */
+    private static final char[] CSV_DELIMITERS = {',', ';', '\t'};
+
+    /**
+     * The delimiter a CSV-looking text uses, or null when it does not look like
+     * CSV at all. Only the comma was tried before, so a semicolon-separated
+     * file — the norm across much of Europe — was not recognised as CSV, and a
+     * paste of one left whatever format was selected in place.
+     */
+    public static Character detectCsvDelimiter(String text) {
+        if (text == null) return null;
+        String s = stripBom(text).strip();
+        for (char delimiter : CSV_DELIMITERS)
+            if (looksLikeCsv(s, delimiter)) return delimiter;
         return null;
     }
 
@@ -387,7 +433,7 @@ public class ConversionPipeline {
      * and sentence-like first lines are rejected — two lines of prose that
      * happen to contain one comma each were otherwise detected as CSV.
      */
-    private static boolean looksLikeCsv(String s) {
+    private static boolean looksLikeCsv(String s, char delimiter) {
         String[] lines = s.split("\r?\n", 4);
         if (lines.length < 2 || lines[1].isBlank()) return false;
 
@@ -395,21 +441,21 @@ public class ConversionPipeline {
         // ". " or a trailing period is prose punctuation, not a column name.
         if (header.contains(". ") || header.stripTrailing().endsWith(".")) return false;
 
-        int expected = countDelimitersOutsideQuotes(header);
+        int expected = countDelimitersOutsideQuotes(header, delimiter);
         if (expected == 0) return false;
-        if (countDelimitersOutsideQuotes(lines[1]) != expected) return false;
+        if (countDelimitersOutsideQuotes(lines[1], delimiter) != expected) return false;
         if (lines.length > 2 && !lines[2].isBlank()
-              && countDelimitersOutsideQuotes(lines[2]) != expected) return false;
+              && countDelimitersOutsideQuotes(lines[2], delimiter) != expected) return false;
         return true;
     }
 
-    private static int countDelimitersOutsideQuotes(String line) {
+    private static int countDelimitersOutsideQuotes(String line, char delimiter) {
         int count = 0;
         boolean inQuotes = false;
         for (int i = 0; i < line.length(); i++) {
             char c = line.charAt(i);
             if (c == '"') inQuotes = !inQuotes;
-            else if (c == ',' && !inQuotes) count++;
+            else if (c == delimiter && !inQuotes) count++;
         }
         return count;
     }
@@ -433,6 +479,17 @@ public class ConversionPipeline {
      * Only applied when the input format is JSON.
      */
     public String autoClose(String json) {
+        Scan scan = scan(json);
+        // An unterminated comment needs no closer, and appending one inside it
+        // would be appending to a comment.
+        if (scan.unterminatedBlockComment()) return json;
+        return json + scan.closers();
+    }
+
+    /** What one pass over JSON text finds: the closers it lacks, and the comments it carries. */
+    private record Scan(String closers, boolean unterminatedBlockComment, int comments) {}
+
+    private static Scan scan(String json) {
         Deque<Character> stack = new ArrayDeque<>();
         char quote       = 0;          // 0 = not in a string, else the opening quote
         boolean escape   = false;
@@ -440,6 +497,7 @@ public class ConversionPipeline {
         // about them too: a brace inside // a note, or inside 'it {', was counted
         // as real and this appended a closer that made valid input fail to parse.
         boolean lineComment = false, blockComment = false;
+        int comments = 0;
         for (int i = 0; i < json.length(); i++) {
             char c = json.charAt(i);
             char next = i + 1 < json.length() ? json.charAt(i + 1) : 0;
@@ -452,21 +510,50 @@ public class ConversionPipeline {
                 continue;
             }
             if (c == '"' || c == '\'')            { quote = c; continue; }
-            if (c == '/' && next == '/')          { lineComment = true; i++; continue; }
-            if (c == '#')                         { lineComment = true; continue; }
-            if (c == '/' && next == '*')          { blockComment = true; i++; continue; }
+            if (c == '/' && next == '/')          { lineComment = true; comments++; i++; continue; }
+            if (c == '#')                         { lineComment = true; comments++; continue; }
+            if (c == '/' && next == '*')          { blockComment = true; comments++; i++; continue; }
             if (c == '{')                          stack.push('}');
             else if (c == '[')                     stack.push(']');
             else if (c == '}' || c == ']')       { if (!stack.isEmpty()) stack.pop(); }
         }
-        StringBuilder sb = new StringBuilder(json);
-        // An unterminated comment needs no closer, and appending one inside it
-        // would be appending to a comment.
-        if (blockComment) return sb.toString();
-        if (escape)    sb.append('\\');
-        if (quote != 0) sb.append(quote);
-        while (!stack.isEmpty()) sb.append(stack.pop());
-        return sb.toString();
+        StringBuilder closers = new StringBuilder();
+        if (escape)     closers.append('\\');
+        if (quote != 0) closers.append(quote);
+        while (!stack.isEmpty()) closers.append(stack.pop());
+        return new Scan(closers.toString(), blockComment, comments);
+    }
+
+    /**
+     * What Format would silently discard from a document, as a phrase ("2
+     * comments and 1 anchor"), or null when nothing would be lost.
+     *
+     * <p>Comments survive XML (the DOM keeps them) and Protobuf (whitespace-only
+     * tidying). The formats that pass through the JSON tree keep only the data,
+     * and the UI asks before it overwrites the editor with less than it held.
+     */
+    public String formatLosses(String input, String fmt) {
+        input = stripBom(input);
+        return switch (fmt) {
+            case FMT_YAML -> jsonYaml.countFormatLosses(input).describe();
+            // A comment-only TOML file is returned untouched by formatToml, so
+            // its comments are not at risk.
+            case FMT_TOML -> TomlConverter.maskStringsAndComments(input).isBlank() ? null
+                  : new FormatLosses(TomlConverter.countComments(input), 0).describe();
+            case FMT_JSON -> new FormatLosses(scan(input).comments(), 0).describe();
+            default -> null;
+        };
+    }
+
+    /** Counts of what a Format would drop. */
+    public record FormatLosses(int comments, int anchors) {
+        /** "2 comments and 1 anchor", or null when there is nothing to report. */
+        public String describe() {
+            String c = comments == 0 ? null : comments + (comments == 1 ? " comment" : " comments");
+            String a = anchors == 0 ? null : anchors + (anchors == 1 ? " anchor" : " anchors");
+            if (c == null) return a;
+            return a == null ? c : c + " and " + a;
+        }
     }
 
     public String prettyJson(String json) throws Exception {
@@ -485,7 +572,11 @@ public class ConversionPipeline {
         dbf.setExpandEntityReferences(false);
         org.w3c.dom.Document doc = dbf.newDocumentBuilder()
               .parse(new org.xml.sax.InputSource(new StringReader(xml)));
+        // Without this the serializer appends standalone="no" to a declaration
+        // the document wrote without it.
+        doc.setXmlStandalone(true);
         doc.getDocumentElement().normalize();
+        rejectMixedContent(doc.getDocumentElement());
         stripWhitespaceNodes(doc.getDocumentElement());
 
         javax.xml.transform.TransformerFactory tf =
@@ -502,6 +593,38 @@ public class ConversionPipeline {
         t.transform(new javax.xml.transform.dom.DOMSource(doc),
               new javax.xml.transform.stream.StreamResult(out));
         return out.toString();
+    }
+
+    /**
+     * Refuses an element that holds text alongside child elements.
+     *
+     * <p>The JDK serializer indents every child, text included, so
+     * {@code <p>Hello <b>big</b> world</p>} came back with line breaks and
+     * indentation inside its own text — a change to the content, not the
+     * layout — and it cannot be told to indent element-only content alone.
+     * Comments and processing instructions count as children here because
+     * they are indented the same way.
+     */
+    private static void rejectMixedContent(org.w3c.dom.Element element) {
+        org.w3c.dom.NodeList children = element.getChildNodes();
+        boolean text = false, markup = false;
+        for (int i = 0; i < children.getLength(); i++) {
+            org.w3c.dom.Node child = children.item(i);
+            switch (child.getNodeType()) {
+                case org.w3c.dom.Node.TEXT_NODE, org.w3c.dom.Node.CDATA_SECTION_NODE ->
+                      text |= !child.getTextContent().isBlank();
+                case org.w3c.dom.Node.ELEMENT_NODE, org.w3c.dom.Node.COMMENT_NODE,
+                     org.w3c.dom.Node.PROCESSING_INSTRUCTION_NODE -> markup = true;
+                default -> { }
+            }
+        }
+        if (text && markup)
+            throw new IllegalArgumentException(
+                  "Format would insert line breaks into the text of <" + element.getTagName()
+                  + ">, which mixes text with child elements. Indenting that changes the "
+                  + "content rather than the layout, so the document is left as it is.");
+        for (int i = 0; i < children.getLength(); i++)
+            if (children.item(i) instanceof org.w3c.dom.Element child) rejectMixedContent(child);
     }
 
     /** Removes whitespace-only text nodes so re-indenting doesn't stack blank lines. */

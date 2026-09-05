@@ -19,6 +19,7 @@ package com.converter.converter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.dataformat.toml.TomlMapper;
 
 public class TomlConverter {
@@ -30,7 +31,10 @@ public class TomlConverter {
         // pivot, which the next stage re-parses and nobody reads. Indenting it
         // measured 1.29-1.45x the compact size for no benefit.
         jsonMapper = PivotJson.mapper();
-        tomlMapper = new TomlMapper();
+        // The TOML parser already reads floats as BigDecimal; it was the default
+        // node factory's stripTrailingZeros that turned 1.10 into 1.1, and
+        // Format then wrote that over the document. Same fix as the JSON reader.
+        tomlMapper = TomlMapper.builder().nodeFactory(new JsonNodeFactory(true)).build();
     }
 
     /**
@@ -100,15 +104,7 @@ public class TomlConverter {
             if (c == '#') {
                 while (i < n && toml.charAt(i) != '\n') out[i++] = ' ';
             } else if (c == '"' || c == '\'') {
-                boolean triple = i + 2 < n && toml.charAt(i + 1) == c && toml.charAt(i + 2) == c;
-                String close = triple ? String.valueOf(new char[]{c, c, c}) : String.valueOf(c);
-                int from = i + close.length();
-                int end = toml.indexOf(close, from);
-                // Basic strings honour backslash escapes; literal ones do not.
-                while (!triple && c == '"' && end > 0 && countTrailingBackslashes(toml, end) % 2 == 1)
-                    end = toml.indexOf(close, end + 1);
-                if (end < 0) end = n - close.length();          // unterminated: mask the rest
-                int stop = Math.min(n, end + close.length());
+                int stop = endOfString(toml, i);
                 while (i < stop) {
                     out[i] = (toml.charAt(i) == '\n') ? '\n' : ' ';   // keep line structure
                     i++;
@@ -118,6 +114,46 @@ public class TomlConverter {
             }
         }
         return new String(out);
+    }
+
+    /**
+     * How many comments the document carries — what Format, which keeps only
+     * the values, would discard. A {@code #} inside a string is not a comment
+     * and a second {@code #} inside a comment is not another one.
+     */
+    static int countComments(String toml) {
+        int count = 0, i = 0, n = toml.length();
+        while (i < n) {
+            char c = toml.charAt(i);
+            if (c == '#') {
+                count++;
+                while (i < n && toml.charAt(i) != '\n') i++;
+            } else if (c == '"' || c == '\'') {
+                i = endOfString(toml, i);
+            } else {
+                i++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * The index just past the string literal that opens at {@code i}, or the end
+     * of the input when it is never closed. Handles basic, literal and both
+     * triple-quoted forms; basic strings honour backslash escapes, literal ones
+     * do not.
+     */
+    private static int endOfString(String toml, int i) {
+        char c = toml.charAt(i);
+        int n = toml.length();
+        boolean triple = i + 2 < n && toml.charAt(i + 1) == c && toml.charAt(i + 2) == c;
+        String close = triple ? String.valueOf(new char[]{c, c, c}) : String.valueOf(c);
+        int from = i + close.length();
+        int end = toml.indexOf(close, from);
+        while (!triple && c == '"' && end > 0 && countTrailingBackslashes(toml, end) % 2 == 1)
+            end = toml.indexOf(close, end + 1);
+        if (end < 0) end = n - close.length();          // unterminated: the rest is string
+        return Math.min(n, end + close.length());
     }
 
     private static int countTrailingBackslashes(String s, int index) {

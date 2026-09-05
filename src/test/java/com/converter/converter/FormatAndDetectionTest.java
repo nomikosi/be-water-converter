@@ -50,6 +50,132 @@ class FormatAndDetectionTest {
               .contains("a: 1").doesNotContain("---");
     }
 
+    @Test @DisplayName("Format keeps a ----prefixed single document as one document")
+    void leadingSeparatorIsNotAStreamOfDocuments() throws Exception {
+        // The text scan for "---" also matched the optional start marker, so a
+        // single sequence document was split into one document per element:
+        // "---\n- a\n- b" came back as "a\n---\nb".
+        String out = pipeline.formatInput("---\n- a\n- b\n", ConversionPipeline.FMT_YAML, opts);
+        assertThat(out).doesNotContain("---");
+        assertThat(pipeline.normalizeToJson(out, ConversionPipeline.FMT_YAML, opts))
+              .isEqualTo("[\"a\",\"b\"]");
+        // Nor is a "---" line inside a block scalar a separator.
+        String block = "- |\n  x\n  ---\n  y\n- b\n";
+        assertThat(pipeline.normalizeToJson(
+              pipeline.formatInput(block, ConversionPipeline.FMT_YAML, opts),
+              ConversionPipeline.FMT_YAML, opts)).isEqualTo("[\"x\\n---\\ny\\n\",\"b\"]");
+    }
+
+    @Test @DisplayName("Format keeps YAML floats as written, and refuses .inf and .nan")
+    void yamlFormatKeepsFloats() throws Exception {
+        assertThat(pipeline.formatInput("price: 1.10\ntotal: 100.00\n", ConversionPipeline.FMT_YAML, opts))
+              .contains("price: 1.10").contains("total: 100.00");
+        // JSON has no infinity, so the only thing Format could write back is text.
+        assertThatThrownBy(() -> pipeline.formatInput("a: .inf\n", ConversionPipeline.FMT_YAML, opts))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("Infinity");
+        assertThatThrownBy(() -> pipeline.formatInput("a: [1, .nan]\n", ConversionPipeline.FMT_YAML, opts))
+              .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test @DisplayName("Format keeps TOML floats as written, and refuses literals JSON cannot spell")
+    void tomlFormatKeepsNumbers() throws Exception {
+        assertThat(pipeline.formatInput("a = 1.10\n", ConversionPipeline.FMT_TOML, opts))
+              .contains("a = 1.10");
+        // 0xFF came back as 255, 1_000 as 1000 and inf as the STRING 'Infinity'.
+        for (String doc : new String[]{"a = 0xFF\n", "a = 0o17\n", "a = 0b101\n", "a = 1_000\n",
+              "a = 1_000.5\n", "a = inf\n", "a = -inf\n", "a = nan\n", "a = [1, 2_0]\n",
+              "t = {x = 0xA}\n"}) {
+            assertThatThrownBy(() -> pipeline.formatInput(doc, ConversionPipeline.FMT_TOML, opts))
+                  .describedAs(doc)
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("Format would rewrite");
+        }
+        // Keys with underscores, and literals inside strings or comments, are not values.
+        assertThat(pipeline.formatInput("my_key = 1\ns = \"0xFF\" # 1_000\n",
+              ConversionPipeline.FMT_TOML, opts)).contains("my_key = 1");
+    }
+
+    @Test @DisplayName("Format refuses XML mixed content and keeps the declaration as written")
+    void xmlFormatMixedContentAndDeclaration() throws Exception {
+        // The serializer indents text nodes too, so the text of a paragraph
+        // gained line breaks and indentation — a content change, not layout.
+        assertThatThrownBy(() -> pipeline.formatInput("<p>Hello <b>big</b> world</p>",
+              ConversionPipeline.FMT_XML, opts))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("<p>");
+        assertThatThrownBy(() -> pipeline.formatInput("<r><d>text <e>in</e> mixed</d></r>",
+              ConversionPipeline.FMT_XML, opts))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("<d>");
+        // standalone="no" was appended to a declaration that never had it.
+        String out = pipeline.formatInput("<?xml version=\"1.0\"?><a><b>x</b></a>",
+              ConversionPipeline.FMT_XML, opts);
+        assertThat(out).startsWith("<?xml").doesNotContain("standalone");
+        // Element-only content with formatting whitespace is not mixed content.
+        assertThat(pipeline.formatInput("<r>\n  <a>1</a>\n  <b>  spaced  </b>\n</r>",
+              ConversionPipeline.FMT_XML, opts))
+              .contains("<a>1</a>").contains("<b>  spaced  </b>");
+    }
+
+    @Test @DisplayName("Format keeps CSV headers and ragged rows exactly")
+    void csvFormatIsPositional() throws Exception {
+        // Through the pivot, headers were renamed (id,id,, became id,id_2,column_3),
+        // a ragged row dropped the headers it lacked (a,b,c\n1 became a\n1), and
+        // a header-only file was refused as having nothing to write.
+        assertThat(pipeline.formatInput("id,id,,name\n1,2,3,4\n", ConversionPipeline.FMT_CSV, opts))
+              .isEqualTo("id,id,,name\n1,2,3,4\n");
+        assertThat(pipeline.formatInput("a,b,c\n1\n", ConversionPipeline.FMT_CSV, opts))
+              .isEqualTo("a,b,c\n1\n");
+        assertThat(pipeline.formatInput("a,b\n", ConversionPipeline.FMT_CSV, opts))
+              .isEqualTo("a,b\n");
+        // A row with more cells than headers is kept as well: nothing is discarded.
+        assertThat(pipeline.formatInput("a,b\n1,2,3\n", ConversionPipeline.FMT_CSV, opts))
+              .isEqualTo("a,b\n1,2,3\n");
+        // Blank lines and CRLF are layout, and are tidied.
+        assertThat(pipeline.formatInput("a,b\r\n1,2\r\n\r\n3,4\r\n", ConversionPipeline.FMT_CSV, opts))
+              .isEqualTo("a,b\n1,2\n3,4\n");
+        // Content that needs quotes keeps them.
+        assertThat(pipeline.formatInput("a,b\n\"x,y\",\"q\"\"q\"\n", ConversionPipeline.FMT_CSV, opts))
+              .isEqualTo("a,b\n\"x,y\",\"q\"\"q\"\n");
+    }
+
+    @Test @DisplayName("formatLosses counts what Format would discard, and nothing else")
+    void formatLossesAreCounted() {
+        assertThat(pipeline.formatLosses("# top\na: 1 # inline\n\nb:\n  - x\n",
+              ConversionPipeline.FMT_YAML)).isEqualTo("2 comments");
+        assertThat(pipeline.formatLosses("base: &b\n  x: 1\nother:\n  <<: *b\n",
+              ConversionPipeline.FMT_YAML)).isEqualTo("1 anchor");
+        assertThat(pipeline.formatLosses("# c\nbase: &b {x: 1}\nu: *b\n",
+              ConversionPipeline.FMT_YAML)).isEqualTo("1 comment and 1 anchor");
+        // A '#' inside a string is not a comment.
+        assertThat(pipeline.formatLosses("a: \"# not a comment\"\n", ConversionPipeline.FMT_YAML))
+              .isNull();
+        assertThat(pipeline.formatLosses("a = 1 # note\n# another #hash\ns = \"#\"\n",
+              ConversionPipeline.FMT_TOML)).isEqualTo("2 comments");
+        // A comment-only TOML file is returned untouched, so nothing is at risk.
+        assertThat(pipeline.formatLosses("# just a note\n", ConversionPipeline.FMT_TOML)).isNull();
+        assertThat(pipeline.formatLosses("{\"a\":1 // one\n, \"b\":\"//\" /* two */}",
+              ConversionPipeline.FMT_JSON)).isEqualTo("2 comments");
+        assertThat(pipeline.formatLosses("{\"a\":1}", ConversionPipeline.FMT_JSON)).isNull();
+        // XML keeps its comments through the DOM, so there is nothing to warn about.
+        assertThat(pipeline.formatLosses("<r><!-- kept --></r>", ConversionPipeline.FMT_XML)).isNull();
+    }
+
+    @Test @DisplayName("semicolon- and tab-separated CSV are detected, with their delimiter")
+    void csvDelimiterDetection() {
+        // Only the comma was tried, so a semicolon file was not CSV at all.
+        assertThat(ConversionPipeline.detectFormat("id;name\n1;Ada\n")).isEqualTo(ConversionPipeline.FMT_CSV);
+        assertThat(ConversionPipeline.detectCsvDelimiter("id;name\n1;Ada\n")).isEqualTo(';');
+        assertThat(ConversionPipeline.detectFormat("id\tname\n1\tAda\n")).isEqualTo(ConversionPipeline.FMT_CSV);
+        assertThat(ConversionPipeline.detectCsvDelimiter("id\tname\n1\tAda\n")).isEqualTo('\t');
+        assertThat(ConversionPipeline.detectCsvDelimiter("id,name\n1,Ada\n")).isEqualTo(',');
+        // A decimal comma inside a semicolon file does not make it comma-separated.
+        assertThat(ConversionPipeline.detectCsvDelimiter("price;qty\n1,5;2\n2,5;3\n")).isEqualTo(';');
+        assertThat(ConversionPipeline.detectCsvDelimiter("just some prose\nwith no delimiter\n")).isNull();
+        assertThat(ConversionPipeline.detectCsvDelimiter("a: 1\nb: 2\n")).isNull();
+    }
+
     @Test @DisplayName("Format refuses to rewrite a TOML date as a string")
     void tomlDatesAreNotRetyped() {
         // TOML has date types and JSON does not, so the pivot stringified them

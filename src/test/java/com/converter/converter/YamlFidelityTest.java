@@ -51,17 +51,48 @@ class YamlFidelityTest {
               .isEqualTo("{\"a\":\"0777\"}");
     }
 
-    @Test @DisplayName("KNOWN LIMIT: hex- and exponent-looking strings come back as numbers")
-    void numberLookalikesStillRetype() throws Exception {
-        // Both are genuine numbers in YAML 1.2, so READING them as numbers is
-        // right. What is wrong is the OUTPUT side: MINIMIZE_QUOTES emits the
-        // strings bare, and ALWAYS_QUOTE_NUMBERS_AS_STRINGS covers plain
-        // decimals only. Closing it needs quoting every string, which costs the
-        // readable output the JsonYamlConverter tests deliberately pin.
-        assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"0x1F\"}")))
-              .isEqualTo("{\"a\":31}");
-        assertThat(converter.yamlToJson(converter.jsonToYaml("{\"a\":\"1e3\"}")))
-              .isEqualTo("{\"a\":1000.0}");
+    @Test @DisplayName("hex-, exponent- and underscore-looking strings are quoted, so they stay strings")
+    void numberLookalikesAreQuoted() throws Exception {
+        // All of these are genuine numbers under the reader's rules, so READING
+        // them bare as numbers is right. They used to be EMITTED bare as well:
+        // ALWAYS_QUOTE_NUMBERS_AS_STRINGS knows plain decimals only, so "0x1F"
+        // came back as 31 and "1e3" as 1000.0. The writer now quotes by the
+        // reader's own patterns, so exactly these get quotes and ordinary text
+        // stays bare.
+        for (String s : new String[]{"0x1F", "1e3", "1_000", "0b11", "1E3", "+1", ".5", "1_"}) {
+            String json = "{\"a\":\"" + s + "\"}";
+            assertThat(converter.yamlToJson(converter.jsonToYaml(json))).describedAs(s).isEqualTo(json);
+        }
+        assertThat(converter.jsonToYaml("{\"a\":\"0x1F\"}")).contains("\"0x1F\"");
+        assertThat(converter.jsonToYaml("{\"name\":\"Alice\",\"v\":\"1.5.2\"}"))
+              .contains("name: Alice").contains("v: 1.5.2");
+    }
+
+    @Test @DisplayName("floats keep the digits they were written with")
+    void floatsAreReadExactly() throws Exception {
+        // Through double, 1.10 became 1.1, 1e400 the STRING "Infinity", and a
+        // long decimal was cut to 17 digits — and Format wrote each back.
+        assertThat(converter.yamlToJson("price: 1.10\n")).isEqualTo("{\"price\":1.10}");
+        assertThat(converter.yamlToJson("total: 100.00\n")).isEqualTo("{\"total\":100.00}");
+        assertThat(converter.yamlToJson("big: 1e400\n")).isEqualTo("{\"big\":1E+400}");
+        assertThat(converter.yamlToJson("v: 0.1234567890123456789012345\n"))
+              .isEqualTo("{\"v\":0.1234567890123456789012345}");
+        assertThat(converter.yamlToJson("n: -1_000.5\n")).isEqualTo("{\"n\":-1000.5}");
+        // The round trip is exact in both directions.
+        assertThat(converter.yamlToJson(converter.jsonToYaml("{\"price\":1.10}")))
+              .isEqualTo("{\"price\":1.10}");
+    }
+
+    @Test @DisplayName("a lone dot is the string it looks like, not a crash")
+    void loneDotIsText() throws Exception {
+        // The float pattern accepted "." with no digits at all, tagged it FLOAT,
+        // and construction then threw NumberFormatException at a plain value.
+        assertThat(converter.yamlToJson("a: .\n")).isEqualTo("{\"a\":\".\"}");
+        assertThat(converter.yamlToJson("a: -.\n")).isEqualTo("{\"a\":\"-.\"}");
+        assertThat(converter.yamlToJson("a: ._\n")).isEqualTo("{\"a\":\"._\"}");
+        // Digits on either side still make a number.
+        assertThat(converter.yamlToJson("a: 1.\n")).isEqualTo("{\"a\":1}");
+        assertThat(converter.yamlToJson("a: .5\n")).isEqualTo("{\"a\":0.5}");
     }
 
     @Test @DisplayName("the resolver is exercised directly, not only through quoted output")
@@ -76,9 +107,10 @@ class YamlFidelityTest {
         // 0o777 is YAML 1.2 octal that SnakeYAML's constructor cannot build, so
         // it stays text rather than throwing NumberFormatException.
         assertThat(converter.yamlToJson("a: 0o777\n")).isEqualTo("{\"a\":\"0o777\"}");
-        // Still numbers, per YAML 1.2.
-        assertThat(converter.yamlToJson("a: 1e3\n")).isEqualTo("{\"a\":1000.0}");
-        assertThat(converter.yamlToJson("a: .5e3\n")).isEqualTo("{\"a\":500.0}");
+        // Still numbers, per YAML 1.2 — carried as the exact decimals they were
+        // written as, so exponent forms print the way BigDecimal prints them.
+        assertThat(converter.yamlToJson("a: 1e3\n")).isEqualTo("{\"a\":1E+3}");
+        assertThat(converter.yamlToJson("a: .5e3\n")).isEqualTo("{\"a\":5E+2}");
         assertThat(converter.yamlToJson("a: 0x1F\n")).isEqualTo("{\"a\":31}");
         assertThat(converter.yamlToJson("a: 0\n")).isEqualTo("{\"a\":0}");
         assertThat(converter.yamlToJson("a: 42\n")).isEqualTo("{\"a\":42}");

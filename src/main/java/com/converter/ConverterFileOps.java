@@ -112,19 +112,45 @@ final class ConverterFileOps {
                 throw new java.util.concurrent.CompletionException(ex);
             }
         }, (ignored, cause) -> {
-            if (cause != null) host.status("Failed to save: " + cause.getMessage(), false);
-            else               host.status("Saved to " + file.getName(), true);
+            if (cause != null) {
+                host.status("Failed to save: " + cause.getMessage(), false);
+                return;
+            }
+            host.status("Saved to " + file.getName(), true);
+            // The write went behind the VFS's back, so tell it. Without this a
+            // file saved into the project was not listed, and an editor already
+            // showing it kept the old text, until something else refreshed.
+            refreshInVfs(file);
         });
     }
 
+    private static void refreshInVfs(File file) {
+        try {
+            com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+                  .refreshIoFiles(List.of(file), true, false, null);
+        } catch (Throwable outsideIde) {
+            // No VFS to tell (tests, standalone).
+        }
+    }
+
     void loadFile(File file) {
-        long size = file.length();
+        // An editor holding unsaved changes to this file has the newer text.
+        // Autosave is off by default and does not fire when focus moves to the
+        // tool window, so reading the disk copy loaded a silently stale document.
+        // The context-menu path already prefers the editor for the same reason.
+        String unsaved = unsavedEditorText(file);
+        long size = unsaved != null ? unsaved.length() : file.length();
         if (size > LARGE_FILE_WARNING_BYTES) {
             int choice = JOptionPane.showConfirmDialog(parent,
                   String.format("%s is %,d MB. Loading large files may be slow. Continue?",
                         file.getName(), size / (1024 * 1024)),
                   "Large file", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
             if (choice != JOptionPane.OK_OPTION) return;
+        }
+        if (unsaved != null) {
+            host.loaded(unsaved, detectFormat(file.getName()),
+                  file.getName() + " (unsaved editor contents)");
+            return;
         }
 
         host.status("Loading " + file.getName() + "…", true);
@@ -153,6 +179,27 @@ final class ConverterFileOps {
             host.loaded(content.text(), detectFormat(file.getName()), file.getName()
                   + (content.latin1() ? " (not valid UTF-8 — read as ISO-8859-1)" : ""));
         });
+    }
+
+    /**
+     * The text of {@code file} as it stands in an open editor, when that editor
+     * holds changes not yet written to disk; null otherwise, including outside
+     * a running IDE. Only an unsaved document is preferred: once saved, the disk
+     * copy is the same text and keeps the Latin-1 fallback for odd encodings.
+     */
+    private static String unsavedEditorText(File file) {
+        try {
+            VirtualFile virtualFile = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+                  .findFileByIoFile(file);
+            if (virtualFile == null) return null;
+            var manager = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance();
+            var document = manager.getCachedDocument(virtualFile);
+            if (document == null || !manager.isDocumentUnsaved(document)) return null;
+            return com.intellij.openapi.application.ApplicationManager.getApplication()
+                  .runReadAction((com.intellij.openapi.util.Computable<String>) document::getText);
+        } catch (Throwable outsideIde) {
+            return null;
+        }
     }
 
     /**

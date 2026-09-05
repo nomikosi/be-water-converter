@@ -22,9 +22,26 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import com.fasterxml.jackson.dataformat.yaml.util.StringQuotingChecker;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.comments.CommentType;
+import org.yaml.snakeyaml.constructor.AbstractConstruct;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
+import org.yaml.snakeyaml.events.AliasEvent;
+import org.yaml.snakeyaml.events.CommentEvent;
+import org.yaml.snakeyaml.events.Event;
+import org.yaml.snakeyaml.events.NodeEvent;
+import org.yaml.snakeyaml.nodes.Node;
+import org.yaml.snakeyaml.nodes.ScalarNode;
+import org.yaml.snakeyaml.nodes.Tag;
+
+import java.io.StringReader;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.regex.Pattern;
 
 public class JsonYamlConverter {
 
@@ -35,6 +52,59 @@ public class JsonYamlConverter {
      * still refused.
      */
     static final int CODE_POINT_LIMIT = 64 * 1024 * 1024;
+
+    // ── Scalar resolution, shared by the reader and the writer ────────────
+    //
+    // These are the implicit-tag rules this converter reads YAML by: YAML 1.2's
+    // core schema minus the YAML 1.1 rules that rewrite data (see
+    // CoreScalarResolver). The writer applies the same patterns to decide what
+    // to quote, so a string is quoted exactly when a bare scalar of that text
+    // would be read back as something other than a string. Keeping one set of
+    // patterns is what stops the two sides disagreeing: "0x1F" and "1e3" were
+    // emitted bare and came back as 31 and 1000.0.
+    //
+    // Named CORE_* on purpose. SnakeYAML's Resolver declares public static
+    // BOOL, INT, FLOAT, MERGE, NULL and EMPTY of its own, and inside the
+    // subclass below an unqualified INT is the INHERITED one: a first version
+    // of this shared the short names and silently registered YAML 1.1's rules.
+
+    private static final Pattern CORE_BOOL = Pattern.compile(
+          "^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE"
+          + "|on|On|ON|off|Off|OFF)$");
+
+    // Neither the sexagesimal "[-+]?[1-9][0-9_]*(:[0-5]?[0-9])+" nor bare
+    // octal "0[0-7_]+", so 12:30:00 and 0777 stay the text they were written
+    // as. YAML 1.2's explicit 0o777 is deliberately absent too: SafeConstructor
+    // reads a leading 0 as octal and then calls parseInt("o777", 8), so tagging
+    // it INT throws rather than converts. Unresolved, it is simply the string
+    // it looks like.
+    private static final Pattern CORE_INT = Pattern.compile(
+          "^(?:[-+]?0b[0-1_]+|[-+]?(?:0|[1-9][0-9_]*)|[-+]?0x[0-9a-fA-F_]+)$");
+
+    // A dot or an exponent is required, so 0777 cannot land here either once
+    // INT has declined it, and a digit is required on at least one side of the
+    // dot: the previous form accepted a lone ".", "-." and "._", tagged them
+    // FLOAT, and construction then threw NumberFormatException at a value that
+    // is simply the text it looks like. Both forms take an optionally signed
+    // exponent: 1e3, .5e3 and 0.5e3 are all numbers, as YAML 1.2 says.
+    private static final Pattern CORE_FLOAT = Pattern.compile(
+          "^(?:[-+]?(?:[0-9][0-9_]*\\.[0-9_]*|\\.[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)?"
+          + "|[-+]?[0-9][0-9_]*[eE][-+]?[0-9]+"
+          + "|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
+
+    private static final Pattern CORE_MERGE = Pattern.compile("^(?:<<)$");
+    private static final Pattern CORE_NULL  = Pattern.compile("^(?:~|null|Null|NULL| )$");
+    private static final Pattern CORE_EMPTY = Pattern.compile("^$");
+
+    /** True when a bare scalar of this text would be read as something other than a string. */
+    static boolean resolvesToNonString(String text) {
+        return text.isEmpty()
+              || CORE_BOOL.matcher(text).matches()
+              || CORE_INT.matcher(text).matches()
+              || CORE_FLOAT.matcher(text).matches()
+              || CORE_NULL.matcher(text).matches()
+              || CORE_MERGE.matcher(text).matches();
+    }
 
     private final ObjectMapper jsonMapper;
     private final YAMLMapper yamlMapper;
@@ -56,17 +126,29 @@ public class JsonYamlConverter {
                     // trip retyped the value. This quotes the numeric-looking
                     // ones and leaves ordinary text bare, which is what keeps
                     // the output readable — the point of MINIMIZE_QUOTES.
-                    //
-                    // It does NOT cover every such string: "0x1F" is emitted bare
-                    // and read back as 31, because hex is a genuine integer form
-                    // under CoreScalarResolver. (Times and leading-zero runs used
-                    // to belong on this list; the resolver no longer rewrites
-                    // them.) Closing the hex case needs quoting everything, which
-                    // costs the readable output this project deliberately tests
-                    // for, so it is a documented limit.
                     .enable(YAMLGenerator.Feature.ALWAYS_QUOTE_NUMBERS_AS_STRINGS)
+                    // That feature knows plain decimals only. The reader also
+                    // resolves hex, binary, exponent and underscore forms, so
+                    // "0x1F", "1e3" and "1_000" were emitted bare and came back
+                    // as numbers. Deciding quotes by the reader's own rules
+                    // closes the gap without quoting every string.
+                    .stringQuotingChecker(new ResolverAwareQuoting())
                     .build()
         ).build();
+    }
+
+    /**
+     * Quotes what Jackson's default checker quotes, plus every string that
+     * {@link CoreScalarResolver} would read back as a non-string.
+     */
+    private static final class ResolverAwareQuoting extends StringQuotingChecker.Default {
+        @Override public boolean needToQuoteName(String name) {
+            return super.needToQuoteName(name) || resolvesToNonString(name);
+        }
+
+        @Override public boolean needToQuoteValue(String value) {
+            return super.needToQuoteValue(value) || resolvesToNonString(value);
+        }
     }
 
     public String jsonToYaml(String json) throws Exception {
@@ -80,28 +162,34 @@ public class JsonYamlConverter {
      * Converts YAML to JSON. Multi-document input ("---"-separated, e.g.
      * Kubernetes manifests) becomes a JSON array with one element per document;
      * a single document maps to its JSON value directly.
+     */
+    public String yamlToJson(String yaml) throws Exception {
+        List<JsonNode> docs = loadDocuments(yaml);
+        JsonNode node = docs.size() == 1
+              ? docs.get(0)
+              : jsonMapper.createArrayNode().addAll(docs);
+        return jsonMapper.writeValueAsString(node);
+    }
+
+    /**
+     * Every document in the stream as a JSON tree, in order.
      *
      * <p>Parsed through SnakeYAML's composer rather than Jackson's YAML parser:
      * Jackson works at the event level and never resolves anchors, so {@code *ref}
      * arrived as the literal string {@code "ref"} and a {@code <<:} merge key
      * survived as a key of that name with the merged content discarded.
+     *
+     * <p>This is also the one place that knows how many documents there are.
+     * Format used to decide that by scanning the text for {@code ---} lines,
+     * which also matched the optional start marker of a single document: a
+     * {@code ---}-prefixed list was split into one document per element.
      */
-    public String yamlToJson(String yaml) throws Exception {
+    private List<JsonNode> loadDocuments(String yaml) {
         if (yaml == null || yaml.isBlank())
             throw new IllegalArgumentException("Input YAML must not be empty");
 
-        LoaderOptions options = new LoaderOptions();
-        options.setCodePointLimit(CODE_POINT_LIMIT);
-        // A repeated key silently kept only the last value. YAML says duplicate
-        // keys are an error; SnakeYAML merely defaults to allowing them.
-        options.setAllowDuplicateKeys(false);
-        // SafeConstructor refuses arbitrary Java type tags, so a hostile
-        // document cannot cause class instantiation.
-        Yaml composer = new Yaml(new SafeConstructor(options),
-              UNUSED_REPRESENTER, UNUSED_DUMPER_OPTIONS, options, new CoreScalarResolver());
-
-        java.util.List<JsonNode> docs = new java.util.ArrayList<>();
-        for (Object document : composer.loadAll(ConversionPipeline.stripBom(yaml))) {
+        List<JsonNode> docs = new ArrayList<>();
+        for (Object document : composer().loadAll(ConversionPipeline.stripBom(yaml))) {
             JsonNode node = document == null ? null : jsonMapper.valueToTree(document);
             if (node == null || node.isMissingNode()) node = jsonMapper.nullNode();
             rejectCollidingKeys(document, node);
@@ -119,11 +207,56 @@ public class JsonYamlConverter {
         // which is a different thing from one that happens to contain a null.
         if (docs.isEmpty() || docs.stream().allMatch(JsonNode::isNull))
             throw new IllegalArgumentException("Input YAML contains no documents");
+        return docs;
+    }
 
-        JsonNode node = docs.size() == 1
-              ? docs.get(0)
-              : jsonMapper.createArrayNode().addAll(docs);
-        return jsonMapper.writeValueAsString(node);
+    private static Yaml composer() {
+        LoaderOptions options = new LoaderOptions();
+        options.setCodePointLimit(CODE_POINT_LIMIT);
+        // A repeated key silently kept only the last value. YAML says duplicate
+        // keys are an error; SnakeYAML merely defaults to allowing them.
+        options.setAllowDuplicateKeys(false);
+        // SafeConstructor refuses arbitrary Java type tags, so a hostile
+        // document cannot cause class instantiation.
+        return new Yaml(new ExactFloatConstructor(options),
+              UNUSED_REPRESENTER, UNUSED_DUMPER_OPTIONS, options, new CoreScalarResolver());
+    }
+
+    /**
+     * {@link SafeConstructor} with floats built as {@link BigDecimal} from
+     * their text rather than as {@code double}.
+     *
+     * <p>Through double, {@code 1.10} became {@code 1.1}, {@code 1e400} became
+     * the string {@code "Infinity"} and a long decimal was cut to 17 digits —
+     * the same losses the JSON reader was already fixed for, and Format wrote
+     * {@code price: 1.1} back over a document that said {@code 1.10}. The pivot
+     * carries BigDecimal exactly, so this only has to hand it one.
+     *
+     * <p>{@code .inf} and {@code .nan} have no BigDecimal form and keep
+     * SnakeYAML's own construction; JSON cannot carry them either, so they
+     * render as the strings {@code "Infinity"} and {@code "NaN"}, and
+     * {@link #formatPreservingDocuments} refuses to write that back.
+     */
+    private static final class ExactFloatConstructor extends SafeConstructor {
+        ExactFloatConstructor(LoaderOptions options) {
+            super(options);
+            yamlConstructors.put(Tag.FLOAT, new ConstructExactFloat());
+        }
+
+        private final class ConstructExactFloat extends AbstractConstruct {
+            private final ConstructYamlFloat nonFinite = new ConstructYamlFloat();
+
+            @Override public Object construct(Node node) {
+                String text = constructScalar((ScalarNode) node).replace("_", "");
+                String lower = text.toLowerCase(Locale.ROOT);
+                if (lower.endsWith("inf") || lower.endsWith("nan")) return nonFinite.construct(node);
+                try {
+                    return new BigDecimal(text);
+                } catch (NumberFormatException notADecimal) {
+                    return nonFinite.construct(node);
+                }
+            }
+        }
     }
 
     /**
@@ -138,38 +271,18 @@ public class JsonYamlConverter {
      * <p>This drops exactly those: the sexagesimal alternatives, bare octal, and
      * the timestamp resolver. Booleans, null, plain integers, floats, merge keys
      * and {@code 0x}/{@code 0b} forms all still resolve, so {@code yes} is still
-     * a boolean and nothing else about reading YAML changes.
+     * a boolean and nothing else about reading YAML changes. Tag.TIMESTAMP is
+     * deliberately absent: it produced a java.util.Date that JSON then had to
+     * render as a string anyway, in a format the document never used.
      */
     private static final class CoreScalarResolver extends org.yaml.snakeyaml.resolver.Resolver {
         @Override protected void addImplicitResolvers() {
-            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.BOOL, java.util.regex.Pattern.compile(
-                  "^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE"
-                  + "|on|On|ON|off|Off|OFF)$"), "yYnNtTfFoO");
-            // Neither the sexagesimal "[-+]?[1-9][0-9_]*(:[0-5]?[0-9])+" nor bare
-            // octal "0[0-7_]+", so 12:30:00 and 0777 stay the text they were
-            // written as. YAML 1.2's explicit 0o777 is deliberately absent too:
-            // SafeConstructor reads a leading 0 as octal and then calls
-            // parseInt("o777", 8), so tagging it INT throws rather than converts.
-            // Unresolved, it is simply the string it looks like.
-            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.INT, java.util.regex.Pattern.compile(
-                  "^(?:[-+]?0b[0-1_]+|[-+]?(?:0|[1-9][0-9_]*)"
-                  + "|[-+]?0x[0-9a-fA-F_]+)$"), "-+0123456789");
-            // A dot or an exponent is required, so 0777 cannot land here either
-            // once INT has declined it. Both forms take an optionally signed
-            // exponent: 1e3, .5e3 and 0.5e3 are all numbers, as YAML 1.2 says.
-            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.FLOAT, java.util.regex.Pattern.compile(
-                  "^(?:[-+]?(?:[0-9][0-9_]*)?\\.[0-9_]*(?:[eE][-+]?[0-9]+)?"
-                  + "|[-+]?[0-9][0-9_]*[eE][-+]?[0-9]+"
-                  + "|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$"), "-+0123456789.");
-            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.MERGE,
-                  java.util.regex.Pattern.compile("^(?:<<)$"), "<");
-            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.NULL, java.util.regex.Pattern.compile(
-                  "^(?:~|null|Null|NULL| )$"), "~nN\0");
-            addImplicitResolver(org.yaml.snakeyaml.nodes.Tag.NULL,
-                  java.util.regex.Pattern.compile("^$"), null);
-            // Tag.TIMESTAMP is deliberately absent: it produced a java.util.Date
-            // that JSON then had to render as a string anyway, in a format the
-            // document never used.
+            addImplicitResolver(Tag.BOOL,  CORE_BOOL,  "yYnNtTfFoO");
+            addImplicitResolver(Tag.INT,   CORE_INT,   "-+0123456789");
+            addImplicitResolver(Tag.FLOAT, CORE_FLOAT, "-+0123456789.");
+            addImplicitResolver(Tag.MERGE, CORE_MERGE, "<");
+            addImplicitResolver(Tag.NULL,  CORE_NULL,  "~nN\0");
+            addImplicitResolver(Tag.NULL,  CORE_EMPTY, null);
         }
     }
 
@@ -186,18 +299,60 @@ public class JsonYamlConverter {
      *                 operation and this is where the tree exists.
      */
     public String formatPreservingDocuments(String yaml, boolean sortKeys) throws Exception {
-        String pivot = yamlToJson(yaml);
-        JsonNode parsed = jsonMapper.readTree(pivot);
-        boolean multi = isMultiDocument(yaml) && parsed.isArray();
-        if (!multi) return jsonToYaml(sortKeys ? sortNode(parsed).toString() : pivot);
+        List<JsonNode> docs = loadDocuments(yaml);
+        for (JsonNode document : docs) rejectNonFinite(document);
 
         StringBuilder out = new StringBuilder();
-        for (JsonNode document : parsed) {
+        for (JsonNode document : docs) {
             if (!out.isEmpty()) out.append("---\n");
-            JsonNode node = sortKeys ? sortNode(document) : document;
-            out.append(yamlMapper.writeValueAsString(node));
+            out.append(yamlMapper.writeValueAsString(sortKeys ? sortNode(document) : document));
         }
         return out.toString();
+    }
+
+    /**
+     * Refuses to format a document carrying {@code .inf} or {@code .nan}: the
+     * JSON tree in between can only hold them as the strings "Infinity" and
+     * "NaN", so Format would have quietly turned a number into text.
+     */
+    private static void rejectNonFinite(JsonNode node) {
+        if ((node.isDouble() || node.isFloat()) && !Double.isFinite(node.doubleValue()))
+            throw new IllegalArgumentException(
+                  "Format would rewrite a .inf or .nan value as the text \"" + node.asText()
+                  + "\": the JSON step this uses has no infinity or NaN. "
+                  + "The document is left as it is.");
+        for (JsonNode child : node) rejectNonFinite(child);
+    }
+
+    /**
+     * What Format would silently discard from this document: comments, and
+     * anchors (whose aliases and merge keys come back expanded in place).
+     * Returns a description with nothing in it when the document carries
+     * neither, and when it cannot be parsed at all — {@link #yamlToJson} then
+     * reports the real error.
+     */
+    public ConversionPipeline.FormatLosses countFormatLosses(String yaml) {
+        LoaderOptions options = new LoaderOptions();
+        options.setCodePointLimit(CODE_POINT_LIMIT);
+        options.setProcessComments(true);
+        Yaml parser = new Yaml(new SafeConstructor(options),
+              UNUSED_REPRESENTER, UNUSED_DUMPER_OPTIONS, options);
+        int comments = 0, anchors = 0;
+        try {
+            // Events only: nothing is constructed, so this costs a parse and
+            // holds no document in memory.
+            for (Event event : parser.parse(new StringReader(ConversionPipeline.stripBom(yaml)))) {
+                if (event instanceof CommentEvent comment) {
+                    if (comment.getCommentType() != CommentType.BLANK_LINE) comments++;
+                } else if (event instanceof NodeEvent node
+                      && !(event instanceof AliasEvent) && node.getAnchor() != null) {
+                    anchors++;
+                }
+            }
+        } catch (RuntimeException notParseable) {
+            return new ConversionPipeline.FormatLosses(0, 0);
+        }
+        return new ConversionPipeline.FormatLosses(comments, anchors);
     }
 
     /**
@@ -215,17 +370,10 @@ public class JsonYamlConverter {
         return true;
     }
 
-    /** True when the source actually carries a document separator of its own. */
-    private static boolean isMultiDocument(String yaml) {
-        for (String line : yaml.split("\r?\n"))
-            if (line.strip().equals("---") || line.strip().startsWith("--- ")) return true;
-        return false;
-    }
-
     /** Recursively orders object keys; arrays keep their order. */
     private JsonNode sortNode(JsonNode node) {
         if (node.isObject()) {
-            java.util.List<String> names = new java.util.ArrayList<>();
+            List<String> names = new ArrayList<>();
             node.fieldNames().forEachRemaining(names::add);
             java.util.Collections.sort(names);
             com.fasterxml.jackson.databind.node.ObjectNode out = jsonMapper.createObjectNode();
@@ -255,7 +403,7 @@ public class JsonYamlConverter {
         // Sequences are descended into as well: a mapping inside a list — every
         // Kubernetes "containers:" block — was never examined, so the guard
         // missed the commonest YAML shape there is.
-        if (document instanceof java.util.List<?> list && converted.isArray()) {
+        if (document instanceof List<?> list && converted.isArray()) {
             for (int i = 0; i < list.size() && i < converted.size(); i++)
                 rejectCollidingKeys(list.get(i), converted.get(i));
             return;

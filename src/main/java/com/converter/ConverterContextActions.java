@@ -329,6 +329,14 @@ public final class ConverterContextActions {
                 // The subtree filter is deliberately not carried over — it
                 // belongs to the document open in the panel.
                 ConversionOptions options = ConverterPanel.persistedOptions();
+                if (ConversionPipeline.FMT_CSV.equals(inputFormat)) {
+                    // The document's own delimiter beats the remembered one: a
+                    // semicolon file read with the comma setting is one column wide.
+                    Character delimiter = ConversionPipeline.detectCsvDelimiter(text);
+                    if (delimiter != null)
+                        options = options.withCsvFormat(
+                              com.converter.converter.CsvConverter.CsvFormat.forDelimiter(delimiter));
+                }
                 String pivot = pipeline.normalizeToJson(text, inputFormat, options);
                 indicator.checkCanceled();
                 result = pipeline.renderFromJson(pivot, target, options);

@@ -114,6 +114,37 @@
                 and only real differences are shown.</li>
             <li><b>Parse errors move the caret</b> to the reported line and column instead of only
                 describing where the problem is.</li>
+            <li><b>Numbers keep their written form in YAML and TOML too</b> — <code>1.10</code>
+                no longer becomes <code>1.1</code>, <code>1e400</code> no longer becomes the text
+                "Infinity", and long decimals keep every digit. Format used to write the rewritten
+                values back over the document.</li>
+            <li><b>YAML output quotes exactly what the reader would retype</b> — strings such as
+                <code>"1_000"</code>, <code>"0x1F"</code> and <code>"1e3"</code> came back as
+                numbers after a round trip.</li>
+            <li><b>Fixed: Format split a <code>---</code>-prefixed YAML list into one document per
+                element</b>, and treated a <code>---</code> line inside a block scalar as a separator.</li>
+            <li><b>Fixed: CSV Format rewrote the document</b> — headers were renamed
+                (<code>id,id,,</code> became <code>id,id_2,column_3</code>), a ragged row dropped the
+                headers it lacked, and a header-only file was refused. Format now rewrites CSV row by
+                row and never interprets it. Blank lines no longer become empty rows on conversion.</li>
+            <li><b>Fixed: Protobuf nested types leaked across messages</b> — two messages each
+                declaring an <code>Inner</code> or a <code>Status</code> both resolved to the last one
+                defined, a nested type hid a top-level one from every other message, and dotted
+                references such as <code>Outer.Inner</code> resolved to nothing. Names now resolve the
+                way protoc resolves them.</li>
+            <li><b>Repeated JSON keys are refused</b> rather than silently keeping the last value.</li>
+            <li><b>Format asks before dropping comments</b> — YAML, TOML and JSON-with-comments keep
+                only the data through Format; it now says how many comments (and YAML anchors) would
+                go and waits for a yes. It also refuses TOML hex/octal/binary, underscore-separated and
+                inf/nan literals, YAML <code>.inf</code>/<code>.nan</code>, and XML mixed content,
+                each of which it could only rewrite by changing it; and it no longer adds
+                <code>standalone="no"</code> to an XML declaration.</li>
+            <li><b>Semicolon and tab CSV are recognised on paste</b>, and the Delimiter option follows
+                the document — also when a <code>.csv</code> file is opened or converted from the
+                Project view.</li>
+            <li><b>Open and Save talk to the IDE's file system</b> — opening a file with unsaved editor
+                changes loads the editor's text, and a saved file shows up in the project without a
+                manual sync. Format discards its result if the input was edited while it ran.</li>
         </ul>
         <h3>1.4.1</h3>
         <ul>

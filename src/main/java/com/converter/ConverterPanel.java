@@ -116,16 +116,26 @@ public class ConverterPanel implements Disposable {
 
     /** Delimiter choices offered in the options bar, with their converter format. */
     enum CsvDelimiter {
-        COMMA("Comma  ,",     CsvConverter.CsvFormat.DEFAULT),
-        SEMICOLON("Semicolon  ;", CsvConverter.CsvFormat.SEMICOLON),
-        TAB("Tab",            CsvConverter.CsvFormat.TAB);
+        COMMA("Comma  ,",     "comma",     CsvConverter.CsvFormat.DEFAULT),
+        SEMICOLON("Semicolon  ;", "semicolon", CsvConverter.CsvFormat.SEMICOLON),
+        TAB("Tab",            "tab",       CsvConverter.CsvFormat.TAB);
 
         private final String label;
+        /** How a status message names the delimiter: "semicolon-separated". */
+        final String noun;
         final CsvConverter.CsvFormat format;
 
-        CsvDelimiter(String label, CsvConverter.CsvFormat format) {
+        CsvDelimiter(String label, String noun, CsvConverter.CsvFormat format) {
             this.label = label;
+            this.noun = noun;
             this.format = format;
+        }
+
+        /** The option for a delimiter character detection found, or null for one not offered. */
+        static CsvDelimiter forChar(char delimiter) {
+            for (CsvDelimiter option : values())
+                if (option.format.delimiter() == delimiter) return option;
+            return null;
         }
 
         @Override public String toString() { return label; }
@@ -212,14 +222,16 @@ public class ConverterPanel implements Disposable {
                   @Override public void loaded(String content, String detectedFormat, String fileName) {
                       // A known extension beats content sniffing; without one, let
                       // the content detector have its say instead of suppressing it.
+                      String note = "";
                       if (detectedFormat != null) {
                           setInputTextQuietly(content);
                           inputCombo.setSelectedItem(detectedFormat);
+                          if (FMT_CSV.equals(detectedFormat)) note = applyDetectedDelimiter(content);
                       } else {
                           inputArea.setText(content);
                           inputArea.setCaretPosition(0);
                       }
-                      setStatus("Loaded " + fileName, true);
+                      setStatus("Loaded " + fileName + note, true);
                   }
               });
         inputArea.setTransferHandler(fileOps.chainFileDrop(inputArea.getTransferHandler()));
@@ -473,6 +485,10 @@ public class ConverterPanel implements Disposable {
         if (format != null) {
             setInputTextQuietly(text);
             inputCombo.setSelectedItem(format);
+            if (FMT_CSV.equals(format)) {
+                String note = applyDetectedDelimiter(text);
+                if (!note.isEmpty()) setStatus("Loaded CSV input" + note, true);
+            }
         } else {
             inputArea.setText(text);
             inputArea.setCaretPosition(0);
@@ -750,6 +766,20 @@ public class ConverterPanel implements Disposable {
     }
 
     /**
+     * Selects the delimiter a CSV text actually uses, so a semicolon file is
+     * not read as one wide column because the option still said comma. Returns
+     * a status suffix naming the change, or "" when the selection already
+     * matched or nothing could be told.
+     */
+    private String applyDetectedDelimiter(String text) {
+        Character found = ConversionPipeline.detectCsvDelimiter(text);
+        CsvDelimiter option = found == null ? null : CsvDelimiter.forChar(found);
+        if (option == null || option == csvDelimiterCombo.getSelectedItem()) return "";
+        csvDelimiterCombo.setSelectedItem(option);   // its listener persists the choice
+        return " (" + option.noun + "-separated)";
+    }
+
+    /**
      * Switches the input format to match pasted content. Only large single
      * insertions are considered a paste — reacting to ordinary typing would
      * fight the user as a document takes shape mid-keystroke. A detection that
@@ -773,9 +803,16 @@ public class ConverterPanel implements Disposable {
                     String head = text.length() > DETECT_SAMPLE_CHARS
                           ? text.substring(0, DETECT_SAMPLE_CHARS) : text;
                     String detected = ConversionPipeline.detectFormat(head);
-                    if (detected == null || detected.equals(inputCombo.getSelectedItem())) return;
+                    if (detected == null) return;
+                    // The delimiter is part of what "CSV" means for a paste, so
+                    // it is set even when the format itself is already right.
+                    String note = FMT_CSV.equals(detected) ? applyDetectedDelimiter(head) : "";
+                    if (detected.equals(inputCombo.getSelectedItem())) {
+                        if (!note.isEmpty()) setStatus("Detected " + detected + " input" + note, true);
+                        return;
+                    }
                     inputCombo.setSelectedItem(detected);
-                    setStatus("Detected " + detected + " input", true);
+                    setStatus("Detected " + detected + " input" + note, true);
                 });
             }
             @Override public void removeUpdate(DocumentEvent e)  { }
@@ -1011,24 +1048,11 @@ public class ConverterPanel implements Disposable {
                       if (FMT_CSV.equals(outFmt)) {
                           com.fasterxml.jackson.databind.JsonNode pivot = pipeline.parseJson(asJson);
                           long estimate = pipeline.estimateCsvRows(pivot, csvMode);
-                          // A disposed panel must not raise a modal dialog: there
-                          // is no window left to parent it to.
-                          if (estimate > rowWarningThreshold && !disposed) {
-                              final long est = estimate;
-                              java.util.concurrent.atomic.AtomicBoolean proceed =
-                                    new java.util.concurrent.atomic.AtomicBoolean(false);
-                              try {
-                                  SwingUtilities.invokeAndWait(() -> proceed.set(confirmWarning(
-                                        "Row count warning",
-                                        String.format("%s will produce ~%,d rows. Continue?",
-                                              csvMode, est))));
-                              } catch (Exception dialogFailure) {
-                                  LOG.warn("Row-count confirmation dialog failed; cancelling conversion",
-                                        dialogFailure);
-                              }
-                              if (!proceed.get()) {
-                                  throw new CancellationException("Conversion cancelled");
-                              }
+                          if (estimate > rowWarningThreshold && !confirmFromWorker(
+                                "Row count warning",
+                                String.format("%s will produce ~%,d rows. Continue?",
+                                      csvMode, estimate))) {
+                              throw new CancellationException("Conversion cancelled");
                           }
                           return pipeline.renderCsv(pivot, csvMode, opts.csvFormat());
                       }
@@ -1109,6 +1133,24 @@ public class ConverterPanel implements Disposable {
               JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) == JOptionPane.OK_OPTION;
     }
 
+    /**
+     * Asks {@link #confirmWarning}'s question from a worker thread, blocking
+     * until it is answered. False when the panel is gone — a disposed panel
+     * must not raise a modal dialog, there is no window left to parent it to —
+     * or the dialog could not be shown, so the caller cancels rather than
+     * proceeding on an answer nobody gave.
+     */
+    private boolean confirmFromWorker(String title, String message) {
+        if (disposed) return false;
+        AtomicBoolean proceed = new AtomicBoolean(false);
+        try {
+            SwingUtilities.invokeAndWait(() -> proceed.set(confirmWarning(title, message)));
+        } catch (Exception dialogFailure) {
+            LOG.warn("Confirmation dialog failed; treating the answer as Cancel", dialogFailure);
+        }
+        return proceed.get();
+    }
+
     // ── Format input ──────────────────────────────────────────────────────
     private void doFormat() {
         final String input = inputArea.getText().trim();
@@ -1119,14 +1161,33 @@ public class ConverterPanel implements Disposable {
         // the hundreds of milliseconds on multi-megabyte input, so off the EDT.
         runOffEdt(() -> {
             try {
+                // Format keeps only the data. Comments and anchors do not come
+                // back, so the user is asked before the editor is overwritten
+                // with less than it held — silently dropping every comment from
+                // a k8s manifest is a rewrite, not a tidy.
+                String losses = pipeline.formatLosses(input, fmt);
+                if (losses != null && !confirmFromWorker("Format",
+                      "Format keeps only the data, so it would drop " + losses
+                      + " from the document. Continue?"))
+                    throw new CancellationException("Format cancelled");
                 return pipeline.formatInput(input, fmt, opts);
             } catch (Exception ex) {
                 throw new java.util.concurrent.CompletionException(ex);
             }
         }, (formatted, failure) -> {
+            if (failure instanceof CancellationException) {
+                setStatusWarn("Format cancelled");
+                return;
+            }
             if (failure != null) {
                 showError("Format failed: " + describe(failure));
                 jumpToErrorLocation(failure);
+                return;
+            }
+            // The result belongs to the text it was computed from. Anything
+            // typed while it was being computed would otherwise be overwritten.
+            if (!inputArea.getText().trim().equals(input)) {
+                setStatusWarn("Input changed while formatting; the result was discarded");
                 return;
             }
             setInputTextQuietly(formatted);

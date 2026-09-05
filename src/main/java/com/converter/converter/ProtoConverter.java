@@ -89,16 +89,42 @@ public class ProtoConverter {
 
     // ── Internal data structure ───────────────────────────────────────────
 
-    private static class Block {
+    private static final class Block {
         final String name;
         final String body;
         final int start;
         final int end;
+        /** For a message: the types declared directly inside it. Set at registration. */
+        Scope inner;
         Block(String name, String body, int start, int end) {
             this.name = name;
             this.body = body;
             this.start = start;
             this.end = end;
+        }
+    }
+
+    /**
+     * The type names visible from inside one message: the types it declares
+     * itself, then its enclosing message's, out to the file's top level.
+     *
+     * <p>protoc resolves a bare type name by searching exactly that way,
+     * innermost scope outward. One flat registry keyed by simple name gave
+     * every same-named nested type the LAST definition registered — message
+     * A's {@code Inner i = 1} resolved to message B's {@code Inner} — and let a
+     * nested type shadow a top-level one for every other message in the file.
+     */
+    private static final class Scope {
+        final Scope parent;
+        final Map<String, Block> messages = new LinkedHashMap<>();
+        final Map<String, String> enumDefaults = new LinkedHashMap<>();
+
+        Scope(Scope parent) { this.parent = parent; }
+
+        /** The message {@link Block} or enum-default {@link String} declared directly here, or null. */
+        Object member(String name) {
+            Block message = messages.get(name);
+            return message != null ? message : enumDefaults.get(name);
         }
     }
 
@@ -125,10 +151,13 @@ public class ProtoConverter {
                 "message Person {\n  string name = 1;\n  int32 age = 2;\n}");
         }
 
-        Map<String, Block> registry = new LinkedHashMap<>();
-        Map<String, String> enumDefaults = new LinkedHashMap<>();
-        for (Block en : findNamedBlocks(clean, "enum")) registerEnum(en, enumDefaults);
-        for (Block msg : topMessages) registerAll(msg, registry, enumDefaults);
+        Scope fileScope = new Scope(null);
+        // Top-level enums are what is left once every message block is removed.
+        // Searching the whole text found the nested ones too and registered
+        // them at file level, where any message could see them.
+        for (Block en : findNamedBlocks(stripBlocks(clean, "message"), "enum"))
+            fileScope.enumDefaults.put(en.name, firstEnumValue(en));
+        for (Block msg : topMessages) register(msg, fileScope);
 
         // Every message is validated, not only the ones a field happens to
         // reference. buildMessageNode validates as it descends, so a nested
@@ -138,7 +167,7 @@ public class ProtoConverter {
 
         ObjectNode root = jsonMapper.createObjectNode();
         for (Block msg : topMessages) {
-            root.set(msg.name, buildMessageNode(msg, registry, enumDefaults, new HashSet<>()));
+            root.set(msg.name, buildMessageNode(msg, new HashSet<>()));
         }
 
         return jsonMapper.writeValueAsString(root);
@@ -146,57 +175,91 @@ public class ProtoConverter {
 
     // ── Registration ──────────────────────────────────────────────────────
 
-    private void registerAll(Block msg, Map<String, Block> registry, Map<String, String> enums) {
-        registry.put(msg.name, msg);
-        for (Block en : findNamedBlocks(msg.body, "enum")) registerEnum(en, enums);
-        for (Block nested : findNamedBlocks(msg.body, "message")) {
-            registerAll(nested, registry, enums);
-        }
+    /** Registers a message in its enclosing scope, and what it declares in a scope of its own. */
+    private void register(Block msg, Scope enclosing) {
+        Scope own = new Scope(enclosing);
+        msg.inner = own;
+        enclosing.messages.put(msg.name, msg);
+        // Enums of the nested messages belong to those messages, so they are
+        // stripped before the search; the nested messages themselves are found
+        // with depth tracking and register their own contents recursively.
+        for (Block en : findNamedBlocks(stripBlocks(msg.body, "message"), "enum"))
+            own.enumDefaults.put(en.name, firstEnumValue(en));
+        for (Block nested : findNamedBlocks(msg.body, "message")) register(nested, own);
     }
 
-    /** Registers an enum by name with its first declared value (the proto3 default). */
-    private void registerEnum(Block en, Map<String, String> enums) {
-        String first = "";
+    /** An enum's first declared value — the proto3 default — or "" when it declares none. */
+    private String firstEnumValue(Block en) {
         for (String raw : en.body.split(";")) {
             String stmt = raw.trim();
             if (stmt.isEmpty() || IGNORED_STATEMENT.matcher(stmt).matches()) continue;
             Matcher m = ENUM_VALUE_PATTERN.matcher(stmt);
-            if (m.matches()) { first = m.group(1); break; }
+            if (m.matches()) return m.group(1);
         }
-        enums.putIfAbsent(en.name, first);
+        return "";
+    }
+
+    /**
+     * What a type name denotes from inside {@code scope}: a message {@link Block},
+     * an enum's default value {@link String}, or null when nothing matches.
+     *
+     * <p>A bare name is searched innermost scope outward. A dotted name resolves
+     * its first part the same way and then descends through nested scopes; when
+     * the first part is unknown — a package prefix, which this parser does not
+     * model — the search retries from the next part, so {@code pkg.A.Inner}
+     * still finds {@code A.Inner}.
+     */
+    private static Object resolveType(Scope scope, String type) {
+        String qualified = type.startsWith(".") ? type.substring(1) : type;
+        String[] parts = qualified.split("\\.");
+        for (int start = 0; start < parts.length; start++) {
+            Object current = lookup(scope, parts[start]);
+            int i = start + 1;
+            while (current instanceof Block owner && i < parts.length) {
+                current = owner.inner.member(parts[i]);
+                i++;
+            }
+            if (current != null && i == parts.length) return current;
+        }
+        return null;
+    }
+
+    private static Object lookup(Scope scope, String name) {
+        for (Scope s = scope; s != null; s = s.parent) {
+            Object member = s.member(name);
+            if (member != null) return member;
+        }
+        return null;
     }
 
     // ── JSON node construction ────────────────────────────────────────────
 
-    private ObjectNode buildMessageNode(Block msg, Map<String, Block> registry,
-                                        Map<String, String> enums, Set<String> resolving) {
+    /**
+     * @param resolving the messages currently being expanded, by identity: a
+     *                  name would conflate two same-named nested messages, and
+     *                  a recursive type has to bottom out as an empty object.
+     */
+    private ObjectNode buildMessageNode(Block msg, Set<Block> resolving) {
         ObjectNode node = jsonMapper.createObjectNode();
-        if (!resolving.add(msg.name)) return node;
+        if (!resolving.add(msg)) return node;
 
         try {
-            for (Block nested : findNamedBlocks(msg.body, "message"))
-                registry.putIfAbsent(nested.name, nested);
-
-            List<Block> oneofs = findNamedBlocks(msg.body, "oneof");
-
             String flatBody = stripBlocks(msg.body, "message", "oneof", "enum");
             // Not validated here: validateTree already covered every message,
             // referenced or not, before any of this ran. Doing it again split
             // the same bodies on ';' and re-matched them for a second time, and
             // left two paths that could disagree about which error a user sees.
+            addFields(flatBody, node, msg.inner, resolving);
 
-            addFields(flatBody, node, registry, enums, resolving);
-
-            for (Block oneof : oneofs)
-                addFields(oneof.body, node, registry, enums, resolving);
+            for (Block oneof : findNamedBlocks(msg.body, "oneof"))
+                addFields(oneof.body, node, msg.inner, resolving);
         } finally {
-            resolving.remove(msg.name);
+            resolving.remove(msg);
         }
         return node;
     }
 
-    private void addFields(String body, ObjectNode node, Map<String, Block> registry,
-                           Map<String, String> enums, Set<String> resolving) {
+    private void addFields(String body, ObjectNode node, Scope scope, Set<Block> resolving) {
         Matcher fm = FIELD_PATTERN.matcher(body);
         while (fm.find()) {
             boolean repeated  = fm.group(1) != null && fm.group(1).trim().equals("repeated");
@@ -209,13 +272,15 @@ public class ProtoConverter {
                 node.putObject(fieldName);
             } else if (SCALAR_TYPES.contains(protoType)) {
                 addScalarDefault(node, fieldName, protoType);
-            } else if (enums.containsKey(protoType)) {
-                node.put(fieldName, enums.get(protoType));
-            } else if (registry.containsKey(protoType) && !resolving.contains(protoType)) {
-                node.set(fieldName,
-                      buildMessageNode(registry.get(protoType), registry, enums, resolving));
             } else {
-                node.putObject(fieldName);
+                Object type = resolveType(scope, protoType);
+                if (type instanceof String enumDefault) {
+                    node.put(fieldName, enumDefault);
+                } else if (type instanceof Block message && !resolving.contains(message)) {
+                    node.set(fieldName, buildMessageNode(message, resolving));
+                } else {
+                    node.putObject(fieldName);
+                }
             }
         }
     }

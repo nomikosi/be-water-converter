@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.csv.CsvMapper;
+import com.fasterxml.jackson.dataformat.csv.CsvParser;
 import com.fasterxml.jackson.dataformat.csv.CsvSchema;
 
 import java.util.*;
@@ -52,6 +53,16 @@ public class CsvConverter {
         public static final CsvFormat DEFAULT = new CsvFormat(',', '"');
         public static final CsvFormat SEMICOLON = new CsvFormat(';', '"');
         public static final CsvFormat TAB = new CsvFormat('\t', '"');
+
+        /** The format for a delimiter a document was detected to use, with the standard quote. */
+        public static CsvFormat forDelimiter(char delimiter) {
+            return switch (delimiter) {
+                case ','  -> DEFAULT;
+                case ';'  -> SEMICOLON;
+                case '\t' -> TAB;
+                default   -> new CsvFormat(delimiter, '"');
+            };
+        }
     }
 
     private final ObjectMapper jsonMapper;
@@ -92,21 +103,7 @@ public class CsvConverter {
     public String csvToJson(String csv, boolean inferTypes, CsvFormat format) throws Exception {
         if (csv == null || csv.isBlank())
             throw new IllegalArgumentException("Input CSV must not be empty");
-        csv = ConversionPipeline.stripBom(csv);
-
-        // Read positionally rather than through withHeader(): letting Jackson key
-        // rows by header name silently collapses repeated column names, so a
-        // trailing empty duplicate would overwrite the populated column.
-        CsvSchema schema = CsvSchema.emptySchema()
-              .withColumnSeparator(format.delimiter())
-              .withQuoteChar(format.quote());
-        // WRAP_AS_ARRAY is what lets a column-less schema read raw rows; without
-        // it Jackson enforces the schema's zero columns and rejects every line.
-        MappingIterator<String[]> it = csvMapper.readerFor(String[].class)
-              .with(com.fasterxml.jackson.dataformat.csv.CsvParser.Feature.WRAP_AS_ARRAY)
-              .with(schema)
-              .readValues(csv);
-        List<String[]> lines = it.readAll();
+        List<String[]> lines = readRows(csv, format);
         if (lines.isEmpty()) return jsonMapper.writeValueAsString(jsonMapper.createArrayNode());
 
         List<String> headers = uniqueHeaders(lines.get(0));
@@ -142,6 +139,51 @@ public class CsvConverter {
             }
         }
         return jsonMapper.writeValueAsString(arr);
+    }
+
+    /**
+     * Every row of the document as its cells, header row included, read
+     * positionally rather than through withHeader(): letting Jackson key rows by
+     * header name silently collapses repeated column names, so a trailing empty
+     * duplicate would overwrite the populated column.
+     */
+    private List<String[]> readRows(String csv, CsvFormat format) throws java.io.IOException {
+        // WRAP_AS_ARRAY is what lets a column-less schema read raw rows; without
+        // it Jackson enforces the schema's zero columns and rejects every line.
+        MappingIterator<String[]> it = csvMapper.readerFor(String[].class)
+              .with(CsvParser.Feature.WRAP_AS_ARRAY)
+              // A blank line is not a row. Without this it read as one empty
+              // cell, so "a,b\n1,2\n\n" — a paste with a trailing blank line —
+              // gained a phantom {"a":""} row, and Format wrote it back.
+              .with(CsvParser.Feature.SKIP_EMPTY_LINES)
+              .with(schemaFor(format))
+              .readValues(ConversionPipeline.stripBom(csv));
+        return it.readAll();
+    }
+
+    private static CsvSchema schemaFor(CsvFormat format) {
+        return CsvSchema.emptySchema()
+              .withColumnSeparator(format.delimiter())
+              .withQuoteChar(format.quote());
+    }
+
+    /**
+     * Re-lays-out CSV without interpreting it: rows in, the same rows out,
+     * normalising only quoting, line endings and blank lines.
+     *
+     * <p>Format used to go through the JSON pivot, which turns rows into objects
+     * keyed by header. That rewrote the header line ({@code id,id,} became
+     * {@code id,id_2,column_3}), dropped every header a ragged row happened to
+     * miss ({@code a,b,c\n1} came back as {@code a\n1}), and refused a file that
+     * was only a header. None of that is layout.
+     */
+    public String reformat(String csv, CsvFormat format) throws Exception {
+        if (csv == null || csv.isBlank())
+            throw new IllegalArgumentException("Input CSV must not be empty");
+        List<String[]> rows = readRows(csv, format);
+        // A column-less schema writes each array positionally, so nothing is
+        // named, padded or discarded on the way out.
+        return csvMapper.writer(schemaFor(format)).writeValueAsString(rows);
     }
 
     /**

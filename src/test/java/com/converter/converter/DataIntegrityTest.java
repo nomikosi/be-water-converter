@@ -22,6 +22,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -68,6 +69,21 @@ class DataIntegrityTest {
     void trailingWhitespaceStillValid() throws Exception {
         assertThat(pipeline.normalizeToJson("  {\"a\":1}  \n\n", ConversionPipeline.FMT_JSON,
               ConversionOptions.DEFAULTS)).isEqualTo("{\"a\":1}");
+    }
+
+    @Test @DisplayName("a repeated JSON key is refused instead of keeping the last value")
+    void duplicateJsonKeysRefused() {
+        // {"a":1,"a":2} read as {"a":2}, and Format wrote the half-document
+        // back. The YAML reader already refused duplicates.
+        assertThatThrownBy(() -> pipeline.normalizeToJson("{\"a\":1,\"a\":2}",
+              ConversionPipeline.FMT_JSON, ConversionOptions.DEFAULTS))
+              .hasMessageContaining("Duplicate field 'a'");
+        assertThatThrownBy(() -> pipeline.formatInput("{\"b\":{\"x\":1,\"x\":2}}",
+              ConversionPipeline.FMT_JSON, ConversionOptions.DEFAULTS))
+              .hasMessageContaining("Duplicate field 'x'");
+        // The same key at different levels is not a duplicate.
+        assertThatCode(() -> pipeline.normalizeToJson("{\"a\":{\"a\":1}}",
+              ConversionPipeline.FMT_JSON, ConversionOptions.DEFAULTS)).doesNotThrowAnyException();
     }
 
     // ── YAML anchors and merge keys ───────────────────────────────────────

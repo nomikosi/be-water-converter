@@ -75,4 +75,18 @@ class CsvFidelityTest {
     void raggedShortRowIsUnchanged() throws Exception {
         assertThat(converter.csvToJson("a,b\n1\n", false)).isEqualTo("[{\"a\":\"1\"}]");
     }
+
+    @Test @DisplayName("a blank line is not a row")
+    void blankLinesAreNotRows() throws Exception {
+        // A paste with a trailing blank line gained a phantom {"a":""} row, and
+        // Format wrote it back.
+        assertThat(converter.csvToJson("a,b\n1,2\n\n", false))
+              .isEqualTo("[{\"a\":\"1\",\"b\":\"2\"}]");
+        assertThat(converter.csvToJson("a,b\n1,2\n\n3,4\n", false))
+              .isEqualTo("[{\"a\":\"1\",\"b\":\"2\"},{\"a\":\"3\",\"b\":\"4\"}]");
+        assertThat(converter.csvToJson("a,b\r\n1,2\r\n\r\n3,4\r\n", false))
+              .isEqualTo("[{\"a\":\"1\",\"b\":\"2\"},{\"a\":\"3\",\"b\":\"4\"}]");
+        assertThat(converter.csvToJson("a,b\n1,2\n   \n3,4\n", false))
+              .isEqualTo("[{\"a\":\"1\",\"b\":\"2\"},{\"a\":\"3\",\"b\":\"4\"}]");
+    }
 }

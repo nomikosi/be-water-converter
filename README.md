@@ -103,8 +103,11 @@ via **Find Action** and assign your own shortcuts in **Settings → Keymap** (se
 ### File import and export
 
 **Open** loads a file into the input editor and auto-detects the source format from the
-file extension (`.json`, `.xml`, `.yaml`/`.yml`, `.csv`, `.toml`, `.proto`). **Save**
-writes the current output to disk using the appropriate format extension.
+file extension (`.json`, `.xml`, `.yaml`/`.yml`, `.csv`, `.toml`, `.proto`). If the file is
+open in an editor with unsaved changes, the editor's text is loaded rather than the stale
+copy on disk. **Save** writes the current output to disk using the appropriate format
+extension and refreshes the file in the IDE's virtual file system, so a file saved into the
+project shows up straight away.
 
 You can also **drag and drop** a file directly onto the input editor. The file is loaded
 and the source format is auto-detected from the extension, just like the Open action.
@@ -112,8 +115,23 @@ and the source format is auto-detected from the extension, just like the Open ac
 ### Format-aware formatting
 
 The **Format** action pretty-prints or canonicalizes the current input for JSON, XML,
-YAML, and TOML. JSON formatting also applies the lenient auto-close logic, which helps
+YAML, TOML and CSV. JSON formatting also applies the lenient auto-close logic, which helps
 recover truncated input during interactive editing.
+
+Format is a layout action and is held to that. CSV is rewritten row by row without ever
+being parsed into objects, so headers, ragged rows and cell text come back exactly as
+written. YAML keeps one document per document, including a `---`-prefixed single document.
+Numbers keep the digits they were written with: `1.10` stays `1.10` in JSON, YAML and TOML
+alike. If the input is edited while Format is still running, the result is discarded rather
+than written over the newer text.
+
+Where a re-layout could only be done by changing what the document says, Format refuses and
+leaves the editor alone: TOML dates, hex/octal/binary and underscore-separated numbers and
+`inf`/`nan` (the JSON step in between cannot spell them); YAML `.inf`/`.nan`; and XML elements
+that mix text with child elements, which the indenter cannot pretty-print without inserting
+whitespace into the text. Formats that pass through the JSON tree keep only the data, so
+before YAML, TOML or JSON-with-comments is rewritten, Format says how many comments (and YAML
+anchors) would be dropped and asks first.
 
 ### Conversion-specific options bar
 
@@ -140,6 +158,11 @@ detection looks for a following `key = value` line before deciding. Detection on
 fires on a paste-sized insertion, never on typing, and stays silent when it cannot tell,
 so it will not fight a format you selected yourself.
 
+For CSV the delimiter is detected as well — comma, semicolon or tab — and the **Delimiter**
+option is switched to match, both on paste and when a `.csv` file is opened. Context-menu
+conversions sniff the delimiter the same way, so a semicolon file is never read as one wide
+column because the option still said comma.
+
 ### Sort keys
 
 **Sort keys** orders object keys alphabetically throughout the document, leaving array
@@ -147,9 +170,9 @@ order untouched. Two documents carrying the same data in different key orders ca
 to the same output, which makes conversions diffable across runs and across sources. It is
 applied to the internal JSON pivot, so every *conversion* target inherits the ordering.
 
-The **Format** action is the one exception: sorting is a JSON-tree operation, so Format
-sorts JSON and deliberately leaves XML, YAML, TOML and CSV in document order rather than
-round-tripping them through JSON to reorder them.
+The **Format** action sorts JSON, YAML and TOML, each of which already passes through the
+JSON tree, and leaves XML and CSV in document order rather than round-tripping them through
+JSON to reorder them.
 
 ### Using it from the editor and Project view
 
@@ -211,8 +234,8 @@ CSV generation supports two expansion modes:
   arrays of sizes s1 × s2 × … × sN produce that many rows. Useful for fully denormalized
   tabular exports, but row counts can explode; conversions estimated to exceed the
   configurable **row warning threshold** (default 1,000) ask for confirmation first. The
-  threshold can be adjusted via the **Row warning** spinner that appears in the options
-  bar when `CROSS_JOIN` mode is selected.
+  threshold can be adjusted via the **Row warning** spinner in the options bar, which is
+  shown for both CSV modes since the warning applies to both.
 
 #### `FLAT_FIRST` example
 
@@ -317,7 +340,10 @@ The Protobuf converter works structurally in both directions without invoking `p
   Fields typed with a known `enum` resolve to the enum's first declared value (the
   proto3 default). `oneof` fields are included alongside regular fields with their
   typed defaults, and duplicate field numbers are rejected across the whole message,
-  including `oneof` blocks.
+  including `oneof` blocks. Type names are resolved the way `protoc` resolves them: a
+  message's own nested types first, then its enclosing messages', then the file's top
+  level, so two messages can each declare their own `Inner` or `Status`; dotted references
+  such as `Outer.Inner`, with or without a package prefix, descend the same way.
 - **`jsonToProto`** walks a JSON tree and emits a proto3 schema with inline nested
   messages and repeated fields.
 
@@ -377,20 +403,31 @@ Produces:
 |---|---|
 | `ConverterToolWindowFactory` | Registers and mounts the tool-window content. |
 | `ConverterPanel` | UI: toolbar, editors, options, find bar, status updates, file I/O. |
-| `ConversionPipeline` | UI-independent conversion dispatch: normalize to JSON, render to output, per-format formatting, autoClose repair, XML pretty-printing. |
+| `ConverterWidgets` | Custom-painted toolbar controls (buttons, combos, format badges). |
+| `ConversionPipeline` | UI-independent conversion dispatch: normalize to JSON, render to output, per-format formatting and its refusals, autoClose repair, XML pretty-printing, format and delimiter detection. |
+| `ConversionOptions` | Immutable per-conversion settings: CSV mode and delimiter, Lombok, date detection, type inference, key sorting, subtree filter. |
+| `PivotJson` | Reader settings that carry every number through the JSON pivot unchanged. |
+| `JsonPathFilter` | JSON Pointer and dotted-path subtree selection. |
 | `ConversionHistory` | Bounded in-memory history of successful conversions. |
+| `ConversionFileNames` | Extension and file-name rules for conversion results. |
 | `ConverterActions` | Keymap-visible IDE actions (Convert, Format, Copy, Open, Save). |
-| `ConverterFileOps` | Native IDE file open/save dialogs, async loading, drag-and-drop. |
+| `ConverterContextActions` | Editor and Project-view context menu: open in the tool window, or convert straight to a scratch file. |
+| `ConverterScratchFiles` | Opens results as scratch files in a real IDE editor. |
+| `ConverterDiff` | Opens the IDE diff viewer on two canonical-JSON documents (Compare). |
+| `ConverterFileOps` | Native IDE file open/save dialogs, async loading, drag-and-drop, VFS refresh. |
 | `FindBar` | Ctrl+F search bar for the editors. |
 | `OpenConverterAction` | Menu action (**Tools → Be Water Converter**) that activates the tool window. |
 | `ConverterTheme` | Theme-aware color palette for the UI. |
 | `WrapLayout` | Responsive multi-row wrapping for the toolbar and options bar. |
 | `JsonXmlConverter` | JSON ↔ XML conversion, element-name sanitization, optional type inference. |
-| `JsonYamlConverter` | JSON ↔ YAML conversion, multi-document support. |
-| `CsvConverter` | CSV ↔ JSON conversion, flattening logic, row estimation. |
+| `JsonYamlConverter` | JSON ↔ YAML conversion, multi-document support, exact floats, resolver-aware quoting. |
+| `CsvConverter` | CSV ↔ JSON conversion, positional re-layout, flattening logic, row estimation. |
 | `TomlConverter` | TOML ↔ JSON conversion. |
-| `ProtoConverter` | Protobuf schema ↔ JSON structural conversion with identifier sanitization. |
+| `ProtoConverter` | Protobuf schema ↔ JSON structural conversion with scoped type resolution and identifier sanitization. |
 | `JavaPojoGenerator` | Java class generation from structured JSON, with date detection. |
+| `KotlinDataClassGenerator` | Kotlin data class generation from structured JSON. |
+| `JsonSchemaGenerator` | JSON Schema (draft 2020-12) inference. |
+| `StructureModel` / `SourceConventions` | Type discovery and identifier rules shared by the Java and Kotlin generators. |
 | `ScalarInference` | Shared string→typed-value inference for CSV and XML input. |
 
 ## Development
@@ -415,10 +452,11 @@ Run pure JVM unit tests (no IDE sandbox required) with:
 ./gradlew unitTest
 ```
 
-The `check` task runs them automatically. The test suite covers all converter classes with
-420+ test cases, including CSV flattening edge cases (empty arrays, nulls, missing fields,
-header ordering), type inference, Protobuf validation and sanitization, POJO generation
-variants, XXE hardening, and end-to-end cross-format pipeline tests.
+The `check` task runs the full platform-aware `test` task, a superset of these. The test
+suite covers all converter classes with 650+ test cases, including CSV flattening edge cases
+(empty arrays, nulls, missing fields, header ordering), type inference, Protobuf validation,
+scoping and sanitization, POJO generation variants, numeric and format fidelity, XXE
+hardening, and end-to-end cross-format pipeline tests.
 
 ### Building a distribution
 
@@ -463,11 +501,18 @@ GitHub release. Publishing requires a `PUBLISH_TOKEN` repository secret containi
   shape that differs from the original intent.
 - `CROSS_JOIN` CSV exports can grow very quickly with multiple nested arrays; prefer
   `FLAT_FIRST` for general use.
+- JSON has no infinity or NaN, so YAML `.inf`/`.nan` and TOML `inf`/`nan` convert to the
+  strings `"Infinity"` and `"NaN"`; Format refuses to write those back.
+- Formats that pass through the JSON tree (YAML, TOML, JSON with comments) keep only the
+  data: Format drops comments, and expands YAML anchors and merge keys in place. It asks
+  before doing so.
+- XML Format writes attributes in alphabetical order, which XML treats as insignificant
+  but which does change the text of an element that listed them differently.
 
 ## Roadmap ideas
 
 - Persist conversion history across IDE restarts.
-- JSON Schema generation and validation.
+- JSON Schema validation.
 - Batch conversion of multiple files.
 
 ## License

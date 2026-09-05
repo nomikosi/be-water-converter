@@ -44,7 +44,9 @@ public final class PivotJson {
     public static ObjectMapper mapper() {
         return JsonMapper.builder()
               .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
-              .nodeFactory(JsonNodeFactory.withExactBigDecimals(true))
+              // The constructor, not withExactBigDecimals(true): Jackson 2.21
+              // deprecates the static factory and keeps this form.
+              .nodeFactory(new JsonNodeFactory(true))
               .build();
     }
 }
