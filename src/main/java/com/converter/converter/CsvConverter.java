@@ -384,7 +384,7 @@ public class CsvConverter {
             if (val.isObject()) {
                 Map<String, String> flat = new LinkedHashMap<>();
                 flattenToCells(val, key, flat);
-                for (Map<String, String> row : result) row.putAll(flat);
+                for (Map<String, String> row : result) putAllCells(row, flat);
 
             } else if (val.isArray() && hasObjectElements(val)) {
                 if (e.getKey().equals(firstArrayField)) {
@@ -459,11 +459,34 @@ public class CsvConverter {
             checkInterrupted();
             for (Map<String, String> r : right) {
                 Map<String, String> merged = new LinkedHashMap<>(l);
-                merged.putAll(r);
+                putAllCells(merged, r);
                 product.add(merged);
             }
         }
         return product;
+    }
+
+    /**
+     * Writes one cell, refusing to overwrite a cell already in the row.
+     *
+     * <p>Columns are named by joining nested keys with dots, and a key may
+     * itself contain a dot, so {@code {"a.b":1,"a":{"b":2}}} produced ONE column
+     * {@code a.b} holding whichever value was written last. The other was gone,
+     * and nothing said so. Every cell write goes through here, including the
+     * merges a cross join does, because the collision can come from any of them.
+     */
+    private static void putCell(Map<String, String> row, String column, String value) {
+        if (row.containsKey(column))
+            throw new IllegalArgumentException(
+                  "Two keys produce the same CSV column \"" + column + "\": a nested key and a "
+                  + "key that already contains a dot flatten to the same name, so one value "
+                  + "would overwrite the other. Rename one of them first.");
+        row.put(column, value);
+    }
+
+    private static void putAllCells(Map<String, String> row, Map<String, String> cells) {
+        for (Map.Entry<String, String> cell : cells.entrySet())
+            putCell(row, cell.getKey(), cell.getValue());
     }
 
     /**
@@ -476,7 +499,7 @@ public class CsvConverter {
     }
 
     private void putInAllRows(List<Map<String, String>> rows, String key, String value) {
-        for (Map<String, String> row : rows) row.put(key, value);
+        for (Map<String, String> row : rows) putCell(row, key, value);
     }
 
     /** Renders a non-object value as one cell: scalar arrays join with commas, null becomes "". */
@@ -497,9 +520,9 @@ public class CsvConverter {
                       prefix.isEmpty() ? e.getKey() : prefix + "." + e.getKey(), out);
             }
         } else if (node.isArray() && hasObjectElements(node)) {
-            out.put(prefix, node.toString());
+            putCell(out, prefix, node.toString());
         } else {
-            out.put(prefix, scalarCell(node));
+            putCell(out, prefix, scalarCell(node));
         }
     }
 

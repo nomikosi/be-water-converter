@@ -201,6 +201,18 @@ class YamlFidelityTest {
         assertThat(converter.yamlToJson("1: a\n2: b\n")).isEqualTo("{\"1\":\"a\",\"2\":\"b\"}");
     }
 
+    @Test @DisplayName("a null key becomes the key \"null\", like every other non-string key")
+    void nullKeyBecomesText() throws Exception {
+        // Jackson refused it with its own sentence about a NullKeySerializer.
+        assertThat(converter.yamlToJson("~: 1\nb: 2\n")).isEqualTo("{\"null\":1,\"b\":2}");
+        assertThat(converter.yamlToJson("null: 1\n")).isEqualTo("{\"null\":1}");
+        assertThat(converter.yamlToJson("a:\n  ~: x\n")).isEqualTo("{\"a\":{\"null\":\"x\"}}");
+        // Beside a literal "null" string key it is a collision, and is refused.
+        assertThatThrownBy(() -> converter.yamlToJson("~: 1\n\"null\": 2\n"))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("identical as JSON keys");
+    }
+
     @Test @DisplayName("a duplicate mapping key is an error, not a silent last-wins")
     void duplicateKeysAreRefused() {
         assertThatThrownBy(() -> converter.yamlToJson("a: 1\na: 2\n"))

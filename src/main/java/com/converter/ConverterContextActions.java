@@ -195,6 +195,15 @@ public final class ConverterContextActions {
             Project project = e.getProject();
             Source source = sourceFrom(e);
             if (project == null || source == null) return;
+            // The same question the toolbar's Open asks: the panel's editor is
+            // what slows down on a large document, whichever way it arrives.
+            if (source.approximateSize() > ConverterFileOps.LARGE_FILE_WARNING_BYTES
+                  && com.intellij.openapi.ui.Messages.showYesNoDialog(project,
+                        String.format("%s is %,d MB. Loading large files may be slow. Continue?",
+                              describe(source), source.approximateSize() / (1024 * 1024)),
+                        "Large File", com.intellij.openapi.ui.Messages.getWarningIcon())
+                        != com.intellij.openapi.ui.Messages.YES)
+                return;
             withResolvedText(project, source, "Loading " + describe(source), text ->
                   ConverterToolWindowAccess.withPanel(project,
                         panel -> panel.loadContent(text, formatFor(source.name(), text))));

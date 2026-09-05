@@ -272,4 +272,104 @@ class FormatAndDetectionTest {
         assertThat(pipeline.formatInput("{\"a\":1} // trailing {", ConversionPipeline.FMT_JSON, opts))
               .contains("\"a\"");
     }
+
+    @Test @DisplayName("autoClose puts its closers after a trailing line comment, not inside it")
+    void autoCloseClosesAfterTrailingLineComment() throws Exception {
+        // {"a":1 // note} is a document whose brace is part of the comment.
+        assertThat(pipeline.autoClose("{\"a\":1 // note")).isEqualTo("{\"a\":1 // note\n}");
+        assertThat(pipeline.autoClose("{\"a\":[1 # note")).isEqualTo("{\"a\":[1 # note\n]}");
+        assertThat(pipeline.formatInput("{\"a\":1 // note", ConversionPipeline.FMT_JSON, opts))
+              .contains("\"a\" : 1");
+        assertThat(pipeline.normalizeToJson("{\"a\":1 // note", ConversionPipeline.FMT_JSON, opts))
+              .isEqualTo("{\"a\":1}");
+        // Complete input ending in a comment gains nothing.
+        assertThat(pipeline.autoClose("{\"a\":1} // note")).isEqualTo("{\"a\":1} // note");
+    }
+
+    @Test @DisplayName("a comment-only JSON document is refused, not converted to null")
+    void commentOnlyJsonIsRefused() {
+        // The reader hands back a missing node for it, which serialised as the
+        // document "null" and reported a successful conversion.
+        for (String input : new String[]{"// todo", "# todo", "/* todo */", "  \n// a\n// b\n"}) {
+            assertThatThrownBy(() -> pipeline.normalizeToJson(input, ConversionPipeline.FMT_JSON, opts))
+                  .describedAs(input)
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("no value");
+            assertThatThrownBy(() -> pipeline.formatInput(input, ConversionPipeline.FMT_JSON, opts))
+                  .describedAs(input)
+                  .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test @DisplayName("detection looks past leading comment lines")
+    void detectionSkipsLeadingComments() {
+        assertThat(ConversionPipeline.detectFormat("// note\n{\"a\": 1}")).isEqualTo(ConversionPipeline.FMT_JSON);
+        assertThat(ConversionPipeline.detectFormat("# note\n{\"a\": 1}")).isEqualTo(ConversionPipeline.FMT_JSON);
+        assertThat(ConversionPipeline.detectFormat("/* note\n   more */\n{\"a\": 1}")).isEqualTo(ConversionPipeline.FMT_JSON);
+        // A bracket line after a comment was the TOML table-header check's
+        // first line, so a JSON array with a comment above it was TOML.
+        assertThat(ConversionPipeline.detectFormat("# note\n[1, 2]")).isEqualTo(ConversionPipeline.FMT_JSON);
+        assertThat(ConversionPipeline.detectFormat("# note\n[server]\nport = 1")).isEqualTo(ConversionPipeline.FMT_TOML);
+        assertThat(ConversionPipeline.detectFormat("# note\n- a\n- b")).isEqualTo(ConversionPipeline.FMT_YAML);
+        assertThat(ConversionPipeline.detectFormat("// licence\nsyntax = \"proto3\";\nmessage A { int32 x = 1; }"))
+              .isEqualTo(ConversionPipeline.FMT_PROTO);
+        // Nothing but comments is nothing.
+        assertThat(ConversionPipeline.detectFormat("# note\n// note")).isNull();
+        assertThat(ConversionPipeline.detectFormat("/* never closed")).isNull();
+        // A comment inside the document does not start it over.
+        assertThat(ConversionPipeline.withoutLeadingComments("a: 1\n# c\nb: 2")).isEqualTo("a: 1\n# c\nb: 2");
+    }
+
+    @Test @DisplayName("Protobuf Format tidies CRLF files too")
+    void protoFormatHandlesCrlf() throws Exception {
+        // Anchored on "\n" alone, a file with Windows line endings came back
+        // untouched, trailing blanks and all.
+        String crlf = "message A {\r\n  string a = 1;   \r\n\r\n\r\n\r\n  int32 b = 2;\r\n}\r\n";
+        assertThat(pipeline.formatInput(crlf, ConversionPipeline.FMT_PROTO, opts))
+              .isEqualTo("message A {\r\n  string a = 1;\r\n\r\n  int32 b = 2;\r\n}");
+        String lf = "message A {\n  string a = 1;   \n\n\n\n  int32 b = 2;\n}\n";
+        assertThat(pipeline.formatInput(lf, ConversionPipeline.FMT_PROTO, opts))
+              .isEqualTo("message A {\n  string a = 1;\n\n  int32 b = 2;\n}");
+    }
+
+    @Test @DisplayName("XML Format keeps a DOCTYPE without an internal subset")
+    void xmlFormatKeepsDoctype() throws Exception {
+        // Any DOCTYPE was refused with the parser's sentence about a feature
+        // flag, while Convert accepted the same file.
+        String plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+              + "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+              + "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+              + "<plist version=\"1.0\"><dict><key>a</key><string>b</string></dict></plist>";
+        String out = pipeline.formatInput(plist, ConversionPipeline.FMT_XML, opts);
+        assertThat(out).startsWith("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+              .contains("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+                    + "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">")
+              .contains("\n    <key>a</key>")
+              .doesNotContain("standalone");
+        // A system identifier alone, and a bare name alone.
+        assertThat(pipeline.formatInput("<!DOCTYPE a SYSTEM \"a.dtd\"><a><b>1</b></a>",
+              ConversionPipeline.FMT_XML, opts))
+              .startsWith("<!DOCTYPE a SYSTEM \"a.dtd\">").contains("<b>1</b>");
+        assertThat(pipeline.formatInput("<!DOCTYPE html>\n<html><body><p>x</p></body></html>",
+              ConversionPipeline.FMT_XML, opts))
+              .startsWith("<!DOCTYPE html>\n<html>");
+        assertThat(pipeline.formatInput("<?xml version=\"1.0\"?><!DOCTYPE html><html><p>x</p></html>",
+              ConversionPipeline.FMT_XML, opts))
+              .startsWith("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html>");
+        // A root named html made the serializer switch to its HTML method:
+        // no declaration, the DOCTYPE renamed, and <br/> written as <br>.
+        String xhtml = pipeline.formatInput(
+              "<?xml version=\"1.0\"?><!DOCTYPE html SYSTEM \"x.dtd\"><html><body><br/></body></html>",
+              ConversionPipeline.FMT_XML, opts);
+        assertThat(xhtml).startsWith("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+              .contains("<!DOCTYPE html SYSTEM \"x.dtd\">").contains("<br/>").contains("\n  <body>");
+        // An internal subset declares entities the DOM path would drop.
+        assertThatThrownBy(() -> pipeline.formatInput(
+              "<!DOCTYPE a [<!ENTITY x \"hi\">]><a><b>&x;</b></a>", ConversionPipeline.FMT_XML, opts))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("<!DOCTYPE a [...]>");
+        // Malformed XML still fails through the exception, with the location.
+        assertThatThrownBy(() -> pipeline.formatInput("<a><b>1</a>", ConversionPipeline.FMT_XML, opts))
+              .isInstanceOf(org.xml.sax.SAXParseException.class);
+    }
 }

@@ -48,11 +48,15 @@ import java.util.function.Supplier;
  */
 final class ConverterFileOps {
 
-    /** Files larger than this trigger a confirmation before loading (whole pipeline is in-memory). */
-    private static final long LARGE_FILE_WARNING_BYTES = 10L * 1024 * 1024;
+    /**
+     * Files larger than this trigger a confirmation before loading (whole
+     * pipeline is in-memory). Shared with the context-menu entry point, which
+     * loads the same editor and used to skip the question.
+     */
+    static final long LARGE_FILE_WARNING_BYTES = 10L * 1024 * 1024;
 
-    /** File content, and whether reading it needed the Latin-1 fallback. */
-    private record Loaded(String text, boolean latin1) {}
+    /** File content, and a note on how it was read when that was not plain UTF-8. */
+    private record Loaded(String text, String note) {}
 
     private static final Set<String> SUPPORTED_EXTENSIONS =
           Set.of("json", "xml", "yaml", "yml", "csv", "toml", "proto");
@@ -98,7 +102,10 @@ final class ConverterFileOps {
               .createSaveFileDialog(
                     new FileSaverDescriptor("Save Output", "Save the converter output", ext),
                     project)
-              .save((java.nio.file.Path) null, "output." + ext);
+              // The same name the scratch files use: for Java the file has to
+              // be Root.java to match the public class it holds, and
+              // "output.java" was flagged by the IDE the moment it was opened.
+              .save((java.nio.file.Path) null, ConversionFileNames.nameFor(null, outputFormat));
         if (wrapper == null) return;
         File file = wrapper.getFile();
         host.status("Saving " + file.getName() + "…", true);
@@ -177,17 +184,15 @@ final class ConverterFileOps {
         // Read off the EDT so a large or slow-network file cannot freeze the IDE.
         runOffEdt(() -> {
             try {
-                return new Loaded(Files.readString(file.toPath(), StandardCharsets.UTF_8), false);
-            } catch (java.nio.charset.MalformedInputException notUtf8) {
-                // A non-UTF-8 file failed with "Input length = 1", which says
-                // nothing about the cause. Latin-1 maps every byte, so the file
-                // opens; the status line says which encoding was used.
-                try {
-                    return new Loaded(
-                          Files.readString(file.toPath(), StandardCharsets.ISO_8859_1), true);
-                } catch (IOException ex) {
-                    throw new java.util.concurrent.CompletionException(ex);
-                }
+                // By its byte-order mark first: read as UTF-8 with a Latin-1
+                // fallback, a UTF-16 file opened as NUL-interleaved garbage.
+                var decoded = com.converter.converter.TextDecoder.decode(
+                      Files.readAllBytes(file.toPath()));
+                String note = decoded.fallback()
+                      ? " (not valid UTF-8 — read as ISO-8859-1)"
+                      : decoded.charset().equals(StandardCharsets.UTF_8) ? ""
+                      : " (read as " + decoded.charset().name() + ")";
+                return new Loaded(decoded.text(), note);
             } catch (IOException ex) {
                 throw new java.util.concurrent.CompletionException(ex);
             }
@@ -196,8 +201,7 @@ final class ConverterFileOps {
                 host.status("Failed to open file: " + cause.getMessage(), false);
                 return;
             }
-            host.loaded(content.text(), detectFormat(file.getName()), file.getName()
-                  + (content.latin1() ? " (not valid UTF-8 — read as ISO-8859-1)" : ""));
+            host.loaded(content.text(), detectFormat(file.getName()), file.getName() + content.note());
         });
     }
 

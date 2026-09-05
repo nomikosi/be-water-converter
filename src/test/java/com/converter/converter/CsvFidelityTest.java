@@ -89,4 +89,33 @@ class CsvFidelityTest {
         assertThat(converter.csvToJson("a,b\n1,2\n   \n3,4\n", false))
               .isEqualTo("[{\"a\":\"1\",\"b\":\"2\"},{\"a\":\"3\",\"b\":\"4\"}]");
     }
+
+    @Test @DisplayName("two keys that flatten to the same column are refused, not merged")
+    void collidingColumnsAreRefused() {
+        // {"a.b":1,"a":{"b":2}} wrote one column a.b holding 2; the 1 was gone.
+        for (CsvConverter.CsvMode mode : CsvConverter.CsvMode.values()) {
+            for (String json : new String[]{
+                  "{\"a.b\":1,\"a\":{\"b\":2}}",
+                  "{\"a\":{\"b\":2},\"a.b\":1}",
+                  "{\"a.b\":1,\"a\":[{\"b\":2},{\"b\":3}]}",       // through the array expansion
+                  "{\"a\":{\"b.c\":1,\"b\":{\"c\":2}}}",           // nested one level down
+            }) {
+                assertThatThrownBy(() -> converter.jsonToCsv(json, mode))
+                      .describedAs(mode + " " + json)
+                      .isInstanceOf(IllegalArgumentException.class)
+                      .hasMessageContaining("same CSV column \"a.b");
+            }
+        }
+        // The same column in DIFFERENT rows is an ordinary column.
+        assertThat(catching(() -> converter.jsonToCsv("[{\"a\":{\"b\":1}},{\"a.b\":2}]",
+              CsvConverter.CsvMode.FLAT_FIRST))).isEqualTo("a.b\n1\n2\n");
+    }
+
+    private static String catching(java.util.concurrent.Callable<String> call) {
+        try {
+            return call.call();
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+    }
 }

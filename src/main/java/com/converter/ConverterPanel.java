@@ -292,7 +292,7 @@ public class ConverterPanel implements Disposable {
         sortKeysCheck = new JCheckBox("Sort keys", false);
         sortKeysCheck.setToolTipText("<html>Sort object keys alphabetically so output is "
               + "stable and diffable (array order is kept).<br>"
-              + "Applies to conversions; Format sorts JSON only.</html>");
+              + "Applies to conversions, and to Format for JSON, YAML and TOML.</html>");
         sortKeysCheck.setOpaque(false);
         sortKeysCheck.setForeground(TEXT_BRIGHT);
         sortKeysCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
@@ -1173,6 +1173,10 @@ public class ConverterPanel implements Disposable {
         final String fmt   = (String) inputCombo.getSelectedItem();
         if (input.isEmpty()) { setStatus("Input is empty", false); return; }
         final ConversionOptions opts = currentOptions();
+        // Where the user was: the whole document is replaced, which put the
+        // caret at the top and scrolled a long file away from the line being
+        // edited. The line survives the re-layout better than the offset does.
+        final int caretLine = inputArea.getCaretLineNumber();
         // Formatting parses and re-serialises the whole document; measured in
         // the hundreds of milliseconds on multi-megabyte input, so off the EDT.
         runOffEdt(() -> {
@@ -1206,9 +1210,26 @@ public class ConverterPanel implements Disposable {
                 setStatusWarn("Input changed while formatting; the result was discarded");
                 return;
             }
+            // Nothing to write: replacing the document with itself only moved
+            // the caret and added an undo step.
+            if (formatted.equals(inputArea.getText())) {
+                setStatus("\u2713  Input already formatted", true);
+                return;
+            }
             setInputTextQuietly(formatted);
+            moveCaretToLine(caretLine);
             setStatus("\u2713  Input formatted", true);
         });
+    }
+
+    /** Puts the input caret at the start of {@code line}, or the last line when the document is shorter. */
+    private void moveCaretToLine(int line) {
+        try {
+            int target = Math.min(Math.max(line, 0), Math.max(0, inputArea.getLineCount() - 1));
+            inputArea.setCaretPosition(inputArea.getLineStartOffset(target));
+        } catch (javax.swing.text.BadLocationException outOfRange) {
+            inputArea.setCaretPosition(0);
+        }
     }
 
     // ── File I/O (delegated to ConverterFileOps) ─────────────────────────
@@ -1519,16 +1540,26 @@ public class ConverterPanel implements Disposable {
      * of a message. Silently does nothing when the exception carries no location.
      */
     private void jumpToErrorLocation(Throwable failure) {
-        Throwable cause = failure;
-        while (cause != null && !(cause instanceof com.fasterxml.jackson.core.JsonProcessingException)) {
-            cause = cause.getCause();
+        int line = -1, column = -1;           // 1-based; -1 when unknown
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof com.fasterxml.jackson.core.JsonProcessingException jsonFailure) {
+                com.fasterxml.jackson.core.JsonLocation location = jsonFailure.getLocation();
+                if (location == null) return;
+                line = location.getLineNr();
+                column = location.getColumnNr();
+                break;
+            }
+            // YAML is parsed by SnakeYAML, whose errors are not Jackson's: they
+            // carry a zero-based mark instead, and the caret never moved for
+            // them while it did for every other format.
+            if (cause instanceof org.yaml.snakeyaml.error.MarkedYAMLException yamlFailure) {
+                org.yaml.snakeyaml.error.Mark mark = yamlFailure.getProblemMark();
+                if (mark == null) return;
+                line = mark.getLine() + 1;
+                column = mark.getColumn() + 1;
+                break;
+            }
         }
-        if (!(cause instanceof com.fasterxml.jackson.core.JsonProcessingException jsonFailure)) return;
-        com.fasterxml.jackson.core.JsonLocation location = jsonFailure.getLocation();
-        if (location == null) return;
-
-        int line = location.getLineNr();      // 1-based, -1 when unknown
-        int column = location.getColumnNr();
         if (line < 1) return;
         try {
             int lineStart = inputArea.getLineStartOffset(

@@ -119,6 +119,21 @@ public class JsonYamlConverter {
               // this they would serialise as epoch millis rather than the text
               // the document actually contained.
               .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        // YAML keys can be any scalar and JSON keys are strings: 1 becomes "1"
+        // and true becomes "true" through valueToTree, but null is the one key
+        // Jackson refuses, with "Null key for a Map not allowed in JSON (use a
+        // converting NullKeySerializer?)" as the user's error. The same text
+        // rule applies, and rejectCollidingKeys still catches a literal "null"
+        // key beside it.
+        jsonMapper.getSerializerProvider().setNullKeySerializer(
+              new com.fasterxml.jackson.databind.JsonSerializer<>() {
+                  @Override public void serialize(Object value,
+                        com.fasterxml.jackson.core.JsonGenerator gen,
+                        com.fasterxml.jackson.databind.SerializerProvider provider)
+                        throws java.io.IOException {
+                      gen.writeFieldName("null");
+                  }
+              });
 
         yamlMapper = YAMLMapper.builder(
               YAMLFactory.builder()

@@ -133,7 +133,7 @@ public class ConversionPipeline {
             // Lenient parse (comments, trailing commas, single quotes), then
             // re-serialize compactly so downstream converters always see strict
             // JSON without paying to indent a string nobody reads.
-            case FMT_JSON  -> COMPACT_JSON.writeValueAsString(COMPACT_JSON.readTree(input));
+            case FMT_JSON  -> COMPACT_JSON.writeValueAsString(readJson(COMPACT_JSON, input));
             case FMT_XML   -> jsonXml.xmlToJson(input, inferTypes);
             case FMT_YAML  -> jsonYaml.yamlToJson(input);
             case FMT_CSV   -> csv.csvToJson(input, inferTypes, opts.csvFormat());
@@ -249,8 +249,11 @@ public class ConversionPipeline {
             // dropped the ones a ragged row lacked, and inferring types rewrote
             // 1.50 as 1.5 and erased a literal "null" cell.
             case FMT_CSV   -> csv.reformat(input, opts.csvFormat());
-            case FMT_PROTO -> input.replaceAll("[ \t]+\n", "\n")
-                                   .replaceAll("\n{3,}", "\n\n").trim();
+            // Line endings are matched as "\r?\n" and the file's own kind is
+            // kept: anchored on "\n" alone, a CRLF file opened from disk was
+            // returned untouched, trailing blanks and all.
+            case FMT_PROTO -> input.replaceAll("[ \t]+(?=\r?\n)", "")
+                                   .replaceAll("(\r?\n)(?:\r?\n){2,}", "$1$1").trim();
             default        -> input;
         };
         // YAML and TOML sort inside their own formatters above, because both
@@ -325,6 +328,22 @@ public class ConversionPipeline {
     }
 
     /**
+     * Reads user-supplied JSON, refusing a document with no value in it.
+     *
+     * <p>The reader returns a missing node for content that is only comments
+     * and whitespace, and that node serialises as {@code null}: a file holding
+     * nothing but {@code // todo} converted to the YAML document {@code null}
+     * and reported success.
+     */
+    private static JsonNode readJson(ObjectMapper mapper, String json) throws Exception {
+        JsonNode tree = mapper.readTree(json);
+        if (tree == null || tree.isMissingNode())
+            throw new IllegalArgumentException(
+                  "Input JSON contains no value: only comments or whitespace.");
+        return tree;
+    }
+
+    /**
      * Guesses the input format from the content itself, for text that arrives
      * without a filename (paste, or a file with no useful extension). Returns
      * null when nothing matches confidently — the caller keeps its current
@@ -332,7 +351,11 @@ public class ConversionPipeline {
      */
     public static String detectFormat(String text) {
         if (text == null) return null;
-        String s = stripBom(text).strip();
+        // Comments carry no format. Decided on the raw first character, a
+        // "// note" or "# note" above a JSON object detected nothing, and a
+        // "# note" above "[1, 2]" made the TOML table-header check see the
+        // bracket line first and call the array TOML.
+        String s = withoutLeadingComments(stripBom(text).strip());
         if (s.isEmpty()) return null;
 
         // Structural markers first: these are unambiguous.
@@ -366,6 +389,31 @@ public class ConversionPipeline {
         if (detectCsvDelimiter(s) != null) return FMT_CSV;
 
         return null;
+    }
+
+    /**
+     * The text from its first line that is neither blank nor a {@code #},
+     * {@code //} or {@code /* ... *&#47;} comment. Only whole comment LINES are
+     * skipped: a comment is what every supported format lets a document open
+     * with, and nothing about its content says which format follows.
+     */
+    static String withoutLeadingComments(String s) {
+        int pos = 0;
+        while (pos < s.length()) {
+            int lineEnd = s.indexOf('\n', pos);
+            if (lineEnd < 0) lineEnd = s.length();
+            String line = s.substring(pos, lineEnd).strip();
+            if (line.startsWith("/*")) {
+                int close = s.indexOf("*/", pos + 2);
+                if (close < 0) return "";                 // never closed: nothing follows it
+                pos = close + 2;
+            } else if (line.isEmpty() || line.startsWith("#") || line.startsWith("//")) {
+                pos = lineEnd + 1;
+            } else {
+                break;
+            }
+        }
+        return pos >= s.length() ? "" : s.substring(pos).strip();
     }
 
     /** Delimiters tried in order; comma first, since it is also the default option. */
@@ -489,11 +537,16 @@ public class ConversionPipeline {
         // An unterminated comment needs no closer, and appending one inside it
         // would be appending to a comment.
         if (scan.unterminatedBlockComment()) return json;
-        return json + scan.closers();
+        if (scan.closers().isEmpty()) return json;
+        // A line comment runs to the end of its line, so a closer appended on
+        // the same line was part of the comment: {"a":1 // note} still failed
+        // with "expected close marker". The closers start a line of their own.
+        return json + (scan.inLineComment() ? "\n" : "") + scan.closers();
     }
 
     /** What one pass over JSON text finds: the closers it lacks, and the comments it carries. */
-    private record Scan(String closers, boolean unterminatedBlockComment, int comments) {}
+    private record Scan(String closers, boolean unterminatedBlockComment, boolean inLineComment,
+          int comments) {}
 
     private static Scan scan(String json) {
         Deque<Character> stack = new ArrayDeque<>();
@@ -527,7 +580,7 @@ public class ConversionPipeline {
         if (escape)     closers.append('\\');
         if (quote != 0) closers.append(quote);
         while (!stack.isEmpty()) closers.append(stack.pop());
-        return new Scan(closers.toString(), blockComment, comments);
+        return new Scan(closers.toString(), blockComment, lineComment, comments);
     }
 
     /**
@@ -563,21 +616,43 @@ public class ConversionPipeline {
     }
 
     public String prettyJson(String json) throws Exception {
-        return LENIENT_JSON.writeValueAsString(LENIENT_JSON.readTree(json));
+        return LENIENT_JSON.writeValueAsString(readJson(LENIENT_JSON, json));
     }
 
     /**
      * Pretty-prints XML via DOM + Transformer so the original root element,
      * attributes and structure are preserved (Jackson's tree model drops the
-     * root element name). External entities and DTDs are disabled.
+     * root element name).
+     *
+     * <p>A DOCTYPE is kept, not fetched: external DTDs and entities are never
+     * loaded. The declaration used to be disallowed outright, which refused a
+     * plist, an XHTML page or an SVG with the parser's own sentence about a
+     * feature flag — while Convert read the same file without complaint. What
+     * is still refused is an internal subset, because the DOM path drops the
+     * entity references it declares, and a serialised {@code <!DOCTYPE>} cannot
+     * carry the subset back.
      */
     public String prettyXml(String xml) throws Exception {
         javax.xml.parsers.DocumentBuilderFactory dbf =
               javax.xml.parsers.DocumentBuilderFactory.newInstance();
-        dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        dbf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        dbf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
         dbf.setExpandEntityReferences(false);
-        org.w3c.dom.Document doc = dbf.newDocumentBuilder()
-              .parse(new org.xml.sax.InputSource(new StringReader(xml)));
+        javax.xml.parsers.DocumentBuilder builder = dbf.newDocumentBuilder();
+        // The default handler prints "[Fatal Error] :1:10: ..." to stderr
+        // before the exception is even thrown; the exception is the report.
+        builder.setErrorHandler(QUIET_XML_ERRORS);
+        org.w3c.dom.Document doc = builder.parse(new org.xml.sax.InputSource(new StringReader(xml)));
+        org.w3c.dom.DocumentType doctype = doc.getDoctype();
+        if (doctype != null && doctype.getInternalSubset() != null
+              && !doctype.getInternalSubset().isBlank())
+            throw new IllegalArgumentException(
+                  "Format cannot keep the declarations inside this document's <!DOCTYPE "
+                  + doctype.getName() + " [...]>, and the entities they define would be lost "
+                  + "with them. The document is left as it is.");
         // Without this the serializer appends standalone="no" to a declaration
         // the document wrote without it.
         doc.setXmlStandalone(true);
@@ -590,16 +665,41 @@ public class ConversionPipeline {
         tf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
         tf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "");
         javax.xml.transform.Transformer t = tf.newTransformer();
+        // Said explicitly: for a root element named html the identity
+        // transformer switches to its HTML output method on its own, which
+        // dropped the XML declaration, renamed the DOCTYPE and wrote <br/> as
+        // <br> — an XHTML page came back as something no XML parser accepts.
+        t.setOutputProperty(javax.xml.transform.OutputKeys.METHOD, "xml");
         t.setOutputProperty(javax.xml.transform.OutputKeys.INDENT, "yes");
         t.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "2");
-        t.setOutputProperty(javax.xml.transform.OutputKeys.OMIT_XML_DECLARATION,
-              xml.stripLeading().startsWith("<?xml") ? "no" : "yes");
+        boolean declared = xml.stripLeading().startsWith("<?xml");
+        t.setOutputProperty(javax.xml.transform.OutputKeys.OMIT_XML_DECLARATION, declared ? "no" : "yes");
+        if (doctype != null && doctype.getPublicId() != null)
+            t.setOutputProperty(javax.xml.transform.OutputKeys.DOCTYPE_PUBLIC, doctype.getPublicId());
+        if (doctype != null && doctype.getSystemId() != null)
+            t.setOutputProperty(javax.xml.transform.OutputKeys.DOCTYPE_SYSTEM, doctype.getSystemId());
 
         StringWriter out = new StringWriter();
         t.transform(new javax.xml.transform.dom.DOMSource(doc),
               new javax.xml.transform.stream.StreamResult(out));
-        return out.toString();
+        String result = out.toString();
+        // The serializer writes a DOCTYPE only when it has an identifier to
+        // put in it; a bare <!DOCTYPE html> would otherwise vanish.
+        if (doctype != null && doctype.getPublicId() == null && doctype.getSystemId() == null) {
+            int afterDeclaration = declared && result.startsWith("<?xml") ? result.indexOf("?>") + 2 : 0;
+            String head = result.substring(0, afterDeclaration);
+            String tail = result.substring(afterDeclaration).stripLeading();
+            result = head + (head.isEmpty() ? "" : "\n") + "<!DOCTYPE " + doctype.getName() + ">\n" + tail;
+        }
+        return result;
     }
+
+    /** Reports parse problems through the exception alone, never on stderr. */
+    private static final org.xml.sax.ErrorHandler QUIET_XML_ERRORS = new org.xml.sax.ErrorHandler() {
+        @Override public void warning(org.xml.sax.SAXParseException e) { }
+        @Override public void error(org.xml.sax.SAXParseException e) throws org.xml.sax.SAXException { throw e; }
+        @Override public void fatalError(org.xml.sax.SAXParseException e) throws org.xml.sax.SAXException { throw e; }
+    };
 
     /**
      * Refuses an element that holds text alongside child elements.

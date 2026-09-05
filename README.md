@@ -526,7 +526,11 @@ GitHub release. Publishing requires a `PUBLISH_TOKEN` repository secret containi
   data: Format drops comments, and expands YAML anchors and merge keys in place. It asks
   before doing so.
 - XML Format writes attributes in alphabetical order, which XML treats as insignificant
-  but which does change the text of an element that listed them differently.
+  but which does change the text of an element that listed them differently. A DOCTYPE is
+  kept but never fetched; one with an internal subset (`<!DOCTYPE x [...]>`) is refused,
+  because the entities it declares could not be carried through.
+- XML has no way to write an empty list: an empty JSON array produces no element at all,
+  so `{"a": [], "b": 1}` becomes `<root><b>1</b></root>` and the key `a` is not in the output.
 
 ## Roadmap ideas
 
