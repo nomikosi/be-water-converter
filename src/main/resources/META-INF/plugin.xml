@@ -72,6 +72,27 @@
         </ul>
     ]]></description>
     <change-notes><![CDATA[
+        <h3>1.5.1</h3>
+        <ul>
+            <li><b>Fixed: JSON→CSV merged two keys into one column</b> — a key containing a dot and
+                a nested key with the same path (<code>a.b</code> and <code>a → b</code>) wrote one
+                column and kept only the last value. It is refused now, with the column named.</li>
+            <li><b>Fixed: JSON with a trailing comment could not be auto-closed</b> — the missing
+                brace was appended inside the comment; and a comment-only JSON document is refused
+                instead of converting to <code>null</code>.</li>
+            <li><b>Format detection looks past leading comments</b>, so a <code>//</code> or
+                <code>#</code> line above a JSON document no longer hides it, and a commented JSON
+                array is no longer taken for TOML.</li>
+            <li><b>XML Format keeps a DOCTYPE</b> — plist, XHTML and SVG files can be formatted;
+                only a DOCTYPE with an internal subset is refused, with a plain explanation.</li>
+            <li><b>Files with a UTF-16 or UTF-32 byte-order mark open correctly</b> instead of as
+                garbage; YAML parse errors move the caret like the other formats; Protobuf Format
+                works on CRLF files; a YAML <code>null</code> key converts as <code>"null"</code>.</li>
+            <li><b>Format keeps your place</b> — the caret stays on its line, and an already
+                formatted document is left untouched rather than replaced with itself. Save proposes
+                the same file name the scratch files use (<code>Root.java</code> for Java), and
+                <i>Open in Be Water Converter</i> asks before loading a very large file.</li>
+        </ul>
         <h3>1.5.0</h3>
         <ul>
             <li><b>Open in editor</b> — a toolbar button sends the output to a scratch file, so you
@@ -168,24 +189,6 @@
                 lines</b>; it is linear now.</li>
             <li><b>Convert with Be Water asks before a large CSV</b> — the row-count confirmation the
                 tool window gives applies to context-menu conversions too.</li>
-            <li><b>Fixed: JSON→CSV merged two keys into one column</b> — a key containing a dot and
-                a nested key with the same path (<code>a.b</code> and <code>a → b</code>) wrote one
-                column and kept only the last value. It is refused now, with the column named.</li>
-            <li><b>Fixed: JSON with a trailing comment could not be auto-closed</b> — the missing
-                brace was appended inside the comment; and a comment-only JSON document is refused
-                instead of converting to <code>null</code>.</li>
-            <li><b>Format detection looks past leading comments</b>, so a <code>//</code> or
-                <code>#</code> line above a JSON document no longer hides it, and a commented JSON
-                array is no longer taken for TOML.</li>
-            <li><b>XML Format keeps a DOCTYPE</b> — plist, XHTML and SVG files can be formatted;
-                only a DOCTYPE with an internal subset is refused, with a plain explanation.</li>
-            <li><b>Files with a UTF-16 or UTF-32 byte-order mark open correctly</b> instead of as
-                garbage; YAML parse errors move the caret like the other formats; Protobuf Format
-                works on CRLF files; a YAML <code>null</code> key converts as <code>"null"</code>.</li>
-            <li><b>Format keeps your place</b> — the caret stays on its line, and an already
-                formatted document is left untouched rather than replaced with itself. Save proposes
-                the same file name the scratch files use (<code>Root.java</code> for Java), and
-                <i>Open in Be Water Converter</i> asks before loading a very large file.</li>
         </ul>
         <h3>1.4.1</h3>
         <ul>

@@ -504,7 +504,7 @@ GitHub release. Publishing requires a `PUBLISH_TOKEN` repository secret containi
 
 | Property | Value |
 |---|---|
-| Plugin version | 1.5.0 |
+| Plugin version | 1.5.1 |
 | Minimum IDE build | 251 (IntelliJ IDEA 2025.1) |
 | Maximum IDE build | Open-ended |
 | Java | 21 |
