@@ -15,7 +15,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # The tag names the release; build.gradle names the plugin version that
       # gets published. Publishing one under the other is not recoverable on
