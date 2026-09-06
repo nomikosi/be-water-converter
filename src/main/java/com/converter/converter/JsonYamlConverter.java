@@ -202,13 +202,17 @@ public class JsonYamlConverter {
      * which also matched the optional start marker of a single document: a
      * {@code ---}-prefixed list was split into one document per element.
      */
-    private List<JsonNode> loadDocuments(String yaml) {
+    private List<JsonNode> loadDocuments(String yaml) { return loadDocuments(yaml, false); }
+
+    private List<JsonNode> loadDocuments(String yaml, boolean formatting) {
         if (yaml == null || yaml.isBlank())
             throw new IllegalArgumentException("Input YAML must not be empty");
 
         List<JsonNode> docs = new ArrayList<>();
-        for (Object document : composer().loadAll(ConversionPipeline.stripBom(yaml))) {
+        for (Object document : composer(formatting).loadAll(ConversionPipeline.stripBom(yaml))) {
             rejectRunawayAliases(document, yaml.length());
+            if (formatting) rejectNonStringKeys(document,
+                  java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
             JsonNode node = document == null ? null : jsonMapper.valueToTree(document);
             if (node == null || node.isMissingNode()) node = jsonMapper.nullNode();
             rejectCollidingKeys(document, node);
@@ -222,11 +226,20 @@ public class JsonYamlConverter {
         // loss the interior case was fixed for.
         if (docs.size() > 1 && docs.get(docs.size() - 1).isNull() && endsWithBareSeparator(yaml))
             docs.remove(docs.size() - 1);
-        // A stream that is nothing but empty documents carries no content at all,
-        // which is a different thing from one that happens to contain a null.
-        if (docs.isEmpty() || docs.stream().allMatch(JsonNode::isNull))
+        // Construction maps both empty documents and explicit null scalars to
+        // Java null. Inspect scalar events only for this ambiguous case, so a
+        // document written as "null", "~" or "!!null ''" remains convertible.
+        if (docs.isEmpty() || (docs.stream().allMatch(JsonNode::isNull) && !hasExplicitScalar(yaml)))
             throw new IllegalArgumentException("Input YAML contains no documents");
         return docs;
+    }
+
+    private boolean hasExplicitScalar(String yaml) {
+        for (Event event : composer().parse(new StringReader(ConversionPipeline.stripBom(yaml)))) {
+            if (event instanceof org.yaml.snakeyaml.events.ScalarEvent scalar
+                  && (!scalar.getValue().isEmpty() || scalar.getTag() != null)) return true;
+        }
+        return false;
     }
 
     /**
@@ -289,7 +302,9 @@ public class JsonYamlConverter {
         return total;
     }
 
-    private static Yaml composer() {
+    private static Yaml composer() { return composer(false); }
+
+    private static Yaml composer(boolean formatting) {
         LoaderOptions options = new LoaderOptions();
         options.setCodePointLimit(CODE_POINT_LIMIT);
         // A repeated key silently kept only the last value. YAML says duplicate
@@ -297,7 +312,7 @@ public class JsonYamlConverter {
         options.setAllowDuplicateKeys(false);
         // SafeConstructor refuses arbitrary Java type tags, so a hostile
         // document cannot cause class instantiation.
-        return new Yaml(new ExactFloatConstructor(options),
+        return new Yaml(new ExactFloatConstructor(options, formatting),
               UNUSED_REPRESENTER, UNUSED_DUMPER_OPTIONS, options, new CoreScalarResolver());
     }
 
@@ -317,9 +332,22 @@ public class JsonYamlConverter {
      * {@link #formatPreservingDocuments} refuses to write that back.
      */
     private static final class ExactFloatConstructor extends SafeConstructor {
-        ExactFloatConstructor(LoaderOptions options) {
+        private static final java.util.Set<Tag> FORMATTABLE_TAGS = java.util.Set.of(
+              Tag.MAP, Tag.SEQ, Tag.STR, Tag.NULL, Tag.BOOL, Tag.INT, Tag.FLOAT, Tag.BINARY);
+        private final boolean formatting;
+
+        ExactFloatConstructor(LoaderOptions options, boolean formatting) {
             super(options);
+            this.formatting = formatting;
             yamlConstructors.put(Tag.FLOAT, new ConstructExactFloat());
+        }
+
+        @Override protected Object constructObject(Node node) {
+            if (formatting && !FORMATTABLE_TAGS.contains(node.getTag()))
+                throw new IllegalArgumentException(
+                      "Format cannot preserve the YAML type " + node.getTag().getValue()
+                      + " through JSON. The document is left as it is.");
+            return super.constructObject(node);
         }
 
         private final class ConstructExactFloat extends AbstractConstruct {
@@ -377,13 +405,13 @@ public class JsonYamlConverter {
      *                 operation and this is where the tree exists.
      */
     public String formatPreservingDocuments(String yaml, boolean sortKeys) throws Exception {
-        List<JsonNode> docs = loadDocuments(yaml);
+        List<JsonNode> docs = loadDocuments(yaml, true);
         for (JsonNode document : docs) rejectNonFinite(document);
 
         StringBuilder out = new StringBuilder();
         for (JsonNode document : docs) {
             if (!out.isEmpty()) out.append("---\n");
-            out.append(yamlMapper.writeValueAsString(sortKeys ? sortNode(document) : document));
+            out.append(yamlMapper.writeValueAsString(sortKeys ? JsonTrees.sorted(document) : document));
         }
         return out.toString();
     }
@@ -448,22 +476,20 @@ public class JsonYamlConverter {
         return true;
     }
 
-    /** Recursively orders object keys; arrays keep their order. */
-    private JsonNode sortNode(JsonNode node) {
-        if (node.isObject()) {
-            List<String> names = new ArrayList<>();
-            node.fieldNames().forEachRemaining(names::add);
-            java.util.Collections.sort(names);
-            com.fasterxml.jackson.databind.node.ObjectNode out = jsonMapper.createObjectNode();
-            for (String name : names) out.set(name, sortNode(node.get(name)));
-            return out;
+    /** JSON only carries string keys; Format must not change YAML key types. */
+    private static void rejectNonStringKeys(Object value, java.util.Set<Object> seen) {
+        if (value instanceof java.util.Map<?, ?> map) {
+            if (!seen.add(value)) return;
+            for (java.util.Map.Entry<?, ?> entry : map.entrySet()) {
+                if (!(entry.getKey() instanceof String))
+                    throw new IllegalArgumentException(
+                          "Format cannot preserve a non-string YAML mapping key through JSON. "
+                          + "The document is left as it is.");
+                rejectNonStringKeys(entry.getValue(), seen);
+            }
+        } else if (value instanceof List<?> list && seen.add(value)) {
+            for (Object child : list) rejectNonStringKeys(child, seen);
         }
-        if (node.isArray()) {
-            com.fasterxml.jackson.databind.node.ArrayNode out = jsonMapper.createArrayNode();
-            for (JsonNode item : node) out.add(sortNode(item));
-            return out;
-        }
-        return node;
     }
 
     /**

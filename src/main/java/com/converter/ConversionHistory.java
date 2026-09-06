@@ -16,6 +16,7 @@
 
 package com.converter;
 
+import com.converter.converter.ConversionOptions;
 import java.time.LocalTime;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -29,7 +30,15 @@ import java.util.List;
 public final class ConversionHistory {
 
     public record Entry(String inputFormat, String outputFormat,
-                        String input, String output, LocalTime time) {}
+                        String input, String output, LocalTime time, ConversionOptions options) {
+        public Entry {
+            java.util.Objects.requireNonNull(options);
+        }
+
+        public Entry(String inputFormat, String outputFormat, String input, String output, LocalTime time) {
+            this(inputFormat, outputFormat, input, output, time, ConversionOptions.DEFAULTS);
+        }
+    }
 
     /** Maximum number of entries kept. */
     public static final int MAX_ENTRIES = 20;
@@ -44,7 +53,8 @@ public final class ConversionHistory {
      * is over the size limit.
      */
     public synchronized boolean push(Entry entry) {
-        if ((long) entry.input().length() + entry.output().length() > MAX_ENTRY_CHARS) {
+        long filterChars = entry.options().filterPath() == null ? 0 : entry.options().filterPath().length();
+        if ((long) entry.input().length() + entry.output().length() + filterChars > MAX_ENTRY_CHARS) {
             return false;
         }
         entries.addFirst(entry);

@@ -20,6 +20,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Arrays are typed from every element, not the first. Typing from element 0
@@ -102,12 +103,13 @@ class GeneratorShapeMergeTest {
         assertThat(out).contains("@AllArgsConstructor\npublic class Root");
     }
 
-    @Test @DisplayName("a Kotlin class past the JVM parameter limit says so")
-    void kotlinParameterLimitIsAnnounced() throws Exception {
+    @Test @DisplayName("a Kotlin class past the JVM parameter limit is rejected")
+    void kotlinParameterLimitIsEnforced() throws Exception {
         StringBuilder json = new StringBuilder("{");
         for (int i = 0; i < 300; i++) json.append(i > 0 ? "," : "").append("\"k").append(i).append("\":1");
         json.append("}");
-        assertThat(kotlin.fromJson(json.toString())).contains("300 properties exceed the JVM limit");
+        assertThatThrownBy(() -> kotlin.fromJson(json.toString()))
+              .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("JVM parameter slots", "limit 255");
         assertThat(kotlin.fromJson("{\"a\":1}")).doesNotContain("exceed the JVM limit");
     }
 }

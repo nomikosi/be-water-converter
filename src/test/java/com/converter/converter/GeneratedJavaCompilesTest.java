@@ -16,36 +16,25 @@
 
 package com.converter.converter;
 
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.api.io.TempDir;
 
-import javax.tools.DiagnosticCollector;
-import javax.tools.JavaCompiler;
-import javax.tools.JavaFileObject;
-import javax.tools.SimpleJavaFileObject;
-import javax.tools.ToolProvider;
-import java.net.URI;
+import java.io.File;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-/**
- * Generated Java is handed to javac rather than checked for substrings: a
- * substring can pass while the file does not compile, which is the one thing
- * a user of the generator cannot work around.
- */
-@DisplayName("Generated Java compiles")
 class GeneratedJavaCompilesTest {
-
-    private final JavaPojoGenerator generator = new JavaPojoGenerator();
-
-    @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {
+    @TempDir Path temp;
+    private static final String[] SAMPLES = {
+          "{\"huge\":1e400,\"tiny\":1e-400,\"precise\":[9007199254740993,1.5]}",
           "{\"id\":1,\"name\":\"Ada\",\"tags\":[\"a\"],\"address\":{\"street\":\"x\",\"zip\":\"01234\"}}",
           "{\"class\":1,\"int\":2,\"for\":3,\"true\":4,\"_\":5,\"var\":6,\"record\":7}",
           "{\"first-name\":\"a\",\"1st\":2,\"a b\":3,\"a_b\":4,\"aB\":5,\"$ref\":6}",
@@ -56,33 +45,44 @@ class GeneratedJavaCompilesTest {
           "{\"List\":{\"a\":1},\"String\":{\"b\":2},\"Object\":3,\"Root\":{\"c\":4},\"root\":{\"d\":5}}",
           "[{\"a\":1},{\"b\":{\"c\":[1,2]}}]",
           "{\"big\":12345678901234567890,\"dec\":1.5,\"neg\":-1,\"long\":12345678901,\"user\":{},\"User\":{\"x\":1}}",
-    })
-    void generatedSourceCompiles(String json) throws Exception {
-        assertCompiles(generator.fromJson(json));
-    }
+          "{}",
+          "{\"data\":{\"id\":1},\"all-args-constructor\":{},\"no-args-constructor\":{\"x\":true}}"
+    };
 
-    private static void assertCompiles(String source) throws Exception {
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        assumeTrue(compiler != null, "no javac in this JVM");
-        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        JavaFileObject unit = new SimpleJavaFileObject(
-              URI.create("string:///Root.java"), JavaFileObject.Kind.SOURCE) {
-            @Override public CharSequence getCharContent(boolean ignoreEncodingErrors) {
-                return source;
-            }
-        };
-        Path out = Files.createTempDirectory("bewater-pojo");
-        try {
-            // The test classpath carries jackson-annotations, which @JsonProperty needs.
-            List<String> options = List.of("-d", out.toString(),
-                  "-classpath", System.getProperty("java.class.path"), "-proc:none", "-Xlint:none");
-            boolean ok = compiler.getTask(null, null, diagnostics, options, null, List.of(unit)).call();
-            assertThat(ok)
-                  .describedAs("javac said:\n%s\n\nfor:\n%s", diagnostics.getDiagnostics(), source)
-                  .isTrue();
-        } finally {
-            try (var files = Files.walk(out)) {
-                files.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void generatedClassesCompileAndLoad(boolean lombok) throws Exception {
+        String annotations = TestProcesses.configured("bewater.jackson.annotations.classpath");
+        String lombokCp = TestProcesses.configured("bewater.lombok.classpath");
+        String classpath = annotations + File.pathSeparator + lombokCp;
+        Path output = Files.createDirectory(temp.resolve("classes"));
+        List<String> command = new ArrayList<>(List.of("-encoding", "UTF-8", "-classpath", classpath,
+              "-d", output.toString()));
+        if (lombok) command.addAll(List.of("-processorpath", lombokCp, "-proc:full"));
+        else command.add("-proc:none");
+        List<String> samples = new ArrayList<>(List.of(SAMPLES));
+        samples.add(KotlinJvmLimitsTest.input(254, "1", false));
+        samples.add(KotlinJvmLimitsTest.input(255, "1", false));
+        for (int i = 0; i < samples.size(); i++) {
+            Path source = Files.createDirectory(temp.resolve("example" + i)).resolve("Root.java");
+            Files.writeString(source, "package example" + i + ";\n\n"
+                  + new JavaPojoGenerator().fromJson(samples.get(i), lombok));
+            command.add(source.toString());
+        }
+        TestProcesses.run(temp, TestProcesses.configured("bewater.javac"), command);
+        try (URLClassLoader loader = new URLClassLoader(new URL[]{output.toUri().toURL()},
+              ClassLoader.getPlatformClassLoader())) {
+            for (int i = 0; i < samples.size(); i++) {
+                Class<?> type = Class.forName("example" + i + ".Root", true, loader);
+                assertThat(type.getDeclaredConstructors()).isNotEmpty();
+                if (lombok && type.getDeclaredFields().length > 0)
+                    assertThat(type.getDeclaredMethods()).extracting(java.lang.reflect.Method::getName)
+                          .contains("equals", "hashCode", "toString");
+                if (lombok && i >= samples.size() - 2) {
+                    int expected = i == samples.size() - 2 ? 254 : 0;
+                    assertThat(Arrays.stream(type.getDeclaredConstructors())
+                          .mapToInt(java.lang.reflect.Constructor::getParameterCount).max().orElseThrow())
+                          .isEqualTo(expected);
+                }
             }
         }
     }

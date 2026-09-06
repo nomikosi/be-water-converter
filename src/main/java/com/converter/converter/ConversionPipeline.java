@@ -23,7 +23,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 
 import java.io.StringReader;
 import java.io.StringWriter;
@@ -39,15 +38,16 @@ import java.util.regex.Pattern;
  */
 public class ConversionPipeline {
 
-    public static final String FMT_JSON  = "JSON";
-    public static final String FMT_XML   = "XML";
-    public static final String FMT_YAML  = "YAML";
-    public static final String FMT_CSV   = "CSV";
-    public static final String FMT_TOML  = "TOML";
-    public static final String FMT_PROTO  = "Protobuf";
-    public static final String FMT_JAVA   = "Java POJO";
-    public static final String FMT_SCHEMA = "JSON Schema";
-    public static final String FMT_KOTLIN = "Kotlin";
+    // Compatibility aliases; names and capabilities belong to Formats.
+    public static final String FMT_JSON  = Formats.FMT_JSON;
+    public static final String FMT_XML   = Formats.FMT_XML;
+    public static final String FMT_YAML  = Formats.FMT_YAML;
+    public static final String FMT_CSV   = Formats.FMT_CSV;
+    public static final String FMT_TOML  = Formats.FMT_TOML;
+    public static final String FMT_PROTO = Formats.FMT_PROTO;
+    public static final String FMT_JAVA  = Formats.FMT_JAVA;
+    public static final String FMT_SCHEMA = Formats.FMT_SCHEMA;
+    public static final String FMT_KOTLIN = Formats.FMT_KOTLIN;
 
     /**
      * Lenient read settings for JSON input: accepts comments, trailing commas,
@@ -56,7 +56,7 @@ public class ConversionPipeline {
      * downstream converters.
      */
     private static JsonMapper.Builder lenientReader() {
-        return JsonMapper.builder()
+        return PivotJson.builder()
               .enable(JsonReadFeature.ALLOW_JAVA_COMMENTS)
               .enable(JsonReadFeature.ALLOW_YAML_COMMENTS)
               .enable(JsonReadFeature.ALLOW_TRAILING_COMMA)
@@ -67,15 +67,6 @@ public class ConversionPipeline {
               // trailing garbage was accepted. Failing is strictly better than
               // Format overwriting the editor with a truncated document.
               .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-              // Floats would otherwise become double: 1e400 turned into the
-              // STRING "Infinity", 1e-400 into 0.0, and long decimals lost
-              // digits — including inside canonicalJson, which made Compare
-              // report differing documents as equal.
-              .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
-              // Keeping BigDecimal is not enough on its own: the default node
-              // factory calls stripTrailingZeros, which rewrote 1.0 as 1 and
-              // 100.00 as 1E+2 — and Format wrote that back over the document.
-              .nodeFactory(new JsonNodeFactory(true))
               // A repeated key kept only its last value, silently: {"a":1,"a":2}
               // read as {"a":2}, and Format wrote the half-document back. The
               // YAML reader already refuses duplicates; JSON now does the same.
@@ -150,7 +141,7 @@ public class ConversionPipeline {
             if (opts.hasFilter()) tree = JsonPathFilter.apply(tree, opts.filterPath());
             // Sorting the pivot rather than each renderer's output means every
             // target format inherits key ordering from one place.
-            if (opts.sortKeys()) tree = sortNode(tree);
+            if (opts.sortKeys()) tree = JsonTrees.sorted(tree);
             pivot = COMPACT_JSON.writeValueAsString(tree);
         }
         return pivot;
@@ -176,7 +167,7 @@ public class ConversionPipeline {
         // prettyJson(sortKeys(...)) instead cost three full round trips, which
         // measured over a second per Compare click on a 10 MB document.
         JsonNode tree = COMPACT_JSON.readTree(normalizeToJson(input, fmt, opts));
-        return LENIENT_JSON.writeValueAsString(sortNode(tree));
+        return LENIENT_JSON.writeValueAsString(JsonTrees.sorted(tree, true));
     }
 
     /** JSON pivot -> desired output format. */
@@ -208,24 +199,7 @@ public class ConversionPipeline {
      * data in different key orders.
      */
     public String sortKeys(String json) throws Exception {
-        return COMPACT_JSON.writeValueAsString(sortNode(COMPACT_JSON.readTree(json)));
-    }
-
-    private JsonNode sortNode(JsonNode node) {
-        if (node.isObject()) {
-            java.util.List<String> names = new java.util.ArrayList<>();
-            node.fieldNames().forEachRemaining(names::add);
-            names.sort(String::compareTo);
-            com.fasterxml.jackson.databind.node.ObjectNode out = COMPACT_JSON.createObjectNode();
-            for (String name : names) out.set(name, sortNode(node.get(name)));
-            return out;
-        }
-        if (node.isArray()) {
-            com.fasterxml.jackson.databind.node.ArrayNode out = COMPACT_JSON.createArrayNode();
-            for (JsonNode item : node) out.add(sortNode(item));
-            return out;
-        }
-        return node;
+        return COMPACT_JSON.writeValueAsString(JsonTrees.sorted(COMPACT_JSON.readTree(json)));
     }
 
     /** Pretty-prints or canonicalizes input in its own format (the Format action). */
@@ -272,22 +246,19 @@ public class ConversionPipeline {
      * a date into text, in the user's own file.
      */
     private String formatToml(String input, boolean sortKeys) throws Exception {
-        String scannable = TomlConverter.maskStringsAndComments(input);
-        Matcher dated = TOML_DATE.matcher(scannable);
-        if (dated.find())
-            throw new IllegalArgumentException(
-                  "Format would rewrite the date " + dated.group().trim() + " as a quoted string: "
-                  + "TOML has date and time types and the JSON step this uses does not. "
-                  + "The document is left as it is.");
-        // The same refusal for the number forms JSON cannot spell: 0xFF came
-        // back as 255, 1_000 as 1000, and inf as the STRING 'Infinity'.
-        Matcher literal = TOML_NON_DECIMAL.matcher(scannable);
-        if (literal.find())
-            throw new IllegalArgumentException(
-                  "Format would rewrite " + literal.group(1) + ": hexadecimal, octal, binary and "
-                  + "underscore-separated numbers come back as plain decimals, and inf and nan "
-                  + "as text, because the JSON step this uses has no other way to write them. "
-                  + "The document is left as it is.");
+        TomlConverter.forEachValueToken(input, token -> {
+            if (TOML_DATE.matcher(token).matches())
+                throw new IllegalArgumentException(
+                      "Format would rewrite the date " + token + " as a quoted string: "
+                      + "TOML has date and time types and the JSON step this uses does not. "
+                      + "The document is left as it is.");
+            if (TOML_NON_DECIMAL.matcher(token).matches())
+                throw new IllegalArgumentException(
+                      "Format would rewrite " + token + ": hexadecimal, octal, binary and "
+                      + "underscore-separated numbers come back as plain decimals, and inf and nan "
+                      + "as text, because the JSON step this uses has no other way to write them. "
+                      + "The document is left as it is.");
+        });
         String pivot = toml.tomlToJson(input);
         // jsonToToml renders an empty table as the literal "# empty document",
         // which as a FORMAT replaced the user's own comments with that sentence.
@@ -296,31 +267,14 @@ public class ConversionPipeline {
         return toml.jsonToToml(sortKeys ? sortKeys(pivot) : pivot);
     }
 
-    /**
-     * A bare TOML date, datetime or time in value position.
-     *
-     * <p>Anchored on what comes BEFORE rather than on {@code =}: a date is just
-     * as likely to be an array element or an inline-table value, and requiring
-     * {@code =} meant only the first element of {@code d = [1979-05-27, …]} could
-     * ever match, so the rest were still retyped.
-     */
+    // Whole unquoted value tokens supplied by the TOML scanner. Keys, strings,
+    // comments and table headers are excluded before these patterns are used.
     private static final Pattern TOML_DATE = Pattern.compile(
-          "(?<=[=\\[,{]|\\A)\\s*+(\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}:\\d{2}\\S*)?"
-          + "|\\d{2}:\\d{2}:\\d{2}\\S*)\\s*(?=$|[,}\\]#\\r\\n])",
-          Pattern.MULTILINE);
-
-    /**
-     * A TOML number in value position that JSON cannot carry as written: a
-     * hex, octal or binary literal, one with underscore separators (the
-     * lookahead requires an underscore somewhere in the run), or inf/nan.
-     * Anchored on what comes before, like {@link #TOML_DATE}, so a bare key
-     * such as {@code my_key} is never mistaken for a value.
-     */
+          "\\d{4}-\\d{2}-\\d{2}(?:[Tt]\\d{2}:\\d{2}:\\d{2}\\S*)?|\\d{2}:\\d{2}:\\d{2}\\S*");
     private static final Pattern TOML_NON_DECIMAL = Pattern.compile(
-          "(?<=[=\\[,{])\\s*+([+-]?0[xob][0-9A-Fa-f_]+"
+          "[+-]?0[xob][0-9A-Fa-f_]+"
           + "|[+-]?(?=[0-9.eE+\\-]*_)[0-9][0-9_.eE+\\-]*"
-          + "|[+-]?(?:inf|nan))\\s*(?=$|[,}\\]#\\r\\n])",
-          Pattern.MULTILINE);
+          + "|[+-]?(?:inf|nan)");
 
     /** Parses the JSON pivot once for callers that need the tree (row estimates). */
     public JsonNode parseJson(String json) throws Exception {
@@ -351,11 +305,36 @@ public class ConversionPipeline {
      */
     public static String detectFormat(String text) {
         if (text == null) return null;
+        String raw = stripBom(text).strip();
+        if (raw.isEmpty()) return null;
         // Comments carry no format. Decided on the raw first character, a
         // "// note" or "# note" above a JSON object detected nothing, and a
         // "# note" above "[1, 2]" made the TOML table-header check see the
         // bracket line first and call the array TOML.
-        String s = withoutLeadingComments(stripBom(text).strip());
+        String structural = structuralFormat(withoutLeadingComments(raw));
+        if (structural != null) return structural;
+
+        // CSV last: it is the weakest signal, so require a delimiter in the
+        // header line and a consistent column count on the following line.
+        //
+        // On the document as WRITTEN, unlike every check above it. '#' opens a
+        // comment in YAML and TOML but is an ordinary character in a CSV
+        // header, and the convention is common in tab-separated exports:
+        // stripping "#id,name" left the single line "1,Ann", which is too
+        // little to compare column counts against, so a two-line file stopped
+        // being recognised at all. This arm therefore sees exactly what it saw
+        // before leading comments were skipped for the others.
+        if (detectCsvDelimiter(raw) != null) return FMT_CSV;
+
+        return null;
+    }
+
+    /**
+     * Every format but CSV, decided from the document with its leading comments
+     * removed. Null when nothing matches, which is what hands the question to
+     * the CSV check.
+     */
+    private static String structuralFormat(String s) {
         if (s.isEmpty()) return null;
 
         // Structural markers first: these are unambiguous.
@@ -383,10 +362,6 @@ public class ConversionPipeline {
         // Nothing decisive on line one: fall back to the document-wide scan.
         if (TOML_MARKER.matcher(s).find()) return FMT_TOML;
         if (YAML_MARKER.matcher(s).find()) return FMT_YAML;
-
-        // CSV last: it is the weakest signal, so require a delimiter in the
-        // header line and a consistent column count on the following line.
-        if (detectCsvDelimiter(s) != null) return FMT_CSV;
 
         return null;
     }
@@ -428,6 +403,19 @@ public class ConversionPipeline {
     public static Character detectCsvDelimiter(String text) {
         if (text == null) return null;
         String s = stripBom(text).strip();
+        // As written first: '#' opens a comment in YAML and TOML but is an
+        // ordinary character in a CSV header, and "#id,name" above the rows is
+        // the convention tab-separated exports use.
+        Character asWritten = delimiterOf(s);
+        if (asWritten != null) return asWritten;
+        // Then without leading comment lines, for the other shape: a genuine
+        // note above a real header. Reading only one of the two forms loses the
+        // other, and both are ordinary CSV files.
+        String body = withoutLeadingComments(s);
+        return body.equals(s) ? null : delimiterOf(body);
+    }
+
+    private static Character delimiterOf(String s) {
         for (char delimiter : CSV_DELIMITERS)
             if (looksLikeCsv(s, delimiter)) return delimiter;
         return null;

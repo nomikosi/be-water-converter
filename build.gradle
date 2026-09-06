@@ -19,6 +19,11 @@ repositories {
 }
 
 
+configurations {
+    kotlinCompiler
+    lombokProcessor
+}
+
 dependencies {
     intellijPlatform {
         intellijIdeaCommunity('2025.1.7.1')
@@ -30,6 +35,10 @@ dependencies {
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-csv:2.21.1'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-toml:2.21.1'
     implementation 'com.fifesoft:rsyntaxtextarea:3.5.4'
+    // Isolated from both the plugin and the IDE test class loader. Tests invoke
+    // this compiler in a separate JVM and load the resulting classes.
+    kotlinCompiler 'org.jetbrains.kotlin:kotlin-compiler-embeddable:2.1.20'
+    lombokProcessor 'org.projectlombok:lombok:1.18.48'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     // Parameterised tests: routing tables are covered per-format rather than by
     // one test per arm, which is what let several arms go untested.
@@ -105,9 +114,9 @@ tasks.register('unitTest', Test) {
     useJUnitPlatform()
     jvmArgs '-Dfile.encoding=UTF-8'
     include 'com/converter/**/*Test.class'
-    // ConverterPanelTest needs IntelliJ platform classes, which only the
-    // platform-aware 'test' task provides.
-    exclude 'com/converter/ConverterPanelTest.class'
+    // Exclude before JUnit discovery: tags are evaluated only after loading
+    // classes, and these tests require the platform-aware test class loader.
+    exclude 'com/converter/ConverterPanel*Test.class'
 
     testLogging {
         events 'passed', 'skipped', 'failed'
@@ -133,7 +142,7 @@ tasks.register('jacocoUnitTestReport', JacocoReport) {
 tasks.named('unitTest') { finalizedBy tasks.named('jacocoUnitTestReport') }
 
 // NOTE: 'check' deliberately does NOT depend on unitTest — the 'test' task
-// already runs a superset of it. unitTest exists as the fast local loop.
+// already runs a superset of it. CI explicitly runs both JVM environments.
 
 // Make 'build' produce the installable plugin ZIP as well as the Java artifacts.
 tasks.named('build') { dependsOn tasks.named('buildPlugin') }
@@ -152,6 +161,19 @@ tasks.named('instrumentTestCode') {
     mustRunAfter tasks.named('instrumentCode')
 }
 
+
+tasks.withType(Test).configureEach {
+    systemProperty 'bewater.kotlin.compiler.classpath', configurations.kotlinCompiler.asPath
+    systemProperty 'bewater.lombok.classpath', configurations.lombokProcessor.asPath
+    systemProperty 'bewater.test.classpath', sourceSets.test.runtimeClasspath.asPath
+    systemProperty 'bewater.javac', javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    }.get().executablePath.asFile.absolutePath
+    // IntelliJ's test class loader does not expose a usable CodeSource URL.
+    systemProperty 'bewater.jackson.annotations.classpath', configurations.testRuntimeClasspath.filter {
+        it.name.startsWith('jackson-annotations-')
+    }.asPath
+}
 
 java {
     toolchain {

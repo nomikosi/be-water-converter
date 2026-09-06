@@ -18,6 +18,7 @@ package com.converter;
 
 import com.converter.converter.ConversionOptions;
 import com.converter.converter.ConversionPipeline;
+import com.converter.converter.Formats;
 import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
@@ -34,9 +35,6 @@ import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
 import org.jetbrains.annotations.NotNull;
-
-import java.nio.charset.StandardCharsets;
-import java.util.Locale;
 
 /**
  * Actions that reach the converter from the rest of the IDE — an open editor or
@@ -127,8 +125,7 @@ public final class ConverterContextActions {
     private static boolean isConvertible(AnActionEvent e) {
         VirtualFile file = e.getData(CommonDataKeys.VIRTUAL_FILE);
         if (file != null && !file.isDirectory()) {
-            String ext = file.getExtension();
-            if (ext != null && SUPPORTED_EXTENSIONS.contains(ext.toLowerCase(Locale.ROOT))) return true;
+            if (Formats.inputForFileName(file.getName()) != null) return true;
         }
         Editor editor = e.getData(CommonDataKeys.EDITOR);
         if (editor == null) return false;
@@ -141,28 +138,10 @@ public final class ConverterContextActions {
         return ConversionPipeline.detectFormat(sample) != null;
     }
 
-    private static final java.util.Set<String> SUPPORTED_EXTENSIONS =
-          java.util.Set.of("json", "xml", "yaml", "yml", "csv", "toml", "proto");
-
     /** Extension wins when there is one; otherwise fall back to sniffing the text. */
     private static String formatFor(String fileName, String text) {
-        String byExtension = extensionFormat(fileName);
+        String byExtension = Formats.inputForFileName(fileName);
         return byExtension != null ? byExtension : ConversionPipeline.detectFormat(text);
-    }
-
-    private static String extensionFormat(String fileName) {
-        if (fileName == null) return null;
-        int dot = fileName.lastIndexOf('.');
-        if (dot < 0) return null;
-        return switch (fileName.substring(dot + 1).toLowerCase(Locale.ROOT)) {
-            case "json"        -> ConversionPipeline.FMT_JSON;
-            case "xml"         -> ConversionPipeline.FMT_XML;
-            case "yaml", "yml" -> ConversionPipeline.FMT_YAML;
-            case "csv"         -> ConversionPipeline.FMT_CSV;
-            case "toml"        -> ConversionPipeline.FMT_TOML;
-            case "proto"       -> ConversionPipeline.FMT_PROTO;
-            default            -> null;
-        };
     }
 
     private static void notifyError(Project project, String message) {
@@ -261,17 +240,9 @@ public final class ConverterContextActions {
      */
     public static class ConvertToGroup extends DefaultActionGroup implements DumbAware {
 
-        private static final String[] TARGETS = {
-              ConversionPipeline.FMT_JSON, ConversionPipeline.FMT_XML,
-              ConversionPipeline.FMT_YAML, ConversionPipeline.FMT_CSV,
-              ConversionPipeline.FMT_TOML, ConversionPipeline.FMT_PROTO,
-              ConversionPipeline.FMT_JAVA, ConversionPipeline.FMT_KOTLIN,
-              ConversionPipeline.FMT_SCHEMA,
-        };
-
         public ConvertToGroup() {
             setPopup(true);
-            for (String target : TARGETS) add(new ConvertTo(target));
+            for (String target : Formats.outputNames()) add(new ConvertTo(target));
         }
 
         @Override public @NotNull ActionUpdateThread getActionUpdateThread() {

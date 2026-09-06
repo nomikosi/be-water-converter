@@ -127,7 +127,7 @@ class ProtoScopingTest {
         // Every dotted reference used to produce an empty object.
         assertThat(tree.at("/B/i/x").isInt()).isTrue();
         assertThat(tree.at("/B/k").asText()).isEqualTo("K");
-        assertThat(tree.at("/B/p/x").isInt()).isTrue();
+        assertThat(tree.at("/B/p").isEmpty()).isTrue(); // pkg was never declared
         assertThat(tree.at("/B/q/x").isInt()).isTrue();
         assertThat(tree.at("/B/a").isObject()).isTrue();
     }
@@ -201,6 +201,75 @@ class ProtoScopingTest {
         // Two keys that sanitise to the same name each keep their own.
         assertThat(schema).contains("[json_name = \"a b\"]").contains("[json_name = \"a_b\"]");
         // The schema still reads back.
-        assertThat(converter.protoToJson(schema)).contains("first_name");
+        assertThat(convert(schema).get("Root").has("first-name")).isTrue();
     }
+
+    @Test void absoluteReferencesBypassNestedShadows() throws Exception {
+        JsonNode tree = convert("""
+              message Foo { string outer_value = 1; }
+              enum Kind { GLOBAL = 0; }
+              message Container {
+                message Foo { int32 inner_value = 1; }
+                enum Kind { LOCAL = 0; }
+                .Foo absolute = 1;
+                Foo relative = 2;
+                .Kind global_kind = 3;
+                Kind local_kind = 4;
+              }
+              """);
+        assertThat(tree.at("/Container/absolute/outer_value").isTextual()).isTrue();
+        assertThat(tree.at("/Container/relative/inner_value").isInt()).isTrue();
+        assertThat(tree.at("/Container/global_kind").asText()).isEqualTo("GLOBAL");
+        assertThat(tree.at("/Container/local_kind").asText()).isEqualTo("LOCAL");
+    }
+
+    @Test void packageReferencesResolveOnlyThroughDeclaredPackages() throws Exception {
+        JsonNode tree = convert("""
+              syntax = "proto3";
+              package example.api;
+              message Foo { message Inner { string outer_value = 1; } }
+              message Container {
+                message Foo { message Inner { int32 inner_value = 1; } }
+                .example.api.Foo.Inner absolute = 1;
+                example.api.Foo.Inner qualified = 2;
+                api.Foo.Inner partial = 3;
+                Foo.Inner relative = 4;
+                .Foo.Inner wrong_absolute = 5;
+                unrelated.Foo.Inner wrong_package = 6;
+              }
+              """);
+        for (String field : new String[]{"absolute", "qualified", "partial"})
+            assertThat(tree.at("/Container/" + field + "/outer_value").isTextual()).isTrue();
+        assertThat(tree.at("/Container/relative/inner_value").isInt()).isTrue();
+        assertThat(tree.at("/Container/wrong_absolute").isEmpty()).isTrue();
+        assertThat(tree.at("/Container/wrong_package").isEmpty()).isTrue();
+    }
+
+    @Test void aBoundFirstComponentDoesNotFallBackToAnotherScope() throws Exception {
+        JsonNode tree = convert("""
+              message Foo { message Inner { string outer_value = 1; } }
+              message Container {
+                message Foo { int32 other = 1; }
+                Foo.Inner missing = 1;
+              }
+              """);
+        assertThat(tree.at("/Container/missing").isEmpty()).isTrue();
+    }
+
+
+    @Test void generatedNumbersSkipTheReservedRangeAndReadBack() throws Exception {
+        var input = json.createObjectNode();
+        for (int i = 1; i <= 19_001; i++) input.put("field" + i, i);
+        String schema = converter.jsonToProto(input.toString());
+        assertThat(schema).contains("field18999 = 18999;", "field19000 = 20000;", "field19001 = 20001;");
+        assertThat(schema).doesNotContain(" = 19000;", " = 19999;");
+        assertThat(convert(schema).get("Root")).hasSize(19_001);
+    }
+
+    @Test void eachNestedMessageStartsItsOwnFieldNumbers() throws Exception {
+        String schema = converter.jsonToProto("{\"first\":{\"value\":1},\"second\":{\"value\":2}}");
+        assertThat(convert(schema).at("/Root/first/value").isInt()).isTrue();
+        assertThat(convert(schema).at("/Root/second/value").isInt()).isTrue();
+    }
+
 }

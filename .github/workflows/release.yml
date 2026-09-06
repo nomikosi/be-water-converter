@@ -38,7 +38,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Test and build
-        run: ./gradlew check buildPlugin --console=plain
+        run: ./gradlew unitTest check buildPlugin --console=plain
 
       - name: Verify plugin compatibility
         run: ./gradlew verifyPlugin --console=plain

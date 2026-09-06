@@ -25,6 +25,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -66,13 +67,10 @@ final class ArrayShapes {
      */
     JsonNode elementOf(JsonNode array) {
         if (elements.containsKey(array)) return elements.get(array);
-        JsonNode merged = null;
-        boolean sawNull = false;
-        for (JsonNode item : array) {
-            if (item.isNull()) { sawNull = true; continue; }
-            merged = merged == null ? item : merge(merged, item);
-        }
-        if (sawNull) withNullElement.add(array);
+        Accumulator shape = new Accumulator();
+        for (JsonNode item : array) shape.add(item);
+        JsonNode merged = shape.element();
+        if (shape.sawNull) withNullElement.add(array);
         elements.put(array, merged);
         return merged;
     }
@@ -105,74 +103,90 @@ final class ArrayShapes {
         return keys != null && keys.contains(key);
     }
 
-    private JsonNode merge(JsonNode a, JsonNode b) {
-        if (a.isObject() && b.isObject()) return mergeObjects((ObjectNode) a, (ObjectNode) b);
-        if (a.isArray() && b.isArray())   return mergeArrays(a, b);
-        if (a.isNumber() && b.isNumber()) return wider(a, b);
-        if (a.isTextual() && b.isTextual()) {
-            // Two dates of the same kind stay that kind; anything else is text,
-            // represented by a value no date detector will match.
-            return Objects.equals(SourceConventions.temporalTypeFor(a.asText()),
-                  SourceConventions.temporalTypeFor(b.asText())) ? a : nodes.textNode("");
-        }
-        if (a.isBoolean() && b.isBoolean()) return a;
-        // Different kinds altogether: only the language's top type fits. A
-        // missing node is what the generators already map there, and merging
-        // anything further into it leaves it missing.
-        return MissingNode.getInstance();
-    }
+    /**
+     * Accumulates each observed value once. Presence counts establish optional
+     * keys without copying an ever-growing union or revisiting absent fields.
+     * Only finish() publishes nodes and metadata; intermediate shapes are not
+     * retained by the identity caches.
+     */
+    private final class Accumulator {
+        private JsonNode representative;
+        private Map<String, Accumulator> fields;
+        private Accumulator items;
+        private int samples;
+        private int nonNullSamples;
+        private boolean sawNull;
 
-    private ObjectNode mergeObjects(ObjectNode a, ObjectNode b) {
-        ObjectNode out = nodes.objectNode();
-        Set<String> optional = new LinkedHashSet<>();
-        Set<String> inherited = optionalKeys.get(a);
-        if (inherited != null) optional.addAll(inherited);
-        inherited = optionalKeys.get(b);
-        if (inherited != null) optional.addAll(inherited);
-
-        for (Map.Entry<String, JsonNode> entry : a.properties()) {
-            String key = entry.getKey();
-            JsonNode other = b.get(key);
-            if (other == null) {
-                optional.add(key);
-                out.set(key, entry.getValue());
-            } else {
-                out.set(key, mergeValues(entry.getValue(), other, key, optional));
+        void add(JsonNode value) {
+            samples++;
+            if (value.isNull()) { sawNull = true; return; }
+            nonNullSamples++;
+            if (representative == null) {
+                representative = value;
+                if (value.isObject()) fields = new LinkedHashMap<>();
+                if (value.isArray()) items = new Accumulator();
+            }
+            if (representative.isObject() && value.isObject()) {
+                for (Map.Entry<String, JsonNode> entry : value.properties())
+                    fields.computeIfAbsent(entry.getKey(), ignored -> new Accumulator()).add(entry.getValue());
+            } else if (representative.isArray() && value.isArray()) {
+                for (JsonNode item : value) items.add(item);
+            } else if (representative.isNumber() && value.isNumber()) {
+                representative = wider(representative, value);
+            } else if (representative.isTextual() && value.isTextual()) {
+                if (!Objects.equals(SourceConventions.temporalTypeFor(representative.asText()),
+                      SourceConventions.temporalTypeFor(value.asText()))) representative = nodes.textNode("");
+            } else if (!(representative.isBoolean() && value.isBoolean())) {
+                representative = MissingNode.getInstance();
+                fields = null;
+                items = null;
             }
         }
-        for (Map.Entry<String, JsonNode> entry : b.properties()) {
-            if (a.has(entry.getKey())) continue;
-            optional.add(entry.getKey());
-            out.set(entry.getKey(), entry.getValue());
+
+        JsonNode element() { return nonNullSamples == 0 ? null : finish(); }
+
+        JsonNode finish() {
+            if (nonNullSamples == 0) return nodes.nullNode();
+            // A lone object/array keeps its original identity. No source node
+            // is mutated, including when one input occurs in multiple scopes.
+            if (nonNullSamples == 1) return representative;
+            if (fields != null) {
+                ObjectNode out = nodes.objectNode();
+                Set<String> optional = new LinkedHashSet<>();
+                for (Map.Entry<String, Accumulator> entry : fields.entrySet()) {
+                    Accumulator child = entry.getValue();
+                    out.set(entry.getKey(), child.finish());
+                    if (child.samples < nonNullSamples || child.sawNull) optional.add(entry.getKey());
+                }
+                if (!optional.isEmpty()) optionalKeys.put(out, optional);
+                return out;
+            }
+            if (items != null) {
+                ArrayNode out = nodes.arrayNode();
+                elements.put(out, items.element());
+                if (items.sawNull) withNullElement.add(out);
+                return out;
+            }
+            return representative;
         }
-        if (!optional.isEmpty()) optionalKeys.put(out, optional);
-        return out;
-    }
-
-    /** A null on either side makes the key optional and lets the other side supply the type. */
-    private JsonNode mergeValues(JsonNode a, JsonNode b, String key, Set<String> optional) {
-        if (a.isNull() && b.isNull()) return a;
-        if (a.isNull()) { optional.add(key); return b; }
-        if (b.isNull()) { optional.add(key); return a; }
-        return merge(a, b);
-    }
-
-    private JsonNode mergeArrays(JsonNode a, JsonNode b) {
-        JsonNode elementA = elementOf(a);
-        JsonNode elementB = elementOf(b);
-        JsonNode element = elementA == null ? elementB
-              : elementB == null ? elementA : merge(elementA, elementB);
-        ArrayNode out = nodes.arrayNode();
-        // Recorded directly rather than re-derived from the contents, so the
-        // merged element keeps its identity and its optional keys.
-        elements.put(out, element);
-        if (hasNullElement(a) || hasNullElement(b)) withNullElement.add(out);
-        return out;
     }
 
     /** The wider of two numbers, by kind: int < long < BigInteger < float < double < BigDecimal. */
     private static JsonNode wider(JsonNode a, JsonNode b) {
-        return rank(b) > rank(a) ? b : a;
+        JsonNode precise = !GeneratorJson.canUseDouble(a) ? a
+              : !GeneratorJson.canUseDouble(b) ? b : null;
+        if (precise != null && (a.isFloatingPointNumber() || b.isFloatingPointNumber()))
+            return com.fasterxml.jackson.databind.node.DecimalNode.valueOf(precise.decimalValue());
+
+        JsonNode widest = rank(b) > rank(a) ? b : a;
+        // Keep both the widest integral kind and evidence that a sample needs
+        // exact precision. A later decimal must see that evidence regardless
+        // of the order in which long and BigInteger samples were merged.
+        if (precise != null && widest.isIntegralNumber())
+            return widest.isBigInteger()
+                  ? com.fasterxml.jackson.databind.node.BigIntegerNode.valueOf(precise.bigIntegerValue())
+                  : precise;
+        return widest;
     }
 
     private static int rank(JsonNode number) {

@@ -16,9 +16,14 @@
 
 package com.converter.converter;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import static com.converter.converter.SourceConventions.temporalTypeFor;
+import static com.converter.converter.SourceConventions.capitalize;
+import static com.converter.converter.SourceConventions.uniqueName;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -48,10 +53,6 @@ public class KotlinDataClassGenerator {
     /** Name of the generated root class. */
     public static final String ROOT_CLASS_NAME = "Root";
 
-    // A plain mapper on purpose: PivotJson keeps decimals as BigDecimal,
-    // which is right for carrying values through a conversion but would
-    // retype every JSON 1.5 here, and these classify number SHAPES.
-    private final ObjectMapper jsonMapper = new ObjectMapper();
 
     /**
      * Kotlin hard keywords, which cannot be identifiers at all. Soft and modifier
@@ -94,16 +95,8 @@ public class KotlinDataClassGenerator {
             throw new IllegalArgumentException("Input must not be null or blank");
         // A root array is unwrapped by StructureModel to the merged shape of
         // its elements, the same rule it applies to a nested array under a key.
-        return generate(jsonMapper.readTree(json), detectDates);
+        return generate(GeneratorJson.readTree(json), detectDates);
     }
-
-    /**
-     * The JVM allows 255 parameter slots per method and the primary constructor
-     * of a data class takes one per property, so an object with more keys than
-     * this cannot be a data class at all. Emitted anyway, with a note, rather
-     * than silently switching to another shape.
-     */
-    static final int MAX_CONSTRUCTOR_PARAMETERS = 254;
 
     // ── Generation ────────────────────────────────────────────────────────
 
@@ -139,20 +132,20 @@ public class KotlinDataClassGenerator {
             return;
         }
 
-        if (node.size() > MAX_CONSTRUCTOR_PARAMETERS)
-            sb.append("// NOTE: ").append(node.size()).append(" properties exceed the JVM limit of ")
-              .append(MAX_CONSTRUCTOR_PARAMETERS)
-              .append(" constructor parameters; split this class before compiling.\n");
+        List<String> propertyTypes = new ArrayList<>();
+        for (Map.Entry<String, JsonNode> entry : node.properties()) {
+            String type = resolveType(entry.getValue(), entry.getKey(), detectDates, usedTypes, model);
+            if (model.isOptional(node, entry.getKey()) && !type.endsWith("?")) type += "?";
+            propertyTypes.add(type);
+        }
+        validateJvmSlots(className, propertyTypes);
         sb.append("data class ").append(className).append("(\n");
         Set<String> usedNames = new LinkedHashSet<>();
         int remaining = node.size();
         for (Map.Entry<String, JsonNode> e : node.properties()) {
             String originalKey = e.getKey();
-            String propertyName = uniqueName(toCamelCase(originalKey), usedNames);
-            String type = resolveType(e.getValue(), originalKey, detectDates, usedTypes, model);
-            // Optional only when the example showed it: a key some sibling
-            // element lacked, or held as null. Present everywhere stays non-null.
-            if (model.isOptional(node, originalKey) && !type.endsWith("?")) type += "?";
+            String propertyName = uniqueName(toCamelCase(originalKey), "", usedNames);
+            String type = propertyTypes.get(node.size() - remaining);
 
             if (!propertyName.equals(originalKey)) {
                 if (SourceConventions.isMappableKey(originalKey)) {
@@ -171,11 +164,16 @@ public class KotlinDataClassGenerator {
         sb.append(")\n");
     }
 
-    private String uniqueName(String name, Set<String> used) {
-        if (used.add(name)) return name;
-        int n = 2;
-        while (!used.add(name + n)) n++;
-        return name + n;
+    private static void validateJvmSlots(String className, List<String> types) {
+        int slots = 0;
+        for (String type : types) slots += type.equals("Long") || type.equals("Double") ? 2 : 1;
+        // copy$default takes the receiver, the properties, one mask per 32
+        // properties, and a marker. Nullable primitives are boxed (one slot).
+        int copySlots = slots + (types.size() + 31) / 32 + 2;
+        if (copySlots > 255)
+            throw new IllegalArgumentException("Kotlin class " + className + " needs " + copySlots
+                  + " JVM parameter slots in its generated copy method (limit 255). "
+                  + "Split this object into smaller nested objects before generating Kotlin.");
     }
 
     private String resolveType(JsonNode node, String fieldName, boolean detectDates,
@@ -214,14 +212,6 @@ public class KotlinDataClassGenerator {
             return "List<" + elementType + ">";
         }
         return "Any";
-    }
-
-    private String temporalTypeFor(String value) {
-        return SourceConventions.temporalTypeFor(value);
-    }
-
-    private String capitalize(String s) {
-        return SourceConventions.capitalize(s);
     }
 
     /**

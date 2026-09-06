@@ -18,7 +18,6 @@ package com.converter.converter;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.dataformat.toml.TomlMapper;
 
@@ -37,14 +36,9 @@ public class TomlConverter {
         tomlMapper = TomlMapper.builder().nodeFactory(new JsonNodeFactory(true)).build();
     }
 
-    /**
-     * A decimal integer literal in value position, underscores allowed. Anchored
-     * on the character before so a digit run inside a bare key or a date is not
-     * matched, and excluding a following '.', 'e' or '-' so floats and dates are
-     * left to the parser.
-     */
+    /** A whole decimal value token; key and container context is tracked separately. */
     private static final java.util.regex.Pattern DECIMAL_INTEGER =
-          java.util.regex.Pattern.compile("(?<![\\w.\\-+])([+-]?)(\\d[\\d_]*)(?![\\d_.eE:\\-])");
+          java.util.regex.Pattern.compile("([+-]?)(\\d[\\d_]*)");
 
     /**
      * Digit count at which jackson-dataformat-toml mis-reads a decimal integer.
@@ -56,13 +50,13 @@ public class TomlConverter {
     public String tomlToJson(String toml) throws Exception {
         if (toml == null || toml.isBlank())
             throw new IllegalArgumentException("Input TOML must not be empty");
-        rejectUnreadableIntegers(toml);
+        forEachValueToken(toml, TomlConverter::rejectUnreadableInteger);
         JsonNode node = tomlMapper.readTree(toml);
         return jsonMapper.writeValueAsString(node);
     }
 
     /**
-     * Refuses a document whose integers the bundled TOML parser reads wrongly.
+     * Visits unquoted value tokens for conversion and formatting safeguards.
      *
      * <p>It returns them silently corrupted, which is the one outcome this
      * project will not ship: {@code id = 1723600000000000000} parses as
@@ -74,21 +68,54 @@ public class TomlConverter {
      * <p>Hex, float and quoted forms are read correctly, so only bare decimal
      * integers are checked.
      */
-    private static void rejectUnreadableIntegers(String toml) {
+    static void forEachValueToken(String toml, java.util.function.Consumer<String> consumer) {
         String scannable = maskStringsAndComments(toml);
-        java.util.regex.Matcher m = DECIMAL_INTEGER.matcher(scannable);
-        while (m.find()) {
-            boolean negative = "-".equals(m.group(1));
-            int digits = m.group(2).replace("_", "").replaceFirst("^0+(?=\\d)", "").length();
-            if (digits == BROKEN_DIGITS || (negative && digits > BROKEN_DIGITS)) {
-                String literal = m.group(1) + m.group(2);
-                throw new IllegalArgumentException(
-                      "TOML integer " + literal + " cannot be read correctly: the bundled TOML "
-                      + "parser mis-parses decimal integers of " + BROKEN_DIGITS + " digits and "
-                      + "returns a different number, so converting would silently change your "
-                      + "data. Quote it (\"" + literal + "\") to carry it through as text, or "
-                      + "write it in hexadecimal.");
+        java.util.Deque<Character> containers = new java.util.ArrayDeque<>();
+        boolean readingKey = true;
+        for (int i = 0; i < scannable.length();) {
+            char c = scannable.charAt(i);
+            if (Character.isWhitespace(c)) {
+                if (c == '\n' && containers.isEmpty()) readingKey = true;
+                i++;
+            } else if (c == '[' && readingKey && containers.isEmpty()) {
+                // A table header contains keys, even when they consist of digits.
+                int end = scannable.indexOf('\n', i);
+                i = end < 0 ? scannable.length() : end + 1;
+            } else if (c == '[' || c == '{') {
+                containers.push(c);
+                readingKey = c == '{';
+                i++;
+            } else if (c == ']' || c == '}') {
+                if (!containers.isEmpty()) containers.pop();
+                readingKey = false;
+                i++;
+            } else if (c == '=') {
+                readingKey = false;
+                i++;
+            } else if (c == ',') {
+                readingKey = !containers.isEmpty() && containers.peek() == '{';
+                i++;
+            } else {
+                int start = i++;
+                while (i < scannable.length() && !Character.isWhitespace(scannable.charAt(i))
+                      && "[]=,{}".indexOf(scannable.charAt(i)) < 0) i++;
+                if (!readingKey) consumer.accept(scannable.substring(start, i));
             }
+        }
+    }
+
+    private static void rejectUnreadableInteger(String token) {
+        java.util.regex.Matcher m = DECIMAL_INTEGER.matcher(token);
+        if (!m.matches()) return;
+        boolean negative = "-".equals(m.group(1));
+        int digits = m.group(2).replace("_", "").replaceFirst("^0+(?=\\d)", "").length();
+        if (digits == BROKEN_DIGITS || (negative && digits > BROKEN_DIGITS)) {
+            throw new IllegalArgumentException(
+                  "TOML integer " + token + " cannot be read correctly: the bundled TOML "
+                  + "parser mis-parses decimal integers of " + BROKEN_DIGITS + " digits and "
+                  + "returns a different number, so converting would silently change your "
+                  + "data. Quote it (\"" + token + "\") to carry it through as text, or "
+                  + "write it in hexadecimal.");
         }
     }
 
@@ -150,7 +177,7 @@ public class TomlConverter {
         String close = triple ? String.valueOf(new char[]{c, c, c}) : String.valueOf(c);
         int from = i + close.length();
         int end = toml.indexOf(close, from);
-        while (!triple && c == '"' && end > 0 && countTrailingBackslashes(toml, end) % 2 == 1)
+        while (c == '"' && end > 0 && countTrailingBackslashes(toml, end) % 2 == 1)
             end = toml.indexOf(close, end + 1);
         if (end < 0) end = n - close.length();          // unterminated: the rest is string
         // A multi-line string may end with one or two quote characters right

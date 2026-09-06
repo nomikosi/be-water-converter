@@ -17,7 +17,7 @@
 package com.converter;
 
 import com.converter.converter.ConversionFileNames;
-import com.converter.converter.ConversionPipeline;
+import com.converter.converter.Formats;
 import com.intellij.openapi.fileChooser.FileChooser;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.fileChooser.FileChooserFactory;
@@ -35,8 +35,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
@@ -58,38 +56,38 @@ final class ConverterFileOps {
     /** File content, and a note on how it was read when that was not plain UTF-8. */
     private record Loaded(String text, String note) {}
 
-    private static final Set<String> SUPPORTED_EXTENSIONS =
-          Set.of("json", "xml", "yaml", "yml", "csv", "toml", "proto");
-
-    // Extension mapping lives in ConversionFileNames. A private copy of it here
-    // already went stale once: Kotlin was added there and not here, so Save
-    // Output wrote Kotlin results as output.txt.
-
     /** How the panel receives results; every call arrives on the EDT. */
     interface Host {
         void status(String message, boolean ok);
         void loaded(String content, String detectedFormatOrNull, String fileName);
+        long inputRevision();
     }
 
     private final JComponent parent;
     private final Project project;
     private final BooleanSupplier disposed;
     private final Host host;
+    private final BackgroundTasks tasks;
+    private long loadRequest;
 
     ConverterFileOps(JComponent parent, Project project, BooleanSupplier disposed, Host host) {
+        this(parent, project, disposed, host, BackgroundTasks.forIde());
+    }
+
+    ConverterFileOps(JComponent parent, Project project, BooleanSupplier disposed, Host host,
+          BackgroundTasks tasks) {
         this.parent   = parent;
         this.project  = project;
         this.disposed = disposed;
         this.host     = host;
+        this.tasks    = tasks;
     }
 
     void openFile() {
         FileChooserDescriptor descriptor =
               new FileChooserDescriptor(true, false, false, false, false, false)
                     .withTitle("Open Input File")
-                    .withFileFilter(vf -> vf.getExtension() != null
-                          && SUPPORTED_EXTENSIONS.contains(
-                                vf.getExtension().toLowerCase(Locale.ROOT)));
+                    .withFileFilter(vf -> Formats.inputForFileName(vf.getName()) != null);
         VirtualFile chosen = FileChooser.chooseFile(descriptor, project, null);
         if (chosen != null) loadFile(new File(chosen.getPath()));
     }
@@ -113,7 +111,7 @@ final class ConverterFileOps {
         // slow network target would otherwise freeze the IDE.
         runOffEdt(() -> {
             try {
-                writeAtomically(file.toPath(), output);
+                AtomicFileWriter.write(file.toPath(), output);
                 return null;
             } catch (IOException ex) {
                 throw new java.util.concurrent.CompletionException(ex);
@@ -131,26 +129,6 @@ final class ConverterFileOps {
         });
     }
 
-    /**
-     * Writes through a sibling temporary file and a rename, so a crash or a
-     * full disk part-way through leaves the previous file intact rather than a
-     * truncated one. Writing straight over the target truncated it first.
-     */
-    private static void writeAtomically(java.nio.file.Path target, String text) throws IOException {
-        java.nio.file.Path temp = target.resolveSibling(target.getFileName() + ".bewater.tmp");
-        try {
-            Files.writeString(temp, text, StandardCharsets.UTF_8);
-            try {
-                Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                      java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.AtomicMoveNotSupportedException notAtomicHere) {
-                Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            }
-        } finally {
-            Files.deleteIfExists(temp);
-        }
-    }
-
     private static void refreshInVfs(File file) {
         try {
             com.intellij.openapi.vfs.LocalFileSystem.getInstance()
@@ -161,6 +139,7 @@ final class ConverterFileOps {
     }
 
     void loadFile(File file) {
+        if (disposed.getAsBoolean()) return;
         // An editor holding unsaved changes to this file has the newer text.
         // Autosave is off by default and does not fire when focus moves to the
         // tool window, so reading the disk copy loaded a silently stale document.
@@ -174,8 +153,12 @@ final class ConverterFileOps {
                   "Large file", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
             if (choice != JOptionPane.OK_OPTION) return;
         }
+        // Only the newest accepted request may replace the input. The revision
+        // also changes on edits and explicit Clear/Swap/History operations.
+        long request = ++loadRequest;
+        long revision = host.inputRevision();
         if (unsaved != null) {
-            host.loaded(unsaved, detectFormat(file.getName()),
+            host.loaded(unsaved, Formats.inputForFileName(file.getName()),
                   file.getName() + " (unsaved editor contents)");
             return;
         }
@@ -197,11 +180,16 @@ final class ConverterFileOps {
                 throw new java.util.concurrent.CompletionException(ex);
             }
         }, (content, cause) -> {
+            if (request != loadRequest) return;
+            if (revision != host.inputRevision()) {
+                host.status("Input changed while loading; the file was not applied", false);
+                return;
+            }
             if (cause != null) {
                 host.status("Failed to open file: " + cause.getMessage(), false);
                 return;
             }
-            host.loaded(content.text(), detectFormat(file.getName()), file.getName() + content.note());
+            host.loaded(content.text(), Formats.inputForFileName(file.getName()), file.getName() + content.note());
         });
     }
 
@@ -232,15 +220,9 @@ final class ConverterFileOps {
      * delivered once the owning panel has been disposed.
      */
     private <T> void runOffEdt(Supplier<T> work, BiConsumer<T, Throwable> onDone) {
-        java.util.concurrent.CompletableFuture
-              .supplyAsync(work, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
-              .whenComplete((result, error) ->
-                    com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
-                        if (disposed.getAsBoolean()) return;
-                        Throwable cause = error == null ? null
-                              : (error.getCause() != null ? error.getCause() : error);
-                        onDone.accept(result, cause);
-                    }));
+        tasks.submit(work, (result, error) -> {
+            if (!disposed.getAsBoolean()) onDone.accept(result, error);
+        });
     }
 
     /** Wraps an existing TransferHandler so dropped files load into the input editor. */
@@ -292,17 +274,4 @@ final class ConverterFileOps {
         };
     }
 
-    private static String detectFormat(String fileName) {
-        int dot = fileName.lastIndexOf('.');
-        String ext = dot >= 0 ? fileName.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
-        return switch (ext) {
-            case "json"        -> ConversionPipeline.FMT_JSON;
-            case "xml"         -> ConversionPipeline.FMT_XML;
-            case "yaml", "yml" -> ConversionPipeline.FMT_YAML;
-            case "csv"         -> ConversionPipeline.FMT_CSV;
-            case "toml"        -> ConversionPipeline.FMT_TOML;
-            case "proto"       -> ConversionPipeline.FMT_PROTO;
-            default            -> null;
-        };
-    }
 }

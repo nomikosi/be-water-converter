@@ -42,11 +42,15 @@ public final class PivotJson {
 
     /** A mapper that carries every number through the pivot unchanged. */
     public static ObjectMapper mapper() {
+        return builder().build();
+    }
+
+    /** Shared numeric fidelity settings; callers add their own input syntax policy. */
+    public static JsonMapper.Builder builder() {
         return JsonMapper.builder()
               .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
               // The constructor, not withExactBigDecimals(true): Jackson 2.21
               // deprecates the static factory and keeps this form.
-              .nodeFactory(new JsonNodeFactory(true))
-              .build();
+              .nodeFactory(new JsonNodeFactory(true));
     }
 }

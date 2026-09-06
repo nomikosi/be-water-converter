@@ -124,4 +124,28 @@ class JsonSchemaGeneratorTest {
         assertThat(mapper.readTree(out).get("$schema").asText())
               .isEqualTo(JsonSchemaGenerator.SCHEMA_DIALECT);
     }
+
+    @Test void canonicalIdentityCannotBeForgedByAPropertyName() throws Exception {
+        var mapper = PivotJson.mapper();
+        var samples = mapper.createArrayNode();
+        samples.addObject().put("a", "x").put("b", "y");
+        String unusual = "a\":{\"type\":\"string\"},\"b";
+        samples.addObject().put(unusual, "z");
+        for (boolean required : new boolean[]{false, true}) {
+            JsonNode schema = mapper.readTree(new JsonSchemaGenerator().fromJson(samples.toString(), required));
+            assertThat(schema.at("/items/anyOf")).hasSize(2);
+            assertThat(schema.at("/items/anyOf/1/properties").has(unusual)).isTrue();
+        }
+    }
+
+    @Test void nestedEquivalentSchemasStillDeduplicateRegardlessOfKeyOrder() throws Exception {
+        var mapper = PivotJson.mapper();
+        String samples = "[{\"nested\":{\"a\":1,\"b\":2}},{\"nested\":{\"b\":3,\"a\":4}}]";
+        for (boolean required : new boolean[]{false, true}) {
+            JsonNode schema = mapper.readTree(new JsonSchemaGenerator().fromJson(samples, required));
+            assertThat(schema.at("/items").has("anyOf")).isFalse();
+            assertThat(schema.at("/items/properties/nested/properties")).hasSize(2);
+        }
+    }
+
 }

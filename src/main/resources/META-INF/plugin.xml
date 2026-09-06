@@ -82,7 +82,8 @@
                 instead of converting to <code>null</code>.</li>
             <li><b>Format detection looks past leading comments</b>, so a <code>//</code> or
                 <code>#</code> line above a JSON document no longer hides it, and a commented JSON
-                array is no longer taken for TOML.</li>
+                array is no longer taken for TOML. CSV headers beginning with <code>#</code> keep
+                their format and delimiter detection, including semicolon and tab exports.</li>
             <li><b>XML Format keeps a DOCTYPE</b> — plist, XHTML and SVG files can be formatted;
                 only a DOCTYPE with an internal subset is refused, with a plain explanation.</li>
             <li><b>Files with a UTF-16 or UTF-32 byte-order mark open correctly</b> instead of as
@@ -92,6 +93,39 @@
                 formatted document is left untouched rather than replaced with itself. Save proposes
                 the same file name the scratch files use (<code>Root.java</code> for Java), and
                 <i>Open in Be Water Converter</i> asks before loading a very large file.</li>
+            <li><b>Background results respect newer edits</b> — Convert, Format, Compare and file
+                loading discard results that belong to an older document. Clear, Swap and history
+                restoration also invalidate pending results, and a late Cancel still stops a
+                completed conversion from replacing the output.</li>
+            <li><b>History restores conversion options</b> along with the documents and formats,
+                including the CSV delimiter, type inference, date detection and subtree filter.</li>
+            <li><b>YAML Format refuses changes it cannot preserve</b> — non-string mapping keys,
+                timestamps, sets and other unsupported YAML types leave the document untouched with
+                an explanation. Explicit <code>null</code> documents remain convertible.</li>
+            <li><b>TOML safeguards distinguish keys from values</b> — numeric and date-looking
+                table names no longer trigger value warnings, escaped quotes in multiline strings
+                are handled correctly, and lowercase date-time separators are recognised.</li>
+            <li><b>Sorting preserves decimal scale</b> — values such as <code>1.10</code> keep
+                their written precision through Format and conversion. Compare treats equivalent
+                numeric forms as equal while preserving differences in their values.</li>
+            <li><b>Generated code handles numeric and JVM limits</b> — Java and Kotlin use exact
+                numeric types when needed. Oversized Kotlin data classes are refused with an
+                explanation, and Lombok output omits an all-args constructor when it would exceed
+                the JVM parameter limit. Protobuf generation refuses numbers its scalar types
+                cannot preserve.</li>
+            <li><b>Protobuf preserves explicit JSON names</b>, including escaped names in nested
+                messages and <code>oneof</code> blocks, and rejects conflicting names. Package and
+                global type references resolve in their declared scope, and generated field
+                numbers skip the reserved <code>19000</code>–<code>19999</code> range.</li>
+            <li><b>Subtree paths handle quoted keys</b>, including empty names, escaped quotes
+                and brackets. JSON Pointer spaces are preserved, malformed paths are rejected,
+                and JSON Schema deduplication keeps distinct property names separate.</li>
+            <li><b>Large documents use less memory</b> when merging sparse array shapes, and
+                highlighting is disabled for oversized input as well as output. Concurrent saves
+                use separate temporary files so they cannot overwrite each other's temporary data.</li>
+            <li><b>Expanded regression coverage</b> includes asynchronous editor actions,
+                generated Java and Kotlin compilation, real Lombok processing and a constrained-heap
+                array test. CI runs both the plain JVM and IntelliJ test suites.</li>
         </ul>
         <h3>1.5.0</h3>
         <ul>

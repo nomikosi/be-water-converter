@@ -85,8 +85,9 @@ balloons (the status bar shows the first line). Very large outputs are rendered 
 syntax highlighting disabled to keep the editor responsive.
 
 A **history** toolbar button lists the last 20 successful conversions of the session
-(time, formats, output size); selecting an entry restores both editors and format
-selections. Conversions over ~1 MB of combined text are not recorded, so history never
+(time, formats, output size); selecting an entry restores both editors, format
+selections, and the conversion options (including the delimiter and subtree filter)
+used for that result. Conversions over ~1 MB of combined text are not recorded, so history never
 holds large payloads in memory. Swap is
 available when the current output format is also a supported input format; generated
 Java POJO output is intentionally output-only.
@@ -113,6 +114,10 @@ copy on disk. **Save** writes the current output to disk using the appropriate f
 extension and refreshes the file in the IDE's virtual file system, so a file saved into the
 project shows up straight away.
 
+File loads discard stale results if the input changes or a newer file is opened
+before completion. Saves use a unique temporary file in the destination directory
+before replacing the target, so overlapping saves do not share temporary files.
+
 You can also **drag and drop** a file directly onto the input editor. The file is loaded
 and the source format is auto-detected from the extension, just like the Open action.
 
@@ -124,14 +129,17 @@ recover truncated input during interactive editing.
 
 Format is a layout action and is held to that. CSV is rewritten row by row without ever
 being parsed into objects, so headers, ragged rows and cell text come back exactly as
-written. YAML keeps one document per document, including a `---`-prefixed single document.
+written, including trailing empty tab-separated cells. YAML keeps one document per
+document, explicit null values, and the newlines inside block scalars.
 Numbers keep the digits they were written with: `1.10` stays `1.10` in JSON, YAML and TOML
 alike. If the input is edited while Format is still running, the result is discarded rather
-than written over the newer text.
+than written over the newer text. Delayed formatting errors and cancellation are also
+discarded; Compare discards its result when either editor changes.
 
 Where a re-layout could only be done by changing what the document says, Format refuses and
 leaves the editor alone: TOML dates, hex/octal/binary and underscore-separated numbers and
-`inf`/`nan` (the JSON step in between cannot spell them); YAML `.inf`/`.nan`; and XML elements
+`inf`/`nan` (the JSON step in between cannot spell them); YAML `.inf`/`.nan`, non-string mapping keys, timestamps and other tags the JSON step
+cannot preserve; and XML elements
 that mix text with child elements, which the indenter cannot pretty-print without inserting
 whitespace into the text. Formats that pass through the JSON tree keep only the data, so
 before YAML, TOML or JSON-with-comments is rewritten, Format says how many comments (and YAML
@@ -215,7 +223,8 @@ The **Compare** toolbar button opens the IDE's diff viewer on the two editors. E
 first normalised to canonical JSON — converted to the pivot format and key-sorted — so two
 documents carrying the same data in different formats or different key orders compare as
 identical, and only genuine differences appear. The status bar says so explicitly when the
-two sides are equivalent.
+two sides are equivalent. Numeric spellings such as `1`, `1.0`, and `1e0` compare
+by exact value; Format and conversion still preserve decimal scale.
 
 ### CSV / XML type inference
 
@@ -287,12 +296,14 @@ Java POJO output is generated from JSON structure and emits field-only class ske
 including `@JsonProperty` annotations where the source key differs from the generated
 camelCase field name. Arrays of objects become `List<...>` fields, nested objects become
 nested class types, and numbers are mapped to `Integer`, `Long`, `BigInteger`, `Float`,
-`Double`, or `BigDecimal` as appropriate. String values in ISO-8601 form are typed as
+`Double`, or `BigDecimal` as appropriate. Decimal samples that cannot retain their value
+through a `Double` use `BigDecimal`, including extreme exponents and high-precision values. String values in ISO-8601 form are typed as
 `LocalDate`, `LocalDateTime`, or `OffsetDateTime` (validated with a real `java.time`
 parse, so `2025-13-99` stays a `String`); disable this via the **Detect dates** toggle.
 Imports are emitted only when actually used. The optional **Lombok
 annotations** mode annotates every generated class with `@Data`, `@NoArgsConstructor`,
-and `@AllArgsConstructor`.
+and `@AllArgsConstructor`. The all-args annotation is omitted for empty classes and for
+classes with more than 254 fields, where it would produce an invalid JVM constructor.
 
 All classes are emitted into a single block that pastes into one `.java` file, so only
 the root class is declared `public` — Java permits at most one public top-level type per
@@ -330,8 +341,11 @@ case where an example positively demonstrates nullability; everything else is no
 because an example can only show what *was* present. Arrays of objects are merged the same
 way as for Java, and here the merge can say more: a key that some element lacked, or held
 as `null`, is typed nullable (`Int?`), an array with a `null` element becomes
-`List<Int?>`, and a key present in every element stays non-null. An object with more
-properties than a primary constructor can take is emitted with a note saying so.
+`List<Int?>`, and a key present in every element stays non-null. Classes whose generated
+methods exceed the JVM's 255 parameter-slot limit are rejected with a message naming the
+class. This includes `copy`'s default-argument machinery: non-null `Long` and `Double`
+properties need two slots, nullable primitives need one, and synthetic parameters count.
+Split oversized objects into smaller nested objects before generating Kotlin.
 
 Hard keywords (`when`, `class`, `is`, `fun`, …) are renamed with a `Value` suffix and mapped
 back with `@JsonProperty`; soft keywords such as `data`, `value` and `sealed` are legal
@@ -354,15 +368,22 @@ The Protobuf converter works structurally in both directions without invoking `p
   Fields typed with a known `enum` resolve to the enum's first declared value (the
   proto3 default). `oneof` fields are included alongside regular fields with their
   typed defaults, and duplicate field numbers are rejected across the whole message,
-  including `oneof` blocks. Type names are resolved the way `protoc` resolves them: a
+  including `oneof` blocks. Generated field numbers skip the reserved range
+  `19000`–`19999`. Type names are resolved the way `protoc` resolves them: a
   message's own nested types first, then its enclosing messages', then the file's top
   level, so two messages can each declare their own `Inner` or `Status`; dotted references
-  such as `Outer.Inner`, with or without a package prefix, descend the same way.
+  such as `Outer.Inner` descend the same way. Declared package prefixes are resolved
+  explicitly, and leading-dot references such as `.example.Outer.Inner` start at the
+  global scope. Unknown external types remain empty placeholders. Explicit `json_name`
+  options supply JSON keys, including escaped names and mappings inside nested messages
+  and `oneof` blocks; conflicting JSON names are rejected.
 - **`jsonToProto`** walks a JSON tree and emits a proto3 schema with inline nested
   messages and repeated fields. A repeated message is typed from every element of the
   array. A key the field name cannot spell (`first-name`, `1st`, or two keys that sanitize
   to the same name) keeps its original key through a `json_name` option, which is how
-  proto3's JSON mapping reads it back.
+  proto3's JSON mapping reads it back. Integers outside signed `int64` and decimals
+  that cannot retain their value through `double` are rejected with a message suggesting
+  JSON strings or Java/Kotlin output, rather than generating an incompatible field type.
 
 Malformed Protobuf input fails with targeted validation messages (unbalanced braces,
 malformed field statements, duplicate field numbers, field numbers outside protoc's rules:
@@ -420,14 +441,19 @@ Produces:
 | Class | Responsibility |
 |---|---|
 | `ConverterToolWindowFactory` | Registers and mounts the tool-window content. |
-| `ConverterPanel` | UI: toolbar, editors, options, find bar, status updates, file I/O. |
+| `ConverterPanel` | UI orchestration: toolbar, options, find bar, status updates, file I/O. |
+| `ConverterEditorState` | Editor snapshots, text and format updates, highlighting, wrapping, and revision tracking. |
 | `ConverterWidgets` | Custom-painted toolbar controls (buttons, combos, format badges). |
 | `ConversionPipeline` | UI-independent conversion dispatch: normalize to JSON, render to output, per-format formatting and its refusals, autoClose repair, XML pretty-printing, format and delimiter detection. |
 | `ConversionOptions` | Immutable per-conversion settings: CSV mode and delimiter, Lombok, date detection, type inference, key sorting, subtree filter. |
-| `PivotJson` | Reader settings that carry every number through the JSON pivot unchanged. |
-| `JsonPathFilter` | JSON Pointer and dotted-path subtree selection. |
+| `PivotJson` | Shared JSON mapper builder preserving numeric values and decimal scale; callers configure input syntax. |
+| `JsonTrees` | Shared recursive key ordering, with numeric normalization reserved for comparison. |
+| `JsonPathFilter` | JSON Pointer and dotted/bracket subtree selection, including escaped and empty quoted keys. |
 | `ConversionHistory` | Bounded in-memory history of successful conversions. |
 | `ConversionFileNames` | Extension and file-name rules for conversion results. |
+| `Formats` | Shared format names, extensions, input capabilities, syntax modes and generated-file naming constraints. |
+| `BackgroundTasks` | Background execution and UI completion, with controllable executors for asynchronous regression tests. |
+| `AtomicFileWriter` | File replacement through a unique temporary file in the destination directory. |
 | `ConverterActions` | Keymap-visible IDE actions (Convert, Format, Copy, Open, Save). |
 | `ConverterContextActions` | Editor and Project-view context menu: open in the tool window, or convert straight to a scratch file. |
 | `ConverterScratchFiles` | Opens results as scratch files in a real IDE editor. |
@@ -440,16 +466,23 @@ Produces:
 | `JsonXmlConverter` | JSON ↔ XML conversion, element-name sanitization, optional type inference. |
 | `JsonYamlConverter` | JSON ↔ YAML conversion, multi-document support, exact floats, resolver-aware quoting. |
 | `CsvConverter` | CSV ↔ JSON conversion, positional re-layout, flattening logic, row estimation. |
-| `TomlConverter` | TOML ↔ JSON conversion. |
+| `TomlConverter` | TOML ↔ JSON conversion and shared value-token scanning for conversion and formatting guards. |
 | `ProtoConverter` | Protobuf schema ↔ JSON structural conversion with scoped type resolution and identifier sanitization. |
 | `JavaPojoGenerator` | Java class generation from structured JSON, with date detection. |
 | `KotlinDataClassGenerator` | Kotlin data class generation from structured JSON. |
 | `JsonSchemaGenerator` | JSON Schema (draft 2020-12) inference. |
 | `StructureModel` / `SourceConventions` | Type discovery and identifier rules shared by the Java and Kotlin generators. |
-| `ArrayShapes` | The merged shape of an array's elements, for the generators and the Protobuf writer. |
+| `ArrayShapes` | Incremental shape merging and presence counts for generators and the Protobuf writer, retaining only completed shapes. |
 | `ScalarInference` | Shared string→typed-value inference for CSV and XML input. |
 
 ## Development
+
+Java and Kotlin regression tests compile and load generated classes, including JVM
+parameter-limit boundaries and Java output with real Lombok annotation processing.
+Compilers run in child processes using the configured JDK, so the IntelliJ test runtime
+cannot silently skip Java compilation. The Kotlin compiler and Lombok processor are
+isolated test dependencies and are not bundled with the plugin. A separate process checks
+sparse array-shape merging under a 96 MiB heap.
 
 ### Requirements
 
@@ -471,8 +504,8 @@ Run pure JVM unit tests (no IDE sandbox required) with:
 ./gradlew unitTest
 ```
 
-The `check` task runs the full platform-aware `test` task, a superset of these. The test
-suite covers all converter classes with 650+ test cases, including CSV flattening edge cases
+The `check` task runs the full platform-aware `test` task. CI runs both environments with
+`./gradlew unitTest check buildPlugin`. The test suite covers all converter classes, including CSV flattening edge cases
 (empty arrays, nulls, missing fields, header ordering), type inference, Protobuf validation,
 scoping and sanitization, POJO generation variants, numeric and format fidelity, XXE
 hardening, and end-to-end cross-format pipeline tests.

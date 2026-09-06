@@ -112,4 +112,43 @@ class JsonPathFilterTest {
               ConversionPipeline.FMT_JSON, ConversionOptions.DEFAULTS);
         assertThat(pivot).contains("\"a\"").contains("\"b\"");
     }
+
+    @Test void pointerWhitespaceIsPartOfTheKey() throws Exception {
+        String input = "{\"key\":1,\"key \":2,\" \":3,\"\":4,\" key\\t\":5}";
+        JsonNode tree = mapper.readTree(input);
+        assertThat(JsonPathFilter.apply(tree, "/key ").asInt()).isEqualTo(2);
+        assertThat(JsonPathFilter.apply(tree, "/ ").asInt()).isEqualTo(3);
+        assertThat(JsonPathFilter.apply(tree, "/").asInt()).isEqualTo(4);
+        assertThat(JsonPathFilter.apply(tree, "/ key\t").asInt()).isEqualTo(5);
+        assertThat(new ConversionPipeline().normalizeToJson(input, "JSON",
+              ConversionOptions.DEFAULTS.withFilterPath("/key "))).isEqualTo("2");
+    }
+
+
+    @Test void quotedBracketKeysKeepDelimitersEscapesAndEmptyNames() throws Exception {
+        var object = mapper.createObjectNode();
+        for (String key : new String[]{"a]b", "", "a'b", "a\"b", "back\\slash", "line\nbreak", "😀", "~ /"})
+            object.put(key, key);
+        String[][] cases = {
+              {"['a]b']", "a]b"}, {"['']", ""}, {"[\"\"]", ""}, {"['a\\'b']", "a'b"},
+              {"[\"a\\\"b\"]", "a\"b"}, {"['back\\\\slash']", "back\\slash"},
+              {"['line\\nbreak']", "line\nbreak"}, {"['\\uD83D\\uDE00']", "😀"}, {"['~ /']", "~ /"}};
+        for (String[] sample : cases)
+            assertThat(JsonPathFilter.apply(object, sample[0]).asText()).isEqualTo(sample[1]);
+    }
+
+    @Test void emptyQuotedSegmentsComposeWithArraysAndDottedPaths() throws Exception {
+        JsonNode tree = mapper.readTree("{\"rows\":[{\"\":{\"a]b\":7}}]}");
+        assertThat(JsonPathFilter.apply(tree, "$.rows[0]['']['a]b']").asInt()).isEqualTo(7);
+        assertThat(JsonPathFilter.apply(tree, "rows[0][ '' ][ \"a]b\" ]").asInt()).isEqualTo(7);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+          "['unclosed]", "['x' extra]", "['x']tail", "['bad\\q']", "['\\u00xz']",
+          "a..b", "a.", "a]", "[[]", "[ ]"})
+    void malformedConveniencePathsAreRejected(String path) {
+        assertThatThrownBy(() -> JsonPathFilter.toPointer(path)).isInstanceOf(IllegalArgumentException.class);
+    }
+
 }

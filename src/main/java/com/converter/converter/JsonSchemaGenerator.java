@@ -95,15 +95,13 @@ public class JsonSchemaGenerator {
      * uniform arrays collapse to a single subschema, mixed arrays become anyOf.
      */
     private JsonNode describeItems(JsonNode array, boolean requireAllKeys) {
-        // De-duplicate on a canonical (key-sorted) rendering, but emit the
-        // subschema in its first-seen order. Comparing raw toString() meant
-        // {"a":1,"b":2} and {"b":3,"a":4} produced two anyOf branches that
-        // accept exactly the same documents.
-        Set<String> seen = new LinkedHashSet<>();
+        // Tree equality ignores object key order without inventing an encoding
+        // for property names. Required arrays are normalized as sets below.
+        Set<JsonNode> seen = new LinkedHashSet<>();
         ArrayNode variants = jsonMapper.createArrayNode();
         for (JsonNode item : array) {
             ObjectNode itemSchema = describe(item, requireAllKeys);
-            if (seen.add(canonicalKey(itemSchema))) variants.add(itemSchema);
+            if (seen.add(canonicalSchema(itemSchema))) variants.add(itemSchema);
         }
         if (variants.size() == 1) return variants.get(0);
         ObjectNode anyOf = jsonMapper.createObjectNode();
@@ -111,42 +109,30 @@ public class JsonSchemaGenerator {
         return anyOf;
     }
 
-    /**
-     * Order-independent identity for a subschema: object keys sorted recursively
-     * and {@code required} sorted, so two schemas that accept the same documents
-     * render identically.
-     */
-    private String canonicalKey(JsonNode schema) {
+    /** Structural identity, preserving literal property names and sorting required sets. */
+    private JsonNode canonicalSchema(JsonNode schema) {
         if (schema.isObject()) {
-            java.util.List<String> names = new java.util.ArrayList<>();
-            schema.fieldNames().forEachRemaining(names::add);
-            java.util.Collections.sort(names);
-            StringBuilder sb = new StringBuilder("{");
-            for (String name : names) {
-                if (sb.length() > 1) sb.append(',');
-                sb.append('"').append(name).append("\":");
-                JsonNode value = schema.get(name);
-                // 'required' is a set, not a sequence: its order is not meaningful.
-                if ("required".equals(name) && value.isArray()) {
-                    java.util.List<String> req = new java.util.ArrayList<>();
-                    value.forEach(v -> req.add(v.asText()));
-                    java.util.Collections.sort(req);
-                    sb.append(req);
+            ObjectNode out = jsonMapper.createObjectNode();
+            for (Map.Entry<String, JsonNode> entry : schema.properties()) {
+                JsonNode value = entry.getValue();
+                if ("required".equals(entry.getKey()) && value.isArray()) {
+                    java.util.List<String> required = new java.util.ArrayList<>();
+                    value.forEach(v -> required.add(v.asText()));
+                    required.sort(String::compareTo);
+                    ArrayNode sorted = out.putArray(entry.getKey());
+                    required.forEach(sorted::add);
                 } else {
-                    sb.append(canonicalKey(value));
+                    out.set(entry.getKey(), canonicalSchema(value));
                 }
             }
-            return sb.append('}').toString();
+            return out;
         }
         if (schema.isArray()) {
-            StringBuilder sb = new StringBuilder("[");
-            for (JsonNode item : schema) {
-                if (sb.length() > 1) sb.append(',');
-                sb.append(canonicalKey(item));
-            }
-            return sb.append(']').toString();
+            ArrayNode out = jsonMapper.createArrayNode();
+            schema.forEach(item -> out.add(canonicalSchema(item)));
+            return out;
         }
-        return schema.toString();
+        return schema;
     }
 
     private String scalarType(JsonNode node) {

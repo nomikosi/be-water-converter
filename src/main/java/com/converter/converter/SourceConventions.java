@@ -38,6 +38,14 @@ public final class SourceConventions {
 
     private SourceConventions() {}
 
+    /** Allocates a name in a scope, suffixing collisions from 2 onward. */
+    public static String uniqueName(String base, String separator, Set<String> used) {
+        if (used.add(base)) return base;
+        int suffix = 2;
+        while (!used.add(base + separator + suffix)) suffix++;
+        return base + separator + suffix;
+    }
+
     /**
      * Name for a key that sanitises down to nothing usable. It cannot be an
      * underscore run: {@code _} is a reserved keyword in Java 9+, and Kotlin

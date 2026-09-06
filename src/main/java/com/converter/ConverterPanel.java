@@ -62,9 +62,6 @@ public class ConverterPanel implements Disposable {
     private static final String PROP_SORT_KEYS      = "beWater.sortKeys";
     private static final String PROP_CSV_DELIMITER  = "beWater.csvDelimiter";
 
-    /** Above this output size, syntax highlighting is disabled to keep the EDT responsive. */
-    private static final int HIGHLIGHT_LIMIT_CHARS = 2_000_000;
-
     /**
      * A single insertion of at least this many characters is treated as a paste
      * or drop rather than typing, and triggers input-format detection.
@@ -101,18 +98,7 @@ public class ConverterPanel implements Disposable {
         FORMAT_COLORS.put(FMT_KOTLIN, new JBColor(new Color(103, 58, 183), new Color(149, 117, 205)));
     }
 
-    private static final Map<String, String[]> VALID_OUTPUTS = new LinkedHashMap<>();
-    static {
-        VALID_OUTPUTS.put(FMT_JSON,  new String[]{FMT_XML,  FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
-        VALID_OUTPUTS.put(FMT_XML,   new String[]{FMT_JSON, FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
-        VALID_OUTPUTS.put(FMT_YAML,  new String[]{FMT_JSON, FMT_XML,  FMT_CSV, FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
-        VALID_OUTPUTS.put(FMT_CSV,   new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_TOML, FMT_PROTO, FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
-        VALID_OUTPUTS.put(FMT_TOML,  new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_CSV,  FMT_PROTO, FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
-        VALID_OUTPUTS.put(FMT_PROTO, new String[]{FMT_JSON, FMT_XML,  FMT_YAML,FMT_CSV,  FMT_TOML,  FMT_JAVA, FMT_KOTLIN, FMT_SCHEMA});
-    }
-
-    private static final String[] ALL_INPUTS =
-          {FMT_JSON, FMT_XML, FMT_YAML, FMT_CSV, FMT_TOML, FMT_PROTO};
+    private static final String[] ALL_INPUTS = Formats.inputNames();
 
     /** Delimiter choices offered in the options bar, with their converter format. */
     enum CsvDelimiter {
@@ -155,6 +141,7 @@ public class ConverterPanel implements Disposable {
     private final JPanel            mainPanel;
     private final RSyntaxTextArea   inputArea;
     private final RSyntaxTextArea   outputArea;
+    private final ConverterEditorState editors;
     private final JLabel            statusLabel;
     private final JLabel            charCountLabel;
     private final JLabel            inputFormatLabel;
@@ -194,17 +181,24 @@ public class ConverterPanel implements Disposable {
     private volatile Thread convertWorker;
     /** Guards convertWorker so a cancel cannot interrupt the pool's next task. */
     private final Object workerLock = new Object();
-    /** Suppressed while the panel itself replaces the input (file load, history restore). */
-    private boolean autoDetectFormat = true;
 
-    private final ConversionPipeline pipeline = new ConversionPipeline();
+    private final ConversionPipeline pipeline;
+    private final BackgroundTasks tasks;
+    private long statusRevision;
 
     public ConverterPanel() {
         this(null);
     }
 
     public ConverterPanel(com.intellij.openapi.project.Project project) {
+        this(project, new ConversionPipeline(), BackgroundTasks.forIde());
+    }
+
+    ConverterPanel(com.intellij.openapi.project.Project project, ConversionPipeline pipeline,
+          BackgroundTasks tasks) {
         this.project = project;
+        this.pipeline = pipeline;
+        this.tasks = tasks;
         mainPanel = new JPanel(new BorderLayout(0, 0));
         mainPanel.setBackground(BG_DARK);
         mainPanel.putClientProperty(PANEL_CLIENT_PROPERTY, this);
@@ -219,6 +213,7 @@ public class ConverterPanel implements Disposable {
                   @Override public void status(String message, boolean ok) {
                       setStatus(message, ok);
                   }
+                  @Override public long inputRevision() { return editors.revision(); }
                   @Override public void loaded(String content, String detectedFormat, String fileName) {
                       // A known extension beats content sniffing; without one, let
                       // the content detector have its say instead of suppressing it.
@@ -228,19 +223,19 @@ public class ConverterPanel implements Disposable {
                           inputCombo.setSelectedItem(detectedFormat);
                           if (FMT_CSV.equals(detectedFormat)) note = applyDetectedDelimiter(content);
                       } else {
-                          inputArea.setText(content);
-                          inputArea.setCaretPosition(0);
+                          editors.replaceInput(content, true);
                       }
                       setStatus("Loaded " + fileName + note, true);
                   }
-              });
+              }, tasks);
         inputArea.setTransferHandler(fileOps.chainFileDrop(inputArea.getTransferHandler()));
 
         inputFormatLabel  = buildFormatBadge(FMT_JSON);
         outputFormatLabel = buildFormatBadge(FMT_XML);
+        editors = new ConverterEditorState(inputArea, outputArea, inputFormatLabel, outputFormatLabel);
 
         inputCombo  = buildCombo(ALL_INPUTS);
-        outputCombo = buildCombo(VALID_OUTPUTS.get(FMT_JSON));
+        outputCombo = buildCombo(Formats.outputsFor(FMT_JSON));
         outputCombo.setSelectedItem(FMT_XML);
 
         // ── conversion-specific option controls ──────────────────────────
@@ -363,9 +358,7 @@ public class ConverterPanel implements Disposable {
         inputCombo.addActionListener(e -> {
             String fmt = (String) inputCombo.getSelectedItem();
             if (fmt == null) return;
-            inputArea.setSyntaxEditingStyle(syntaxFor(fmt));
-            inputFormatLabel.setText(fmt);
-            inputFormatLabel.repaint();
+            editors.setInputFormat(fmt);
             rebuildOutputCombo(fmt);
         });
 
@@ -444,7 +437,6 @@ public class ConverterPanel implements Disposable {
         };
         inputArea.getDocument().addDocumentListener(countUpdater);
         outputArea.getDocument().addDocumentListener(countUpdater);
-
         installPasteDetection();
 
         // ── re-apply editor theme when IDE L&F changes ───────────────────
@@ -494,8 +486,7 @@ public class ConverterPanel implements Disposable {
                 if (!note.isEmpty()) setStatus("Loaded CSV input" + note, true);
             }
         } else {
-            inputArea.setText(text);
-            inputArea.setCaretPosition(0);
+            editors.replaceInput(text, true);
         }
         inputArea.requestFocusInWindow();
     }
@@ -775,10 +766,7 @@ public class ConverterPanel implements Disposable {
      * invokeLater, so re-enabling through the same queue lands after it.
      */
     private void setInputTextQuietly(String text) {
-        autoDetectFormat = false;
-        inputArea.setText(text);
-        inputArea.setCaretPosition(0);
-        SwingUtilities.invokeLater(() -> autoDetectFormat = true);
+        editors.replaceInput(text, false);
     }
 
     /**
@@ -807,7 +795,7 @@ public class ConverterPanel implements Disposable {
                 if (e.getLength() < PASTE_MIN_CHARS) return;
                 // The document is locked during the event; defer the read.
                 SwingUtilities.invokeLater(() -> {
-                    if (disposed || !autoDetectFormat) return;
+                    if (disposed || !editors.shouldAutoDetect()) return;
                     // Sniffing runs regexes over the whole string, which on a
                     // multi-megabyte paste froze the EDT for hundreds of
                     // milliseconds. Every marker detectFormat looks for is
@@ -838,12 +826,7 @@ public class ConverterPanel implements Disposable {
 
     // ── Soft-wrap ─────────────────────────────────────────────────────────
     private void setLineWrap(boolean wrap) {
-        for (RSyntaxTextArea area : new RSyntaxTextArea[]{inputArea, outputArea}) {
-            area.setLineWrap(wrap);
-            area.setWrapStyleWord(wrap);
-            // Code folding and soft-wrap don't combine well in RSyntaxTextArea.
-            area.setCodeFoldingEnabled(!wrap);
-        }
+        editors.setLineWrap(wrap);
         saveProp(PROP_WRAP_LINES, String.valueOf(wrap));
     }
 
@@ -879,26 +862,19 @@ public class ConverterPanel implements Disposable {
     private void restoreFromHistory(ConversionHistory.Entry entry) {
         // Restoring overwrites both editors — save the current state first so
         // a restore can itself be undone from the history menu.
-        String curIn  = inputArea.getText();
-        String curOut = outputArea.getText();
+        ConverterEditorState.Snapshot previous = editors.snapshot();
         boolean previousKept = true;
-        if (!curIn.isEmpty() || !curOut.isEmpty()) {
-            // push() refuses entries over the size cap; say so rather than
-            // letting the undo silently not be there.
+        if (!previous.input().text().isEmpty() || !previous.output().text().isEmpty()) {
             previousKept = history.push(new ConversionHistory.Entry(
-                  inputFormatLabel.getText(), outputFormatLabel.getText(),
-                  curIn, curOut, java.time.LocalTime.now()));
+                  previous.input().format(), previous.output().format(),
+                  previous.input().text(), previous.output().text(), java.time.LocalTime.now(), currentOptions()));
         }
-
-        inputCombo.setSelectedItem(entry.inputFormat());   // updates syntax, badge, output combo
-        setInputTextQuietly(entry.input());
-
+        inputCombo.setSelectedItem(entry.inputFormat());
         outputCombo.setSelectedItem(entry.outputFormat());
-        outputArea.setSyntaxEditingStyle(syntaxFor(entry.outputFormat()));
-        outputArea.setText(entry.output());
-        outputArea.setCaretPosition(0);
-        outputFormatLabel.setText(entry.outputFormat());
-        outputFormatLabel.repaint();
+        applyOptions(entry.options());
+        editors.apply(new ConverterEditorState.Snapshot(
+              new ConverterEditorState.Document(entry.input(), entry.inputFormat()),
+              new ConverterEditorState.Document(entry.output(), entry.outputFormat())));
 
         String restored = "Restored " + entry.inputFormat() + " → " + entry.outputFormat()
               + " from history";
@@ -974,7 +950,7 @@ public class ConverterPanel implements Disposable {
 
     // ── Output combo rebuild ──────────────────────────────────────────────
     private void rebuildOutputCombo(String inputFmt) {
-        String[] options = VALID_OUTPUTS.getOrDefault(inputFmt, new String[]{});
+        String[] options = Formats.outputsFor(inputFmt);
         String current   = (String) outputCombo.getSelectedItem();
         outputCombo.removeAllItems();
         for (String o : options) outputCombo.addItem(o);
@@ -1022,6 +998,22 @@ public class ConverterPanel implements Disposable {
               filterField.getText());
     }
 
+    private void applyOptions(ConversionOptions options) {
+        csvModeCombo.setSelectedItem(options.csvMode());
+        csvDelimiterCombo.setSelectedItem(CsvDelimiter.forChar(options.csvFormat().delimiter()));
+        lombokCheck.setSelected(options.useLombok());
+        detectDatesCheck.setSelected(options.detectDates());
+        inferTypesCheck.setSelected(options.inferTypes());
+        sortKeysCheck.setSelected(options.sortKeys());
+        filterField.setText(options.filterPath());
+        // setSelected does not fire ActionListeners; keep context-menu actions
+        // and the next IDE session consistent with the restored controls.
+        saveProp(PROP_LOMBOK, String.valueOf(options.useLombok()));
+        saveProp(PROP_DETECT_DATES, String.valueOf(options.detectDates()));
+        saveProp(PROP_INFER_TYPES, String.valueOf(options.inferTypes()));
+        saveProp(PROP_SORT_KEYS, String.valueOf(options.sortKeys()));
+    }
+
     private static String csvModeHintFor(CsvConverter.CsvMode mode) {
         return switch (mode) {
             case FLAT_FIRST -> "expands only the first object-array into rows (safe default)";
@@ -1051,72 +1043,76 @@ public class ConverterPanel implements Disposable {
         convertBtn.setToolTipText("Cancel the running conversion");
         setStatus("Converting\u2026", true);
 
-        java.util.concurrent.CompletableFuture
-              .supplyAsync(() -> {
-                  convertWorker = Thread.currentThread();
-                  try {
-                      // Cancel may have been pressed while this task was still queued,
-                      // in which case there was no thread to interrupt.
-                      checkCancelled();
-                      String asJson = pipeline.normalizeToJson(rawInput, inFmt, opts);
-                      checkCancelled();
+        var completion = currentCompletion(false, "Input changed; conversion discarded",
+              (String result, Throwable error) -> {
+            // Cancel may arrive after rendering, with completion
+            // already queued on the EDT. It still owns the result.
+            if (cancelRequested.get()) {
+                setStatusWarn("Conversion cancelled");
+            } else if (error != null) {
+                Throwable cause = error;
+                if (cause instanceof CancellationException) {
+                    setStatusWarn("Conversion cancelled");
+                } else {
+                    showError(describe(cause));
+                    jumpToErrorLocation(cause);
+                }
+            } else {
+                boolean huge = editors.replaceOutput(result, outFmt);
+                // push() refuses entries over its size cap. Discarding
+                // the answer meant a large conversion simply was not
+                // in the history later, with nothing having said so \u2014
+                // restoreFromHistory already reports the same refusal.
+                boolean kept = history.push(new ConversionHistory.Entry(
+                      inFmt, outFmt, rawInput, result, java.time.LocalTime.now(), opts));
+                setStatus("Converted " + inFmt + " \u2192 " + outFmt
+                      + (huge ? "  (syntax highlighting off for large output)" : "")
+                      + (kept ? "" : "  (too large for the history)"), true);
+            }
+        });
 
-                      if (FMT_CSV.equals(outFmt)) {
-                          com.fasterxml.jackson.databind.JsonNode pivot = pipeline.parseJson(asJson);
-                          long estimate = pipeline.estimateCsvRows(pivot, csvMode);
-                          if (estimate > rowWarningThreshold && !confirmFromWorker(
-                                "Row count warning",
-                                String.format("%s will produce ~%,d rows. Continue?",
-                                      csvMode, estimate))) {
-                              throw new CancellationException("Conversion cancelled");
-                          }
-                          return pipeline.renderCsv(pivot, csvMode, opts.csvFormat());
-                      }
+        tasks.submit(() -> {
+            synchronized (workerLock) { convertWorker = Thread.currentThread(); }
+            try {
+                // Cancel may have been pressed while this task was still queued,
+                // in which case there was no thread to interrupt.
+                checkCancelled();
+                String asJson = pipeline.normalizeToJson(rawInput, inFmt, opts);
+                checkCancelled();
 
-                      return pipeline.renderFromJson(asJson, outFmt, opts);
-                  } catch (Exception ex) {
-                      throw new java.util.concurrent.CompletionException(ex);
-                  } finally {
-                      synchronized (workerLock) {
-                          convertWorker = null;
-                          Thread.interrupted();   // clear a late cancel; the thread is shared
-                      }
-                  }
-              }, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
-              .whenComplete((result, error) ->
-                    com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
-                        converting.set(false);
-                        if (disposed) return;
-                        convertBtn.setText("Convert");
-                        convertBtn.setToolTipText("Convert (Ctrl+Enter)");
-                        if (error != null) {
-                            Throwable cause = error.getCause() != null ? error.getCause() : error;
-                            if (cause instanceof CancellationException) {
-                                setStatusWarn("Conversion cancelled");
-                            } else {
-                                showError(describe(cause));
-                                jumpToErrorLocation(cause);
-                            }
-                        } else {
-                            boolean huge = result.length() > HIGHLIGHT_LIMIT_CHARS;
-                            outputArea.setSyntaxEditingStyle(
-                                  huge ? SyntaxConstants.SYNTAX_STYLE_NONE : syntaxFor(outFmt));
-                            outputArea.setCodeFoldingEnabled(!huge && !outputArea.getLineWrap());
-                            outputArea.setText(result);
-                            outputArea.setCaretPosition(0);
-                            outputFormatLabel.setText(outFmt);
-                            outputFormatLabel.repaint();
-                            // push() refuses entries over its size cap. Discarding
-                            // the answer meant a large conversion simply was not
-                            // in the history later, with nothing having said so \u2014
-                            // restoreFromHistory already reports the same refusal.
-                            boolean kept = history.push(new ConversionHistory.Entry(
-                                  inFmt, outFmt, rawInput, result, java.time.LocalTime.now()));
-                            setStatus("Converted " + inFmt + " \u2192 " + outFmt
-                                  + (huge ? "  (syntax highlighting off for large output)" : "")
-                                  + (kept ? "" : "  (too large for the history)"), true);
-                        }
-                    }));
+                String rendered;
+                if (FMT_CSV.equals(outFmt)) {
+                    com.fasterxml.jackson.databind.JsonNode pivot = pipeline.parseJson(asJson);
+                    long estimate = pipeline.estimateCsvRows(pivot, csvMode);
+                    if (estimate > rowWarningThreshold && !confirmFromWorker(
+                          "Row count warning",
+                          String.format("%s will produce ~%,d rows. Continue?",
+                                csvMode, estimate))) {
+                        throw new CancellationException("Conversion cancelled");
+                    }
+                    checkCancelled();
+                    rendered = pipeline.renderCsv(pivot, csvMode, opts.csvFormat());
+                } else {
+                    rendered = pipeline.renderFromJson(asJson, outFmt, opts);
+                }
+                checkCancelled();
+                return rendered;
+            } catch (Exception ex) {
+                throw new java.util.concurrent.CompletionException(ex);
+            } finally {
+                synchronized (workerLock) {
+                    convertWorker = null;
+                    Thread.interrupted();   // clear a late cancel; the thread is shared
+                }
+            }
+        }, (result, error) -> {
+            converting.set(false);
+            if (!disposed) {
+                convertBtn.setText("Convert");
+                convertBtn.setToolTipText("Convert (Ctrl+Enter)");
+            }
+            completion.accept(result, error);
+        });
     }
 
     /** Throws if Cancel was pressed, whether or not the worker thread was interrupted. */
@@ -1169,9 +1165,9 @@ public class ConverterPanel implements Disposable {
 
     // ── Format input ──────────────────────────────────────────────────────
     private void doFormat() {
-        final String input = inputArea.getText().trim();
+        final String input = inputArea.getText();
         final String fmt   = (String) inputCombo.getSelectedItem();
-        if (input.isEmpty()) { setStatus("Input is empty", false); return; }
+        if (input.isBlank()) { setStatus("Input is empty", false); return; }
         final ConversionOptions opts = currentOptions();
         // Where the user was: the whole document is replaced, which put the
         // caret at the top and scrolled a long file away from the line being
@@ -1179,7 +1175,7 @@ public class ConverterPanel implements Disposable {
         final int caretLine = inputArea.getCaretLineNumber();
         // Formatting parses and re-serialises the whole document; measured in
         // the hundreds of milliseconds on multi-megabyte input, so off the EDT.
-        runOffEdt(() -> {
+        tasks.submit(() -> {
             try {
                 // Format keeps only the data. Comments and anchors do not come
                 // back, so the user is asked before the editor is overwritten
@@ -1194,7 +1190,8 @@ public class ConverterPanel implements Disposable {
             } catch (Exception ex) {
                 throw new java.util.concurrent.CompletionException(ex);
             }
-        }, (formatted, failure) -> {
+        }, currentCompletion(false, "Input changed while formatting; the result was discarded",
+              (formatted, failure) -> {
             if (failure instanceof CancellationException) {
                 setStatusWarn("Format cancelled");
                 return;
@@ -1202,12 +1199,6 @@ public class ConverterPanel implements Disposable {
             if (failure != null) {
                 showError("Format failed: " + describe(failure));
                 jumpToErrorLocation(failure);
-                return;
-            }
-            // The result belongs to the text it was computed from. Anything
-            // typed while it was being computed would otherwise be overwritten.
-            if (!inputArea.getText().trim().equals(input)) {
-                setStatusWarn("Input changed while formatting; the result was discarded");
                 return;
             }
             // Nothing to write: replacing the document with itself only moved
@@ -1219,7 +1210,7 @@ public class ConverterPanel implements Disposable {
             setInputTextQuietly(formatted);
             moveCaretToLine(caretLine);
             setStatus("\u2713  Input formatted", true);
-        });
+        }));
     }
 
     /** Puts the input caret at the start of {@code line}, or the last line when the document is shorter. */
@@ -1303,7 +1294,7 @@ public class ConverterPanel implements Disposable {
         setStatus("Comparing…", true);
         // Canonicalising is three parse/serialise passes per side — over a
         // second on a 10 MB document — so it must not run on the EDT.
-        runOffEdt(() -> {
+        tasks.submit(() -> {
             try {
                 // The output pane has already been filtered, so re-applying the
                 // pointer to it would throw "Path matched nothing".
@@ -1314,7 +1305,7 @@ public class ConverterPanel implements Disposable {
             } catch (Exception ex) {
                 throw new java.util.concurrent.CompletionException(ex);
             }
-        }, (sides, failure) -> {
+        }, currentCompletion(true, "Editors changed; comparison discarded", (sides, failure) -> {
             if (failure != null) {
                 showError("Compare failed: " + failure.getMessage());
                 return;
@@ -1330,24 +1321,26 @@ public class ConverterPanel implements Disposable {
                 // No running IDE (tests, standalone): the comparison itself still ran.
                 showError("Compare failed: " + describe(noIde));
             }
-        });
+        }));
     }
 
-    /**
-     * Runs {@code work} on the shared pool and delivers the result, or the
-     * unwrapped failure, back on the EDT. Skipped entirely once disposed.
-     */
-    private <T> void runOffEdt(java.util.function.Supplier<T> work,
-          java.util.function.BiConsumer<T, Throwable> onDone) {
-        java.util.concurrent.CompletableFuture
-              .supplyAsync(work, com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
-              .whenComplete((result, error) ->
-                    com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
-                        if (disposed) return;
-                        Throwable cause = error == null ? null
-                              : (error.getCause() != null ? error.getCause() : error);
-                        onDone.accept(result, cause);
-                    }));
+    /** Gates results, errors and cancellation together before any UI effects. */
+    private <T> java.util.function.BiConsumer<T, Throwable> currentCompletion(
+          boolean includeOutput, String staleMessage,
+          java.util.function.BiConsumer<T, Throwable> completion) {
+        long inputRevision = editors.revision();
+        long outputRevision = editors.outputRevision();
+        long pendingStatusRevision = statusRevision;
+        return (result, error) -> {
+            if (disposed) return;
+            if (editors.revision() != inputRevision
+                  || (includeOutput && editors.outputRevision() != outputRevision)) {
+                // A newer action owns its status as well as its document.
+                if (statusRevision == pendingStatusRevision) setStatusWarn(staleMessage);
+                return;
+            }
+            completion.accept(result, error);
+        };
     }
 
     // ── Utility actions ───────────────────────────────────────────────────
@@ -1359,36 +1352,14 @@ public class ConverterPanel implements Disposable {
             return;
         }
 
-        String tmpText   = inputArea.getText();
-        String tmpSyntax = inputArea.getSyntaxEditingStyle();
-
-        inputArea.setSyntaxEditingStyle(outputArea.getSyntaxEditingStyle());
-        setInputTextQuietly(outputArea.getText());
-        outputArea.setSyntaxEditingStyle(tmpSyntax);
-        outputArea.setText(tmpText);
-
-        inputFormatLabel.setText(newInputFmt);
-        outputFormatLabel.setText(newOutputFmt);
-        inputFormatLabel.repaint();
-        outputFormatLabel.repaint();
-
+        editors.apply(editors.snapshot().swapped());
         inputCombo.setSelectedItem(newInputFmt);
-        rebuildOutputCombo(newInputFmt);
-
-        for (int i = 0; i < outputCombo.getItemCount(); i++) {
-            if (outputCombo.getItemAt(i).equals(newOutputFmt)) {
-                outputCombo.setSelectedItem(newOutputFmt);
-                break;
-            }
-        }
+        outputCombo.setSelectedItem(newOutputFmt);
         setStatus("Swapped input and output", true);
     }
 
     private boolean isValidInputFormat(String format) {
-        for (String validInput : ALL_INPUTS) {
-            if (validInput.equals(format)) return true;
-        }
-        return false;
+        return Formats.isInput(format);
     }
 
     private void doCopy() {
@@ -1410,16 +1381,8 @@ public class ConverterPanel implements Disposable {
         // Clears editors and format selection only. Persisted preferences
         // (CSV mode, Lombok, inference, …) are deliberately left untouched:
         // resetting them here would clobber the saved values.
-        inputArea.setText("");
-        outputArea.setText("");
-        inputArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JSON);
-        outputArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JSON);
-        inputFormatLabel.setText(FMT_JSON);
-        outputFormatLabel.setText(FMT_XML);
-        inputFormatLabel.repaint();
-        outputFormatLabel.repaint();
+        editors.clear();
         inputCombo.setSelectedItem(FMT_JSON);
-        rebuildOutputCombo(FMT_JSON);
         outputCombo.setSelectedItem(FMT_XML);
         // The subtree filter belongs to the document that was just cleared, not
         // to the preferences. Leaving it armed silently narrowed — or rejected —
@@ -1508,24 +1471,6 @@ public class ConverterPanel implements Disposable {
 
     private JSeparator makeSep() {
         return ConverterWidgets.separator();
-    }
-
-    private String syntaxFor(String fmt) {
-        if (fmt == null) return SyntaxConstants.SYNTAX_STYLE_NONE;
-        return switch (fmt) {
-            case FMT_JSON, FMT_SCHEMA -> SyntaxConstants.SYNTAX_STYLE_JSON;
-            case FMT_XML   -> SyntaxConstants.SYNTAX_STYLE_XML;
-            case FMT_YAML  -> SyntaxConstants.SYNTAX_STYLE_YAML;
-            case FMT_JAVA  -> SyntaxConstants.SYNTAX_STYLE_JAVA;
-            case FMT_KOTLIN -> SyntaxConstants.SYNTAX_STYLE_KOTLIN;
-            case FMT_PROTO -> SyntaxConstants.SYNTAX_STYLE_PROTO;
-            case FMT_CSV   -> SyntaxConstants.SYNTAX_STYLE_CSV;
-            // INI rather than PROPERTIES_FILE: both parse TOML, but only INI
-            // colours [table] headers. TOML had no arm at all and fell through
-            // to NONE, so it was the one supported format shown unhighlighted.
-            case FMT_TOML  -> SyntaxConstants.SYNTAX_STYLE_INI;
-            default        -> SyntaxConstants.SYNTAX_STYLE_NONE;
-        };
     }
 
     /**
@@ -1620,6 +1565,7 @@ public class ConverterPanel implements Disposable {
 
     /** Sets the status text in the given colour, eliding over-long messages into the tooltip. */
     private void showStatus(String msg, Color color) {
+        statusRevision++;
         if (msg.length() > STATUS_MAX_LEN) {
             statusLabel.setToolTipText(msg);
             msg = msg.substring(0, STATUS_MAX_LEN) + "\u2026";

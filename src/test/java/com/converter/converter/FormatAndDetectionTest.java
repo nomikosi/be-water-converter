@@ -320,6 +320,37 @@ class FormatAndDetectionTest {
         assertThat(ConversionPipeline.withoutLeadingComments("a: 1\n# c\nb: 2")).isEqualTo("a: 1\n# c\nb: 2");
     }
 
+    @Test @DisplayName("a '#'-prefixed CSV header is a header, not a comment")
+    void hashHeadedCsvIsStillCsv() {
+        // Skipping leading comments for the other formats took the header off
+        // a CSV file that opens with one, and the single line left behind was
+        // too little to compare column counts against: a two-line file stopped
+        // being detected at all. The convention is ordinary in tab-separated
+        // exports, so the CSV check reads the document as written.
+        assertThat(ConversionPipeline.detectFormat("#id,name\n1,Ann")).isEqualTo(ConversionPipeline.FMT_CSV);
+        assertThat(ConversionPipeline.detectFormat("#id,name\n1,Ann\n2,Bob")).isEqualTo(ConversionPipeline.FMT_CSV);
+        assertThat(ConversionPipeline.detectFormat("#chrom\tpos\nchr1\t100"))
+              .isEqualTo(ConversionPipeline.FMT_CSV);
+        assertThat(ConversionPipeline.detectFormat("#id;name\n1;Ann")).isEqualTo(ConversionPipeline.FMT_CSV);
+        // The delimiter comes from the same reading, so the panel selects it
+        // rather than leaving the combo on whatever was there before.
+        assertThat(ConversionPipeline.detectCsvDelimiter("#chrom\tpos\nchr1\t100")).isEqualTo('\t');
+        assertThat(ConversionPipeline.detectCsvDelimiter("#id;name\n1;Ann")).isEqualTo(';');
+        // The other shape: a genuine note above a real header. Both are CSV,
+        // so both readings are tried and the delimiter is found either way.
+        assertThat(ConversionPipeline.detectFormat("# exported\nid,name\n1,Ann"))
+              .isEqualTo(ConversionPipeline.FMT_CSV);
+        assertThat(ConversionPipeline.detectCsvDelimiter("# exported\nid;name\n1;Ann")).isEqualTo(';');
+        // A commented header block over YAML or TOML must not tip either into
+        // CSV: every structural check still runs first, on the stripped text.
+        assertThat(ConversionPipeline.detectFormat("# id, name\n# 1, Ann\nkey: value"))
+              .isEqualTo(ConversionPipeline.FMT_YAML);
+        assertThat(ConversionPipeline.detectFormat("# id, name\n# 1, Ann\n[server]\nport = 1"))
+              .isEqualTo(ConversionPipeline.FMT_TOML);
+        assertThat(ConversionPipeline.detectFormat("# id, name\n// 1, Ann\n{\"a\": 1}"))
+              .isEqualTo(ConversionPipeline.FMT_JSON);
+    }
+
     @Test @DisplayName("Protobuf Format tidies CRLF files too")
     void protoFormatHandlesCrlf() throws Exception {
         // Anchored on "\n" alone, a file with Windows line endings came back

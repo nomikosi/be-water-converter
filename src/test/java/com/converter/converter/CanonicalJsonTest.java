@@ -60,4 +60,32 @@ class CanonicalJsonTest {
         assertThat(pipeline.canonicalJson("{\"a\":{\"b\":1}}", ConversionPipeline.FMT_JSON))
               .contains("\n");
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+          "1,1.0", "1.00,1e0", "1000,1e3", "0,-0.00", "1e400,10e399", "1e-400,0.1e-399"})
+    void numericRepresentationsCompareByExactValue(String left, String right) throws Exception {
+        assertThat(pipeline.canonicalJson("{\"nested\":[" + left + "]}", "JSON"))
+              .isEqualTo(pipeline.canonicalJson("{\"nested\":[" + right + "]}", "JSON"));
+    }
+
+    @Test void numericComparisonPreservesPrecisionAndTypes() throws Exception {
+        assertThat(pipeline.canonicalJson("[1.00000000000000000001]", "JSON"))
+              .isNotEqualTo(pipeline.canonicalJson("[1.00000000000000000002]", "JSON"));
+        assertThat(pipeline.canonicalJson("[1e-400]", "JSON"))
+              .isNotEqualTo(pipeline.canonicalJson("[0]", "JSON"));
+        assertThat(pipeline.canonicalJson("[1]", "JSON"))
+              .isNotEqualTo(pipeline.canonicalJson("[\"1\"]", "JSON"));
+        assertThat(pipeline.canonicalJson("[1.0]", "JSON"))
+              .isEqualTo(pipeline.canonicalJson("- 1.00\n", "YAML"));
+    }
+
+    @Test void comparisonDoesNotChangeFormattingOrSortingFidelity() throws Exception {
+        String input = "{\"b\":100.00,\"a\":1.0}";
+        pipeline.canonicalJson(input, "JSON");
+        assertThat(pipeline.formatInput(input, "JSON", ConversionOptions.DEFAULTS))
+              .contains("100.00", "1.0");
+        assertThat(pipeline.sortKeys(input)).isEqualTo("{\"a\":1.0,\"b\":100.00}");
+    }
+
 }

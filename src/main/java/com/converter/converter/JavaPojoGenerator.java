@@ -16,8 +16,11 @@
 
 package com.converter.converter;
 
+import static com.converter.converter.SourceConventions.temporalTypeFor;
+import static com.converter.converter.SourceConventions.capitalize;
+import static com.converter.converter.SourceConventions.uniqueName;
+
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 
 import java.nio.charset.StandardCharsets;
@@ -36,10 +39,6 @@ public class JavaPojoGenerator {
     /** Name of the generated root class; the only public type in the output. */
     public static final String ROOT_CLASS_NAME = "Root";
 
-    // A plain mapper on purpose: PivotJson keeps decimals as BigDecimal,
-    // which is right for carrying values through a conversion but would
-    // retype every JSON 1.5 here, and these classify number SHAPES.
-    private final ObjectMapper jsonMapper = new ObjectMapper();
     private final XmlMapper   xmlMapper   = new XmlMapper();
 
     private static final Set<String> JAVA_KEYWORDS = Set.of(
@@ -114,7 +113,7 @@ public class JavaPojoGenerator {
             throw new IllegalArgumentException("Input must not be null or blank");
         // A root array is unwrapped by StructureModel to the merged shape of
         // its elements, the same rule it applies to a nested array under a key.
-        return generate(jsonMapper.readTree(json), "Root", useLombok, detectDates);
+        return generate(GeneratorJson.readTree(json), "Root", useLombok, detectDates);
     }
 
     public String fromXml(String xml) throws Exception {
@@ -185,21 +184,18 @@ public class JavaPojoGenerator {
             sb.append("@NoArgsConstructor\n");
             // On a class with no fields the all-args constructor IS the no-args
             // one, and Lombok then declares the same constructor twice.
-            if (!node.isEmpty()) sb.append("@AllArgsConstructor\n");
+            // Every generated field is a reference type (one JVM slot), and
+            // the constructor also needs its receiver slot.
+            if (!node.isEmpty() && node.size() <= 254) sb.append("@AllArgsConstructor\n");
+            else if (node.size() > 254)
+                sb.append("// All-args constructor omitted: exceeds the JVM limit of 254 parameters.\n");
         }
         sb.append(isPublic ? "public class " : "class ").append(className).append(" {\n\n");
 
         Set<String> usedNames = new HashSet<>();
         for (Map.Entry<String, JsonNode> e : node.properties()) {
             String originalKey = e.getKey();
-            String camelName   = toCamelCase(originalKey);
-            // Two keys may normalise to the same Java name (user_name / userName);
-            // suffix a counter so the generated class still compiles.
-            if (!usedNames.add(camelName)) {
-                int n = 2;
-                while (!usedNames.add(camelName + n)) n++;
-                camelName = camelName + n;
-            }
+            String camelName = uniqueName(toCamelCase(originalKey), "", usedNames);
             String javaType = resolveJavaType(e.getValue(), originalKey, detectDates,
                   usedTypes, model);
             if (!camelName.equals(originalKey)) {
@@ -255,14 +251,6 @@ public class JavaPojoGenerator {
             return "List<" + resolveJavaType(element, fieldName, detectDates, usedTypes, model) + ">";
         }
         return "Object";
-    }
-
-    private String temporalTypeFor(String value) {
-        return SourceConventions.temporalTypeFor(value);
-    }
-
-    private String capitalize(String s) {
-        return SourceConventions.capitalize(s);
     }
 
     private String toCamelCase(String s) {

@@ -16,9 +16,11 @@
 
 package com.converter.converter;
 
+import static com.converter.converter.SourceConventions.capitalize;
+import static com.converter.converter.SourceConventions.uniqueName;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.*;
@@ -38,10 +40,7 @@ import java.util.regex.*;
  */
 public class ProtoConverter {
 
-    // No INDENT_OUTPUT: writes the internal pivot only, which is re-parsed.
-    // A plain mapper on purpose: PivotJson keeps decimals as BigDecimal,
-    // which is right for carrying values through a conversion but would
-    // retype every JSON 1.5 here, and these classify number SHAPES.
+    // Used only to construct and serialize structural defaults.
     private final ObjectMapper jsonMapper = new ObjectMapper();
 
     /**
@@ -81,6 +80,9 @@ public class ProtoConverter {
     private static final Pattern ENUM_VALUE_PATTERN = Pattern.compile(
         "(\\w+)\\s*=\\s*-?\\d+" + FIELD_OPTIONS, Pattern.DOTALL);
 
+    private static final Pattern JSON_NAME_OPTION =
+          Pattern.compile("(?:\\[|,)\\s*json_name\\s*=");
+
     private static final Set<String> SCALAR_TYPES = Set.of(
         "string", "int32", "sint32", "uint32", "fixed32", "sfixed32",
         "int64", "sint64", "uint64", "fixed64", "sfixed64",
@@ -94,13 +96,15 @@ public class ProtoConverter {
         final String body;
         final int start;
         final int end;
+        final int bodyOffset;
         /** For a message: the types declared directly inside it. Set at registration. */
         Scope inner;
-        Block(String name, String body, int start, int end) {
+        Block(String name, String body, int start, int end, int bodyOffset) {
             this.name = name;
             this.body = body;
             this.start = start;
             this.end = end;
+            this.bodyOffset = bodyOffset;
         }
     }
 
@@ -116,13 +120,16 @@ public class ProtoConverter {
      */
     private static final class Scope {
         final Scope parent;
+        final Map<String, Scope> packages = new LinkedHashMap<>();
         final Map<String, Block> messages = new LinkedHashMap<>();
         final Map<String, String> enumDefaults = new LinkedHashMap<>();
 
         Scope(Scope parent) { this.parent = parent; }
 
-        /** The message {@link Block} or enum-default {@link String} declared directly here, or null. */
+        /** A package scope, message block, or enum default declared directly here, or null. */
         Object member(String name) {
+            Scope pkg = packages.get(name);
+            if (pkg != null) return pkg;
             Block message = messages.get(name);
             return message != null ? message : enumDefaults.get(name);
         }
@@ -135,7 +142,7 @@ public class ProtoConverter {
             throw new IllegalArgumentException(
                 "Protobuf input is empty. Paste a proto3 schema containing at least one 'message' block.");
 
-        String clean = maskCommentsAndStrings(protoSchema).trim();
+        String clean = maskCommentsAndStrings(protoSchema);
         validateBraces(clean);
 
         List<Block> topMessages = findNamedBlocks(clean, "message");
@@ -152,6 +159,15 @@ public class ProtoConverter {
         }
 
         Scope fileScope = new Scope(null);
+        Matcher packageName = Pattern.compile("\\bpackage\\s+([\\w.]+)\\s*;")
+              .matcher(stripBlocks(clean, "message", "enum", "service"));
+        if (packageName.find()) {
+            for (String part : packageName.group(1).split("\\.")) {
+                Scope child = new Scope(fileScope);
+                fileScope.packages.put(part, child);
+                fileScope = child;
+            }
+        }
         // Top-level enums are what is left once every message block is removed.
         // Searching the whole text found the nested ones too and registered
         // them at file level, where any message could see them.
@@ -167,7 +183,7 @@ public class ProtoConverter {
 
         ObjectNode root = jsonMapper.createObjectNode();
         for (Block msg : topMessages) {
-            root.set(msg.name, buildMessageNode(msg, new HashSet<>()));
+            root.set(msg.name, buildMessageNode(msg, new HashSet<>(), protoSchema));
         }
 
         return jsonMapper.writeValueAsString(root);
@@ -185,7 +201,7 @@ public class ProtoConverter {
         // with depth tracking and register their own contents recursively.
         for (Block en : findNamedBlocks(stripBlocks(msg.body, "message"), "enum"))
             own.enumDefaults.put(en.name, firstEnumValue(en));
-        for (Block nested : findNamedBlocks(msg.body, "message")) register(nested, own);
+        for (Block nested : findNamedBlocks(msg.body, "message", msg.bodyOffset)) register(nested, own);
     }
 
     /** An enum's first declared value — the proto3 default — or "" when it declares none. */
@@ -199,37 +215,31 @@ public class ProtoConverter {
         return "";
     }
 
-    /**
-     * What a type name denotes from inside {@code scope}: a message {@link Block},
-     * an enum's default value {@link String}, or null when nothing matches.
-     *
-     * <p>A bare name is searched innermost scope outward. A dotted name resolves
-     * its first part the same way and then descends through nested scopes; when
-     * the first part is unknown — a package prefix, which this parser does not
-     * model — the search retries from the next part, so {@code pkg.A.Inner}
-     * still finds {@code A.Inner}.
-     */
+    /** Resolves relative names from the nearest scope, and absolute names from the root. */
     private static Object resolveType(Scope scope, String type) {
-        String qualified = type.startsWith(".") ? type.substring(1) : type;
-        String[] parts = qualified.split("\\.");
-        for (int start = 0; start < parts.length; start++) {
-            Object current = lookup(scope, parts[start]);
-            int i = start + 1;
-            while (current instanceof Block owner && i < parts.length) {
-                current = owner.inner.member(parts[i]);
-                i++;
-            }
-            if (current != null && i == parts.length) return current;
+        boolean absolute = type.startsWith(".");
+        String[] parts = (absolute ? type.substring(1) : type).split("\\.");
+        if (absolute) {
+            while (scope.parent != null) scope = scope.parent;
+            return descend(scope.member(parts[0]), parts);
+        }
+        for (Scope current = scope; current != null; current = current.parent) {
+            Object first = current.member(parts[0]);
+            // Once the first component binds, missing descendants do not make
+            // an unrelated outer declaration (or an arbitrary suffix) a match.
+            if (first != null) return descend(first, parts);
         }
         return null;
     }
 
-    private static Object lookup(Scope scope, String name) {
-        for (Scope s = scope; s != null; s = s.parent) {
-            Object member = s.member(name);
-            if (member != null) return member;
+    private static Object descend(Object current, String[] parts) {
+        for (int i = 1; i < parts.length; i++) {
+            Scope inner = current instanceof Block owner ? owner.inner
+                  : current instanceof Scope pkg ? pkg : null;
+            if (inner == null) return null;
+            current = inner.member(parts[i]);
         }
-        return null;
+        return current;
     }
 
     // ── JSON node construction ────────────────────────────────────────────
@@ -239,7 +249,7 @@ public class ProtoConverter {
      *                  name would conflate two same-named nested messages, and
      *                  a recursive type has to bottom out as an empty object.
      */
-    private ObjectNode buildMessageNode(Block msg, Set<Block> resolving) {
+    private ObjectNode buildMessageNode(Block msg, Set<Block> resolving, String source) {
         ObjectNode node = jsonMapper.createObjectNode();
         if (!resolving.add(msg)) return node;
 
@@ -249,23 +259,32 @@ public class ProtoConverter {
             // referenced or not, before any of this ran. Doing it again split
             // the same bodies on ';' and re-matched them for a second time, and
             // left two paths that could disagree about which error a user sees.
-            addFields(flatBody, node, msg.inner, resolving);
+            addFields(flatBody, node, msg.inner, resolving, source, msg.bodyOffset);
 
             // This message's own oneofs, not those of the messages nested in it.
-            for (Block oneof : findNamedBlocks(stripBlocks(msg.body, "message"), "oneof"))
-                addFields(oneof.body, node, msg.inner, resolving);
+            for (Block oneof : findNamedBlocks(stripBlocks(msg.body, "message"), "oneof", msg.bodyOffset))
+                addFields(oneof.body, node, msg.inner, resolving, source, oneof.bodyOffset);
         } finally {
             resolving.remove(msg);
         }
         return node;
     }
 
-    private void addFields(String body, ObjectNode node, Scope scope, Set<Block> resolving) {
+    private void addFields(String body, ObjectNode node, Scope scope, Set<Block> resolving,
+          String source, int bodyOffset) {
         Matcher fm = FIELD_PATTERN.matcher(body);
         while (fm.find()) {
             boolean repeated  = fm.group(1) != null && fm.group(1).trim().equals("repeated");
             String  protoType = fm.group(2).trim();
             String  fieldName = fm.group(3);
+            Matcher jsonName = JSON_NAME_OPTION.matcher(fm.group());
+            if (jsonName.find()) {
+                fieldName = ProtoStringLiteral.read(source, bodyOffset + fm.start() + jsonName.end());
+                if (jsonName.find())
+                    throw new IllegalArgumentException("Duplicate json_name option for field " + fm.group(3));
+            }
+            if (node.has(fieldName))
+                throw new IllegalArgumentException("Duplicate JSON field name: " + fieldName);
 
             if (repeated) {
                 node.putArray(fieldName);
@@ -278,7 +297,7 @@ public class ProtoConverter {
                 if (type instanceof String enumDefault) {
                     node.put(fieldName, enumDefault);
                 } else if (type instanceof Block message && !resolving.contains(message)) {
-                    node.set(fieldName, buildMessageNode(message, resolving));
+                    node.set(fieldName, buildMessageNode(message, resolving, source));
                 } else {
                     node.putObject(fieldName);
                 }
@@ -350,6 +369,10 @@ public class ProtoConverter {
      * using brace-depth tracking so nested braces are handled correctly.
      */
     private List<Block> findNamedBlocks(String input, String keyword) {
+        return findNamedBlocks(input, keyword, 0);
+    }
+
+    private List<Block> findNamedBlocks(String input, String keyword, int offset) {
         List<Block> blocks = new ArrayList<>();
         int searchFrom = 0;
 
@@ -390,7 +413,7 @@ public class ProtoConverter {
 
             if (depth != 0) { searchFrom = nameEnd; continue; }
 
-            blocks.add(new Block(name, input.substring(bodyStart, pos - 1), kwIdx, pos));
+            blocks.add(new Block(name, input.substring(bodyStart, pos - 1), kwIdx, pos, offset + bodyStart));
             searchFrom = pos;
         }
         return blocks;
@@ -415,18 +438,14 @@ public class ProtoConverter {
         return -1;
     }
 
-    /** Strips all named blocks for the given keywords from the input. */
+    /** Blanks blocks, retaining offsets into the original source for field options. */
     private String stripBlocks(String input, String... keywords) {
         String result = input;
         for (String kw : keywords) {
-            StringBuilder sb = new StringBuilder();
-            int lastEnd = 0;
-            for (Block b : findNamedBlocks(result, kw)) {
-                sb.append(result, lastEnd, b.start);
-                lastEnd = b.end;
-            }
-            sb.append(result.substring(lastEnd));
-            result = sb.toString();
+            char[] masked = result.toCharArray();
+            for (Block block : findNamedBlocks(result, kw))
+                Arrays.fill(masked, block.start, block.end, ' ');
+            result = new String(masked);
         }
         return result;
     }
@@ -527,7 +546,7 @@ public class ProtoConverter {
     // ── JSON -> proto ─────────────────────────────────────────────────────
 
     public String jsonToProto(String json) throws Exception {
-        JsonNode root = jsonMapper.readTree(json);
+        JsonNode root = GeneratorJson.readTree(json);
 
         // Peels every level, not just one: the POJO and data class generators
         // unwrap a root array of arrays all the way down, and the root must not
@@ -622,13 +641,14 @@ public class ProtoConverter {
             }
         }
 
-        int[] counter = {1};
+        int fieldNumber = 1;
         for (Map.Entry<String, JsonNode> e : node.properties()) {
             String   fieldName = fieldNames.get(e.getKey());
             JsonNode val       = e.getValue();
             String   childName = childNames.get(e.getKey());
             String   fieldPad  = pad + "  ";
-            String   tail      = " = " + counter[0]++ + jsonName(e.getKey(), fieldName) + ";\n";
+            if (fieldNumber == 19_000) fieldNumber = 20_000;
+            String   tail      = " = " + fieldNumber++ + jsonName(e.getKey(), fieldName) + ";\n";
 
             if (val.isArray()) {
                 List<String> rows = rowNames.get(e.getKey());
@@ -680,14 +700,6 @@ public class ProtoConverter {
      */
     private static final int MAX_ARRAY_DEPTH = 8;
 
-    /** Suffixes a counter until {@code base} is unused, recording the result in {@code used}. */
-    private String uniqueName(String base, String separator, Set<String> used) {
-        if (used.add(base)) return base;
-        int n = 2;
-        while (!used.add(base + separator + n)) n++;
-        return base + separator + n;
-    }
-
     /**
      * Maps an arbitrary JSON key to a valid proto field identifier
      * (snake_case-ish: invalid characters become underscores, a leading digit
@@ -716,16 +728,17 @@ public class ProtoConverter {
         if (val == null || val.isNull())   return "string";
         if (val.isBoolean())               return "bool";
         if (val.isInt() || val.isShort())  return "int32";
-        if (val.isLong() || val.isBigInteger()) return "int64";
+        if (val.isLong())                  return "int64";
+        if (val.isBigInteger())
+            throw new IllegalArgumentException("Protobuf generation cannot represent all integral samples"
+                  + " as int64. Encode oversized values as JSON strings or use Java/Kotlin output.");
         if (val.isFloat())                 return "float";
         if (val.isDouble())                return "double";
-        if (val.isBigDecimal())            return "double";
+        if (val.isBigDecimal())
+            throw new IllegalArgumentException("Protobuf generation cannot preserve " + val
+                  + " as double. Encode this value as a JSON string or use Java/Kotlin output.");
         if (val.isTextual())               return "string";
         return "string";
     }
 
-    private String capitalize(String s) {
-        if (s == null || s.isEmpty()) return s;
-        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
-    }
 }
