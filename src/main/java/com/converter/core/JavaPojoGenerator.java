@@ -26,7 +26,8 @@ import java.util.*;
 import java.util.regex.Pattern;
 
 /**
- * Generates Java POJO class skeletons from a JSON or XML structure.
+ * Generates Java POJO class skeletons from a JSON structure; other formats
+ * reach it through the JSON pivot.
  * Each class contains only field declarations (with @JsonProperty where the
  * JSON key differs from the camelCase Java name). Constructors and accessors
  * are not emitted; enable Lombok mode to annotate the generated classes with

@@ -10,8 +10,9 @@
   syntax-highlighted tool window.
 
   [![Build](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml/badge.svg)](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml)
+  [![JetBrains Marketplace](https://img.shields.io/jetbrains/plugin/v/com.converter.be-water-converter)](https://plugins.jetbrains.com/plugin/32279-be-water-converter)
   [![Java 21](https://img.shields.io/badge/Java-21-blue)](https://openjdk.org/projects/jdk/21/)
-  [![IntelliJ 2025.1+](https://img.shields.io/badge/IntelliJ-2025.1%2B-purple)](https://plugins.jetbrains.com/)
+  [![IntelliJ 2025.1+](https://img.shields.io/badge/IntelliJ-2025.1%2B-purple)](https://plugins.jetbrains.com/plugin/32279-be-water-converter)
   [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
 </div>
 
@@ -35,8 +36,8 @@ The toolbar wraps responsively onto multiple rows when the tool window is narrow
 2. Search for **Be Water Converter**.
 3. Click **Install** and restart the IDE.
 
-Or install from disk: download the ZIP from the
-[releases page](https://github.com/nomikosi/be-water-converter/releases), then
+Or install from disk: download the ZIP of a version from the plugin's
+[Marketplace page](https://plugins.jetbrains.com/plugin/32279-be-water-converter/versions), then
 **Settings → Plugins → ⚙ → Install Plugin from Disk…**.
 
 Once installed, open the **Be Water** tool window from the right side bar, or via
@@ -67,8 +68,10 @@ stays `on`), `12:30:00` and `0777` are text, floats keep the digits they were wr
 and anchors and merge keys are expanded in place. A document whose aliases would expand to
 more than two million values, or whose anchors form a cycle, is refused rather than
 converted. JSON keys that are not valid XML element names or Protobuf identifiers (spaces,
-kebab-case, leading digits) are sanitized when rendering to those formats, so the output is
-always well-formed.
+kebab-case, leading digits, or characters such as `µ` that XML names cannot hold) are
+sanitized when rendering to those formats, so the output is always well-formed. JSON `null`
+becomes an XML element marked `xsi:nil="true"`, which reads back as `null` rather than as an
+empty string.
 
 ## Features
 
@@ -92,14 +95,14 @@ holds large payloads in memory. Swap is
 available when the current output format is also a supported input format; generated
 Java POJO output is intentionally output-only.
 
-### Keyboard shortcut
+### Keyboard shortcuts
 
 | Shortcut | Action |
 |---|---|
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Convert input to selected output format |
 | <kbd>Ctrl</kbd>+<kbd>F</kbd> | Find in the focused editor (Enter = next, Shift+Enter = previous, Esc = close) |
 
-This shortcut is active while focus is inside the Be Water tool window. Other actions are
+These shortcuts are active while focus is inside the Be Water tool window. Other actions are
 available from the toolbar buttons. The main operations (Convert, Format Input, Copy
 Output, Open File, Save Output) are also registered as IDE actions, so you can find them
 via **Find Action** and assign your own shortcuts in **Settings → Keymap** (search for
@@ -116,7 +119,9 @@ project shows up straight away.
 
 File loads discard stale results if the input changes or a newer file is opened
 before completion. Saves use a unique temporary file in the destination directory
-before replacing the target, so overlapping saves do not share temporary files.
+before replacing the target, so overlapping saves do not share temporary files. On Linux
+and macOS the saved file keeps the permissions of the file it replaces, and saving to a
+symbolic link writes the file the link points to rather than replacing the link.
 
 You can also **drag and drop** a file directly onto the input editor. The file is loaded
 and the source format is auto-detected from the extension, just like the Open action.
@@ -129,19 +134,26 @@ recover truncated input during interactive editing.
 
 Format is a layout action and is held to that. CSV is rewritten row by row without ever
 being parsed into objects, so headers, ragged rows and cell text come back exactly as
-written, including trailing empty tab-separated cells. YAML keeps one document per
-document, explicit null values, and the newlines inside block scalars.
-Numbers keep the digits they were written with: `1.10` stays `1.10` in JSON, YAML and TOML
-alike. If the input is edited while Format is still running, the result is discarded rather
-than written over the newer text. Delayed formatting errors and cancellation are also
-discarded; Compare discards its result when either editor changes.
+written, including leading spaces, trailing empty tab-separated cells and rows whose only
+cell is empty. YAML keeps one document per document, explicit null values, and the newlines
+inside block scalars. XML keeps whitespace that is an element's whole value, so
+`<sep> </sep>` stays as it is.
+Numbers keep the digits they were written with. JSON Format writes every number exactly as
+the document spelled it (`1.10`, `1.5e1`, `-0.0`, `1e400`); YAML and TOML keep `1.10` too,
+and refuse a number their JSON step would spell differently, as described below. If the
+input is edited while Format is still running, the result is discarded rather than written
+over the newer text. Delayed formatting errors and cancellation are also discarded; Compare
+discards its result when either editor changes.
 
 Where a re-layout could only be done by changing what the document says, Format refuses and
 leaves the editor alone: TOML dates, hex/octal/binary and underscore-separated numbers and
-`inf`/`nan` (the JSON step in between cannot spell them); YAML `.inf`/`.nan`, non-string mapping keys, timestamps and other tags the JSON step
-cannot preserve; and XML elements
-that mix text with child elements, which the indenter cannot pretty-print without inserting
-whitespace into the text. Formats that pass through the JSON tree keep only the data, so
+`inf`/`nan` (the JSON step in between cannot spell them); YAML `.inf`/`.nan`, non-string
+mapping keys, timestamps and other tags the JSON step cannot preserve; in YAML and TOML, any
+number that step would write back differently, such as `1.5e1` as `15` or YAML's `0x1F` as
+`31`, with the message saying what it would become; and XML elements that mix text with
+child elements, or that are declared `xml:space="preserve"` and have children to indent,
+which the indenter cannot lay out without changing their whitespace. Formats that pass
+through the JSON tree keep only the data, so
 before YAML, TOML or JSON-with-comments is rewritten, Format says how many comments (and YAML
 anchors) would be dropped and asks first.
 
@@ -170,8 +182,10 @@ detection looks for a following `key = value` line before deciding. Detection on
 fires on a paste-sized insertion, never on typing, and stays silent when it cannot tell,
 so it will not fight a format you selected yourself.
 
-For CSV the delimiter is detected as well — comma, semicolon or tab — and the **Delimiter**
-option is switched to match, both on paste and when a `.csv` file is opened. Context-menu
+For CSV the delimiter is detected as well — comma, semicolon or tab, whichever splits the
+header and the first rows into the most columns alike, so a tab-separated file whose values
+contain commas stays tab-separated — and the **Delimiter** option is switched to match, both
+on paste and when a `.csv` file is opened. Context-menu
 conversions sniff the delimiter the same way, so a semicolon file is never read as one wide
 column because the option still said comma.
 
@@ -205,7 +219,8 @@ file never blocks the UI.
 The **Filter** box converts only part of a document. Paths are
 [RFC 6901](https://datatracker.ietf.org/doc/html/rfc6901) JSON Pointers, with a dotted
 convenience syntax on top — `/users/0/name` and `users[0].name` select the same node, and a
-leading `$` (as JSONPath spells the root) is accepted so paths copied from other tools work.
+leading `$`, `$.` or `$[` (as JSONPath spells the root) is accepted so paths copied from other
+tools work. A key that only begins with `$`, such as `$id` or `$defs`, is read as a key.
 Bracket-quoting reaches keys that contain dots or slashes: `['odd.key'].a`. A path that
 matches nothing is reported as an error rather than silently converting an empty document.
 This is deliberately selection only, not a query language, and adds no dependency.
@@ -224,7 +239,8 @@ first normalised to canonical JSON — converted to the pivot format and key-sor
 documents carrying the same data in different formats or different key orders compare as
 identical, and only genuine differences appear. The status bar says so explicitly when the
 two sides are equivalent. Numeric spellings such as `1`, `1.0`, and `1e0` compare
-by exact value; Format and conversion still preserve decimal scale.
+by exact value, and the diff writes whole numbers out (`12000`, not `1.2E+4`) up to 64
+digits; Format and conversion still preserve decimal scale.
 
 ### CSV / XML type inference
 
@@ -232,7 +248,10 @@ When CSV or XML is the input format, values that look like integers, decimals, b
 or `null` are converted into typed JSON values by default, so `age,30` (or
 `<age>30</age>`) becomes `"age": 30` instead of `"age": "30"`. Values with leading zeros
 (`007`, `01234`) and integers too large for 64 bits stay strings, so identifiers are
-never mangled. Disable the **Infer types** checkbox to keep every value a string.
+never mangled. Exponent notation is read as a number only with a single digit or a decimal
+point before the `e` (`1e3`, `1.5e3`); other digit runs with an `e` in them, such as the
+short git hash `1234e56`, stay strings. Disable the **Infer types** checkbox to keep every
+value a string.
 
 ### CSV export modes
 
@@ -268,8 +287,8 @@ CSV generation supports two expansion modes:
 
 ```csv
 customer,orders.id,orders.amount,tags
-Alice,O1,100,"[{\"name\":\"vip\"},{\"name\":\"priority\"}]"
-Alice,O2,150,"[{\"name\":\"vip\"},{\"name\":\"priority\"}]"
+Alice,O1,100,"[{""name"":""vip""},{""name"":""priority""}]"
+Alice,O2,150,"[{""name"":""vip""},{""name"":""priority""}]"
 ```
 
 #### `CROSS_JOIN` example
@@ -308,13 +327,23 @@ classes with more than 254 fields, where it would produce an invalid JVM constru
 All classes are emitted into a single block that pastes into one `.java` file, so only
 the root class is declared `public` — Java permits at most one public top-level type per
 file. Two nested objects that would claim the same class name each get their own class
-(`User`, `User2`) rather than sharing the first one's fields.
+(`User`, `User2`) rather than sharing the first one's fields. Class names are unique ignoring
+case, too: objects under `url` and `URL` become `Url` and `URL2`, because Windows and macOS
+file systems cannot hold `Url.class` and `URL.class` side by side.
+
+In Lombok mode, a field whose second letter is upper case (`xAxis`, `eTag`) gets a getter
+that Jackson reads as another property (`getXAxis` as `xaxis`), so the class could not read
+the JSON it was generated from. A class holding such a field binds through its fields
+instead: it carries `@JsonAutoDetect` with field visibility, and every other class is left
+as it was. Generated identifiers never contain `$`, which Lombok skips: `$ref` becomes
+`_ref`, mapped back with `@JsonProperty`.
 
 Arrays are typed from every element, not just the first: objects in an array contribute the
 union of their keys to one class, numbers widen to the widest kind seen (`[1, 2.5]` is a
 `List<Double>`), two dates of the same kind stay that kind, and elements of genuinely
 different kinds fall back to `List<Object>`. The test suite compiles the generated Java
-with `javac` rather than only checking for substrings.
+with `javac` rather than only checking for substrings, and reads each sample through the
+compiled Lombok classes and writes it back unchanged.
 
 ### JSON Schema generation
 
@@ -355,7 +384,11 @@ Deserializing the result needs [`jackson-module-kotlin`](https://github.com/Fast
 the way the Lombok mode needs Lombok on the classpath. A data class has no no-argument
 constructor, and `@JsonProperty` on a constructor `val` binds to the constructor
 *parameter* — only that module reads either, so plain `jackson-databind` cannot construct
-the generated classes whatever the annotation placement.
+the generated classes whatever the annotation placement. As in Java's Lombok mode, a class
+with a property whose accessor Jackson would read as another name (`xAxis`, or both `id` and
+`ID`) carries `@JsonAutoDetect` and binds through its fields. The test suite compiles the
+generated classes with the Kotlin compiler and reads each sample through them with that
+module.
 
 ### Protobuf schema generation
 
@@ -376,12 +409,21 @@ The Protobuf converter works structurally in both directions without invoking `p
   explicitly, and leading-dot references such as `.example.Outer.Inner` start at the
   global scope. Unknown external types remain empty placeholders. Explicit `json_name`
   options supply JSON keys, including escaped names and mappings inside nested messages
-  and `oneof` blocks; conflicting JSON names are rejected.
+  and `oneof` blocks; conflicting JSON names are rejected. Field options may hold lists and
+  messages, as protovalidate's `[(buf.validate.field).string = {in: ["a", "b"]}]` does, and
+  field numbers may be written in hex or octal, as `protoc` reads them. Fields declared in an
+  `extend` block extend another message, so they are not listed as fields of the message
+  that contains the block. A schema whose nested message fields would expand to more than
+  two million values is refused rather than exhausting memory.
 - **`jsonToProto`** walks a JSON tree and emits a proto3 schema with inline nested
   messages and repeated fields. A repeated message is typed from every element of the
   array. A key the field name cannot spell (`first-name`, `1st`, or two keys that sanitize
   to the same name) keeps its original key through a `json_name` option, which is how
-  proto3's JSON mapping reads it back. Integers outside signed `int64` and decimals
+  proto3's JSON mapping reads it back. Field names are also kept apart the way `protoc`
+  compares them: two names equal once lower-cased without underscores (`user_id` and
+  `userId`, `name` and `Name`) cannot both be used, so the second becomes `userId_2` or
+  `Name_2`, and a field whose JSON name would clash carries its key as `json_name`, so every
+  key still reads back as itself. Integers outside signed `int64` and decimals
   that cannot retain their value through `double` are rejected with a message suggesting
   JSON strings or Java/Kotlin output, rather than generating an incompatible field type.
 
@@ -438,50 +480,77 @@ Produces:
 
 ## Architecture
 
+The plugin is two packages. `com.converter.core` is the conversion core: plain Java with no
+IntelliJ or Swing imports, tested on a plain JVM by `unitTest`. `com.converter` is the IDE
+integration built on it.
+
+### IDE integration (`com.converter`)
+
 | Class | Responsibility |
 |---|---|
 | `ConverterToolWindowFactory` | Registers and mounts the tool-window content. |
-| `ConverterPanel` | UI orchestration: toolbar, options, find bar, status updates, file I/O. |
-| `ConverterEditorState` | Editor snapshots, text and format updates, highlighting, wrapping, and revision tracking. |
-| `ConverterWidgets` | Custom-painted toolbar controls (buttons, combos, format badges). |
-| `ConversionPipeline` | UI-independent conversion dispatch: normalize to JSON, render to output, per-format formatting and its refusals, autoClose repair, XML pretty-printing, format and delimiter detection. |
-| `ConversionOptions` | Immutable per-conversion settings: CSV mode and delimiter, Lombok, date detection, type inference, key sorting, subtree filter. |
-| `PivotJson` | Shared JSON mapper builder preserving numeric values and decimal scale; callers configure input syntax. |
-| `JsonTrees` | Shared recursive key ordering, with numeric normalization reserved for comparison. |
-| `JsonPathFilter` | JSON Pointer and dotted/bracket subtree selection, including escaped and empty quoted keys. |
-| `ConversionHistory` | Bounded in-memory history of successful conversions. |
-| `ConversionFileNames` | Extension and file-name rules for conversion results. |
-| `Formats` | Shared format names, extensions, input capabilities, syntax modes and generated-file naming constraints. |
-| `BackgroundTasks` | Background execution and UI completion, with controllable executors for asynchronous regression tests. |
-| `AtomicFileWriter` | File replacement through a unique temporary file in the destination directory. |
+| `ConverterPanel` | The tool window: toolbar, editors, status, and running Convert, Format and Compare. |
+| `OptionsBar` | The options bar: every per-conversion setting, which of them the formats make relevant, and the snapshot a conversion takes of them. |
+| `ConverterSettings` | The options remembered across IDE restarts. |
+| `ConversionRun` | The conversion in flight: its cancel flag and the pooled thread to interrupt. |
+| `CsvDelimiter` | Delimiter choices offered in the options bar. |
+| `ConverterEditorState` | Editor snapshots, text and format updates, syntax styles, highlighting, wrapping, and revision tracking. |
+| `ConverterWidgets` | Custom-painted toolbar controls (buttons, combos, checkboxes, format badges). |
+| `ConverterTheme` | Theme-aware color palette for the UI. |
+| `FindBar` | Ctrl+F search bar for the editors. |
+| `ConverterNotifications` | Error balloons, with messages escaped for their HTML. |
+| `ConverterDialogs` | Confirmations, asked through the IDE's own dialogs. |
 | `ConverterActions` | Keymap-visible IDE actions (Convert, Format, Copy, Open, Save). |
+| `ConverterToolWindowAccess` | Finds the converter panel for an action. |
 | `ConverterContextActions` | Editor and Project-view context menu: open in the tool window, or convert straight to a scratch file. |
 | `ConverterScratchFiles` | Opens results as scratch files in a real IDE editor. |
 | `ConverterDiff` | Opens the IDE diff viewer on two canonical-JSON documents (Compare). |
 | `ConverterFileOps` | Native IDE file open/save dialogs, async loading, drag-and-drop, VFS refresh. |
-| `FindBar` | Ctrl+F search bar for the editors. |
+| `AtomicFileWriter` | Replaces a file through a unique temporary file, keeping its permissions and symbolic links. |
+| `BackgroundTasks` | Background execution and UI completion, with controllable executors for asynchronous regression tests. |
+| `ConversionHistory` | Bounded in-memory history of successful conversions. |
 | `OpenConverterAction` | Menu action (**Tools → Be Water Converter**) that activates the tool window. |
-| `ConverterTheme` | Theme-aware color palette for the UI. |
-| `WrapLayout` | Responsive multi-row wrapping for the toolbar and options bar. |
-| `JsonXmlConverter` | JSON ↔ XML conversion, element-name sanitization, optional type inference. |
+
+### Conversion core (`com.converter.core`)
+
+| Class | Responsibility |
+|---|---|
+| `ConversionPipeline` | Conversion routing: normalize any input to the JSON pivot, render the pivot to any output. |
+| `ConversionOptions` | Immutable per-conversion settings: CSV mode and delimiter, Lombok, date detection, type inference, key sorting, subtree filter. |
+| `FormatDetector` | Tells a pasted document's format, and a CSV document's delimiter, from its content. |
+| `DocumentFormatter` | The Format action per format, its refusals, the losses it asks about, and XML pretty-printing. |
+| `FormatLosses` | What a Format would drop: comments and YAML anchors. |
+| `LenientJson` | How user JSON is read: leniently, with exact numbers, and refused when empty. |
+| `JsonRepair` | Auto-close repair of truncated JSON, and the comment count Format asks about. |
+| `PivotJson` | Shared JSON mapper builder preserving numeric values and decimal scale; callers configure input syntax. |
+| `JsonTrees` | Shared recursive key ordering, with numeric normalization reserved for comparison. |
+| `JsonPathFilter` | JSON Pointer and dotted/bracket subtree selection, including escaped and empty quoted keys. |
+| `SourcePosition` | Where a parse failure points, from Jackson, SnakeYAML and XML parser errors alike. |
+| `TextDecoder` | File bytes to text, honoring byte-order marks. |
+| `Formats` | Shared format names, extensions, input capabilities and generated-file naming constraints. |
+| `ConversionFileNames` | Extension and file-name rules for conversion results. |
+| `JsonXmlConverter` | JSON ↔ XML conversion, element-name sanitization, `xsi:nil` nulls, optional type inference. |
 | `JsonYamlConverter` | JSON ↔ YAML conversion, multi-document support, exact floats, resolver-aware quoting. |
 | `CsvConverter` | CSV ↔ JSON conversion, positional re-layout, flattening logic, row estimation. |
 | `TomlConverter` | TOML ↔ JSON conversion and shared value-token scanning for conversion and formatting guards. |
 | `ProtoConverter` | Protobuf schema ↔ JSON structural conversion with scoped type resolution and identifier sanitization. |
+| `ProtoStringLiteral` | Protobuf string literals as `protoc` reads them, escapes included. |
 | `JavaPojoGenerator` | Java class generation from structured JSON, with date detection. |
 | `KotlinDataClassGenerator` | Kotlin data class generation from structured JSON. |
 | `JsonSchemaGenerator` | JSON Schema (draft 2020-12) inference. |
 | `StructureModel` / `SourceConventions` | Type discovery and identifier rules shared by the Java and Kotlin generators. |
+| `GeneratorJson` | Reads exact values before the generators choose numeric types. |
 | `ArrayShapes` | Incremental shape merging and presence counts for generators and the Protobuf writer, retaining only completed shapes. |
 | `ScalarInference` | Shared string→typed-value inference for CSV and XML input. |
 
 ## Development
 
 Java and Kotlin regression tests compile and load generated classes, including JVM
-parameter-limit boundaries and Java output with real Lombok annotation processing.
-Compilers run in child processes using the configured JDK, so the IntelliJ test runtime
-cannot silently skip Java compilation. The Kotlin compiler and Lombok processor are
-isolated test dependencies and are not bundled with the plugin. A separate process checks
+parameter-limit boundaries and Java output with real Lombok annotation processing, and bind
+the sample JSON through them. Compilers run in child processes using the configured JDK, so
+the IntelliJ test runtime cannot silently skip Java compilation. The Kotlin compiler, Lombok
+and `jackson-module-kotlin` are isolated test dependencies and are not bundled with the
+plugin. A separate process checks
 sparse array-shape merging under a 96 MiB heap.
 
 ### Requirements
@@ -521,23 +590,34 @@ against a range of IDE builds before publishing, run `./gradlew verifyPlugin`.
 
 ### Continuous integration
 
-Every push and pull request to `master` runs `./gradlew check buildPlugin` on GitHub
-Actions ([build.yml](.github/workflows/build.yml)) and uploads the plugin ZIP as a build
-artifact.
+Every push and pull request to `master` runs `./gradlew unitTest check buildPlugin` and the
+plugin structure and configuration checks on GitHub Actions
+([build.yml](.github/workflows/build.yml)), and uploads the plugin ZIP as a build artifact,
+with the test reports when a test fails. The workflows get read-only access to the
+repository except where a release needs more, and name each action by commit rather than by
+tag. Dependabot proposes updates to the actions and the Gradle dependencies every week.
 
 ### Releasing
 
-Pushing a `v*` tag (e.g. `git tag v1.4.0 && git push --tags`) triggers
-[release.yml](.github/workflows/release.yml), which runs the tests, verifies IDE
-compatibility, publishes the plugin to JetBrains Marketplace, and attaches the ZIP to a
-GitHub release. Publishing requires a `PUBLISH_TOKEN` repository secret containing a
+A release is a version in `build.gradle` and a section for it in [CHANGELOG.md](CHANGELOG.md).
+The plugin's change notes, on the Marketplace and in the IDE, are built from that file, and
+the build fails while the version has no section there.
+
+Pushing a `v*` tag (e.g. `git tag v1.5.3 && git push origin v1.5.3`) triggers
+[release.yml](.github/workflows/release.yml), which checks the tag against the version in
+`build.gradle`, runs the tests, verifies IDE compatibility, publishes the plugin to
+JetBrains Marketplace, and attaches the ZIP to a GitHub release. Publishing requires a
+`PUBLISH_TOKEN` repository secret containing a
 [JetBrains Marketplace token](https://plugins.jetbrains.com/author/me/tokens).
+
+Releases uploaded to the Marketplace by hand are tagged with the bare version (`1.5.2`), so
+the commit that shipped is recorded without starting the workflow, which would publish it a
+second time.
 
 ## Compatibility
 
 | Property | Value |
 |---|---|
-| Plugin version | 1.5.2 |
 | Minimum IDE build | 251 (IntelliJ IDEA 2025.1) |
 | Maximum IDE build | Open-ended |
 | Java | 21 |
@@ -549,6 +629,9 @@ GitHub release. Publishing requires a `PUBLISH_TOKEN` repository secret containi
 - TOML has no null type: JSON `null` values become empty strings (`''`) in TOML output.
   Top-level arrays and scalars are wrapped under an `items` / `value` key, since a TOML
   document must be a table.
+- TOML integers of exactly 19 digits, and negative ones longer than that, are refused: the
+  TOML parser (jackson-dataformat-toml, through 2.22.3) reads them as a different number.
+  Quote such a value, or write it in hexadecimal.
 - JSON auto-close is intentionally lenient and may repair malformed JSON into a parseable
   shape that differs from the original intent.
 - `CROSS_JOIN` CSV exports can grow very quickly with multiple nested arrays; prefer
