@@ -151,4 +151,14 @@ class JsonPathFilterTest {
         assertThatThrownBy(() -> JsonPathFilter.toPointer(path)).isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test @DisplayName("'$' is the JSONPath root only when a path follows it")
+    void dollarKeysAreKeys() throws Exception {
+        JsonNode schema = mapper.readTree(
+              "{\"$id\":\"urn:schema\",\"id\":\"user-7\",\"$defs\":{\"Address\":{\"t\":1}}}");
+        assertThat(JsonPathFilter.apply(schema, "$id").asText()).isEqualTo("urn:schema");
+        assertThat(JsonPathFilter.apply(schema, "$defs.Address").get("t").asInt()).isEqualTo(1);
+        assertThat(JsonPathFilter.apply(schema, "$.id").asText()).isEqualTo("user-7");
+        assertThat(JsonPathFilter.apply(schema, "$['$id']").asText()).isEqualTo("urn:schema");
+        assertThat(JsonPathFilter.apply(schema, "$")).isSameAs(schema);
+    }
 }

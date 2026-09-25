@@ -1573,4 +1573,69 @@ class CsvConverterTest {
                   .hasMessageContaining("no columns");
         }
     }
+
+    /** A blank line is not a row, but everything else on a line is data. */
+    @Nested @DisplayName("blank lines, leading spaces and lone blank cells")
+    class BlankLines {
+
+        private final ConversionPipeline pipeline = new ConversionPipeline();
+        private final ConversionOptions opts = ConversionOptions.DEFAULTS;
+
+        @Test @DisplayName("leading spaces of a row's first cell survive Format and Convert")
+        void leadingSpacesSurvive() throws Exception {
+            assertThat(pipeline.formatInput("code,qty\n  A1,1\n B2,2\n", Formats.FMT_CSV, opts))
+                  .isEqualTo("code,qty\n  A1,1\n B2,2\n");
+            assertThat(json.readTree(converter.csvToJson("a,b\n  x,  1\n", false)))
+                  .isEqualTo(json.readTree("[{\"a\":\"  x\",\"b\":\"  1\"}]"));
+            // A padded value stays text rather than being read as a number.
+            String csv = pipeline.renderFromJson("[{\"id\":\" 42\",\"n\":1}]", Formats.FMT_CSV, opts);
+            assertThat(json.readTree(pipeline.normalizeToJson(csv, Formats.FMT_CSV, opts)))
+                  .isEqualTo(json.readTree("[{\"id\":\" 42\",\"n\":1}]"));
+        }
+
+        @Test @DisplayName("blank and whitespace-only lines are still skipped, except inside quoted values")
+        void blankLinesAreSkipped() throws Exception {
+            assertThat(json.readTree(converter.csvToJson("a,b\n1,2\n\n   \n3,4\n\n", false)))
+                  .isEqualTo(json.readTree("[{\"a\":\"1\",\"b\":\"2\"},{\"a\":\"3\",\"b\":\"4\"}]"));
+            assertThat(json.readTree(converter.csvToJson("a,b\r\n\r\n1,2\r\n", false)))
+                  .isEqualTo(json.readTree("[{\"a\":\"1\",\"b\":\"2\"}]"));
+            assertThat(json.readTree(converter.csvToJson("a,b\n\"one\n\n  \nfour\",x\n", false)).get(0).get("a").asText())
+                  .isEqualTo("one\n\n  \nfour");
+        }
+
+        @Test @DisplayName("a row whose only cell is blank is written quoted, and comes back")
+        void loneBlankCellsSurvive() throws Exception {
+            String doc = "[{\"name\":\"Alice\"},{\"name\":\"\"},{\"name\":\"   \"},{\"name\":\"Bob\"}]";
+            String csv = pipeline.renderFromJson(doc, Formats.FMT_CSV, opts);
+            assertThat(csv).isEqualTo("name\nAlice\n\"\"\n\"   \"\nBob\n");
+            assertThat(json.readTree(pipeline.normalizeToJson(csv, Formats.FMT_CSV, opts)))
+                  .isEqualTo(json.readTree(doc));
+            // An empty column name is a blank header line the same way.
+            String anonymous = pipeline.renderFromJson("[{\"\":\"x\"},{\"\":\"y\"}]", Formats.FMT_CSV, opts);
+            assertThat(json.readTree(pipeline.normalizeToJson(anonymous, Formats.FMT_CSV, opts)))
+                  .isEqualTo(json.readTree("[{\"column_1\":\"x\"},{\"column_1\":\"y\"}]"));
+        }
+
+        @Test @DisplayName("Format keeps a row that is one quoted empty value")
+        void formatKeepsQuotedEmptyRows() throws Exception {
+            String input = "a,b\n\"\"\n1,2\n";
+            String formatted = pipeline.formatInput(input, Formats.FMT_CSV, opts);
+            assertThat(formatted).isEqualTo(input);
+            assertThat(pipeline.normalizeToJson(formatted, Formats.FMT_CSV, opts))
+                  .isEqualTo(pipeline.normalizeToJson(input, Formats.FMT_CSV, opts))
+                  .contains("{\"a\":\"\"}");
+        }
+    }
+
+    @Nested @DisplayName("type inference leaves identifiers alone")
+    class Inference {
+
+        @Test @DisplayName("digits with one 'e' are an identifier unless written as scientific notation")
+        void exponentLookalikesStayText() throws Exception {
+            assertThat(json.readTree(converter.csvToJson(
+                  "commit,gene,sci,frac,two\n1234e56,2310009E13,1e3,1.5e3,12e3\n", true)))
+                  .isEqualTo(json.readTree(
+                        "[{\"commit\":\"1234e56\",\"gene\":\"2310009E13\",\"sci\":1E+3,\"frac\":1.5E+3,\"two\":\"12e3\"}]"));
+        }
+    }
 }

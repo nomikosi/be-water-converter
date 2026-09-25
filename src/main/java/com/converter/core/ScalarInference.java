@@ -32,9 +32,15 @@ final class ScalarInference {
 
     /** Integer without leading zeros ("007" stays a string). */
     private static final Pattern INT_PATTERN = Pattern.compile("-?(0|[1-9]\\d*)");
-    /** Decimal / scientific notation with a fraction or exponent part. */
+    /**
+     * Decimal or scientific notation. An exponent without a fraction needs a
+     * one-digit mantissa ({@code 1e3}, not {@code 1234e56}): scientific
+     * notation is written that way, and digit runs with one {@code e} in them
+     * are usually identifiers. A short git hash such as {@code 1234e56} became
+     * the number 1.234E+59, and CSV to CSV wrote that back in its place.
+     */
     private static final Pattern DEC_PATTERN =
-          Pattern.compile("-?(0|[1-9]\\d*)(\\.\\d+([eE][+-]?\\d+)?|[eE][+-]?\\d+)");
+          Pattern.compile("-?(0|[1-9]\\d*)\\.\\d+([eE][+-]?\\d+)?|-?\\d[eE][+-]?\\d+");
 
     private ScalarInference() {}
 

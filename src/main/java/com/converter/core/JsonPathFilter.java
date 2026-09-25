@@ -57,8 +57,11 @@ public final class JsonPathFilter {
         }
 
         // '$' is how JSONPath spells the root; accept and drop it so paths
-        // copied from other tools work.
-        if (trimmed.startsWith("$")) trimmed = trimmed.substring(1);
+        // copied from other tools work. Only as the root, though: "$id" and
+        // "$defs" are ordinary keys in JSON Schema, including the schemas this
+        // plugin generates, and dropping the '$' selected "id" instead of "$id".
+        if (trimmed.equals("$") || trimmed.startsWith("$.") || trimmed.startsWith("$["))
+            trimmed = trimmed.substring(1);
         if (trimmed.startsWith(".")) trimmed = trimmed.substring(1);
         if (trimmed.isEmpty()) return JsonPointer.empty();
 

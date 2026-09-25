@@ -19,6 +19,7 @@ package com.converter.core;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MappingIterator;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SequenceWriter;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.csv.CsvMapper;
@@ -151,13 +152,56 @@ public class CsvConverter {
         // it Jackson enforces the schema's zero columns and rejects every line.
         MappingIterator<String[]> it = csvMapper.readerFor(String[].class)
               .with(CsvParser.Feature.WRAP_AS_ARRAY)
-              // A blank line is not a row. Without this it read as one empty
-              // cell, so "a,b\n1,2\n\n" — a paste with a trailing blank line —
-              // gained a phantom {"a":""} row, and Format wrote it back.
-              .with(CsvParser.Feature.SKIP_EMPTY_LINES)
               .with(schemaFor(format))
-              .readValues(TextDecoder.stripBom(csv));
+              .readValues(withoutBlankLines(TextDecoder.stripBom(csv), format));
         return it.readAll();
+    }
+
+    /**
+     * The text without its blank lines: those outside a quoted value that
+     * hold nothing but whitespace.
+     *
+     * <p>A blank line is not a row. Read as one, "a,b\n1,2\n\n" — a paste with a
+     * trailing blank line — gained a phantom {"a":""} row, and Format wrote it
+     * back. Jackson's SKIP_EMPTY_LINES used to drop them, but it does so by
+     * skipping the leading whitespace of EVERY line, so the first cell of each
+     * row lost its leading spaces: Format turned "  A1" into "A1", and " 42"
+     * came back as the number 42. A line inside a quoted value is that value's
+     * content and is kept whatever it holds.
+     */
+    static String withoutBlankLines(String text, CsvFormat format) {
+        char quote = format.quote();
+        char delimiter = format.delimiter();
+        StringBuilder out = null;          // allocated at the first blank line
+        boolean inQuotes = false;
+        boolean fieldStart = true;
+        int n = text.length();
+        for (int i = 0; i < n; i++) {
+            if (!inQuotes && (i == 0 || text.charAt(i - 1) == '\n')) {
+                int end = i;
+                while (end < n && text.charAt(end) != '\n' && Character.isWhitespace(text.charAt(end))) end++;
+                if (end == n || text.charAt(end) == '\n') {
+                    if (out == null) out = new StringBuilder(n).append(text, 0, i);
+                    i = end;               // the loop's i++ steps over the line break
+                    continue;
+                }
+            }
+            char c = text.charAt(i);
+            if (out != null) out.append(c);
+            if (inQuotes) {
+                // A doubled quote is an escaped quote inside the value.
+                if (c == quote && i + 1 < n && text.charAt(i + 1) == quote) {
+                    if (out != null) out.append(quote);
+                    i++;
+                } else if (c == quote) {
+                    inQuotes = false;
+                }
+                continue;
+            }
+            if (c == quote && fieldStart) inQuotes = true;
+            fieldStart = c == delimiter || c == '\n';
+        }
+        return out == null ? text : out.toString();
     }
 
     private static CsvSchema schemaFor(CsvFormat format) {
@@ -179,10 +223,33 @@ public class CsvConverter {
     public String reformat(String csv, CsvFormat format) throws Exception {
         if (csv == null || csv.isBlank())
             throw new IllegalArgumentException("Input CSV must not be empty");
-        List<String[]> rows = readRows(csv, format);
-        // A column-less schema writes each array positionally, so nothing is
-        // named, padded or discarded on the way out.
-        return csvMapper.writer(schemaFor(format)).writeValueAsString(rows);
+        // Positionally, so nothing is named, padded or discarded on the way out.
+        return writeRows(readRows(csv, format), format);
+    }
+
+    /**
+     * Writes rows positionally, quoting by hand the one row Jackson would write
+     * as a blank line: a single cell holding nothing but whitespace.
+     *
+     * <p>Reading skips blank lines, so such a row — an empty value in a
+     * one-column file, an empty column name, or a {@code ""} line Format was
+     * asked to tidy — was written as one and vanished on the way back in.
+     */
+    private String writeRows(List<String[]> rows, CsvFormat format) throws java.io.IOException {
+        java.io.StringWriter out = new java.io.StringWriter();
+        try (SequenceWriter writer = csvMapper.writer(schemaFor(format)).writeValues(out)) {
+            String quote = String.valueOf(format.quote());
+            for (String[] row : rows) {
+                if (row.length == 1 && (row[0] == null || row[0].isBlank())) {
+                    writer.flush();
+                    String cell = row[0] == null ? "" : row[0];
+                    out.write(quote + cell.replace(quote, quote + quote) + quote + "\n");
+                } else {
+                    writer.write(row);
+                }
+            }
+        }
+        return out.toString();
     }
 
     /**
@@ -274,6 +341,16 @@ public class CsvConverter {
         if (headers.isEmpty())
             throw new IllegalArgumentException(
                   "Input has no columns to write: the objects being converted are empty.");
+
+        // One column is where a row can come out as a blank line, so it is
+        // written through the positional writer that quotes those.
+        if (headers.size() == 1) {
+            String column = headers.iterator().next();
+            List<String[]> single = new ArrayList<>(rows.size() + 1);
+            single.add(new String[]{column});
+            for (Map<String, String> row : rows) single.add(new String[]{row.getOrDefault(column, "")});
+            return writeRows(single, format);
+        }
 
         CsvSchema.Builder sb = CsvSchema.builder().setUseHeader(true)
               .setColumnSeparator(format.delimiter())

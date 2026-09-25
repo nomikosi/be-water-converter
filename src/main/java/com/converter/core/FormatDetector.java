@@ -151,10 +151,24 @@ public final class FormatDetector {
         return body.equals(s) ? null : delimiterOf(body);
     }
 
+    /**
+     * The delimiter that splits the header and the rows below it into the most
+     * columns, consistently. The first that fitted used to win, and comma is
+     * tried first: a tab-separated file whose values each held one comma
+     * ("Austin, TX") fitted comma too, and was read as two wide columns.
+     * Equal counts keep the order: comma, then semicolon, then tab.
+     */
     private static Character delimiterOf(String s) {
-        for (char delimiter : CSV_DELIMITERS)
-            if (looksLikeCsv(s, delimiter)) return delimiter;
-        return null;
+        Character best = null;
+        int bestColumns = 0;
+        for (char delimiter : CSV_DELIMITERS) {
+            int columns = csvColumns(s, delimiter);
+            if (columns > bestColumns) {
+                best = delimiter;
+                bestColumns = columns;
+            }
+        }
+        return best;
     }
 
     /**
@@ -211,20 +225,20 @@ public final class FormatDetector {
      * and sentence-like first lines are rejected — two lines of prose that
      * happen to contain one comma each were otherwise detected as CSV.
      */
-    private static boolean looksLikeCsv(String s, char delimiter) {
+    private static int csvColumns(String s, char delimiter) {
         String[] lines = s.split("\r?\n", 4);
-        if (lines.length < 2 || lines[1].isBlank()) return false;
+        if (lines.length < 2 || lines[1].isBlank()) return 0;
 
         String header = lines[0];
         // ". " or a trailing period is prose punctuation, not a column name.
-        if (header.contains(". ") || header.stripTrailing().endsWith(".")) return false;
+        if (header.contains(". ") || header.stripTrailing().endsWith(".")) return 0;
 
         int expected = countDelimitersOutsideQuotes(header, delimiter);
-        if (expected == 0) return false;
-        if (countDelimitersOutsideQuotes(lines[1], delimiter) != expected) return false;
+        if (expected == 0) return 0;
+        if (countDelimitersOutsideQuotes(lines[1], delimiter) != expected) return 0;
         if (lines.length > 2 && !lines[2].isBlank()
-              && countDelimitersOutsideQuotes(lines[2], delimiter) != expected) return false;
-        return true;
+              && countDelimitersOutsideQuotes(lines[2], delimiter) != expected) return 0;
+        return expected + 1;
     }
 
     private static int countDelimitersOutsideQuotes(String line, char delimiter) {

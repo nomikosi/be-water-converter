@@ -291,5 +291,17 @@ class FormatDetectorTest {
             assertThat(FormatDetector.detectCsvDelimiter("just some prose\nwith no delimiter\n")).isNull();
             assertThat(FormatDetector.detectCsvDelimiter("a: 1\nb: 2\n")).isNull();
         }
+
+        @Test @DisplayName("the delimiter that splits every line into the most columns wins")
+        void mostColumnsWins() {
+            // Each value holds one comma, so comma fits too; tab gives more columns.
+            String tsv = "name\tcity, state\tzip\nBob\tAustin, TX\t73301\nAnn\tReno, NV\t89501\n";
+            assertThat(FormatDetector.detectCsvDelimiter(tsv)).isEqualTo('\t');
+            assertThat(detectFormat(tsv)).isEqualTo(Formats.FMT_CSV);
+            // And the other way round: commas separate, semicolons sit inside values.
+            assertThat(FormatDetector.detectCsvDelimiter("a,b,c\nx;y,1,2\nz;w,3,4\n")).isEqualTo(',');
+            // Equal counts keep the preference order.
+            assertThat(FormatDetector.detectCsvDelimiter("a,b;c\n1,2;3\n")).isEqualTo(',');
+        }
     }
 }
