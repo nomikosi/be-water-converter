@@ -21,9 +21,7 @@ import static com.converter.core.SourceConventions.capitalize;
 import static com.converter.core.SourceConventions.uniqueName;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.regex.Pattern;
 
@@ -38,8 +36,6 @@ public class JavaPojoGenerator {
 
     /** Name of the generated root class; the only public type in the output. */
     public static final String ROOT_CLASS_NAME = "Root";
-
-    private final XmlMapper   xmlMapper   = new XmlMapper();
 
     private static final Set<String> JAVA_KEYWORDS = Set.of(
           "abstract", "assert", "boolean", "break", "byte", "case", "catch",
@@ -114,21 +110,6 @@ public class JavaPojoGenerator {
         // A root array is unwrapped by StructureModel to the merged shape of
         // its elements, the same rule it applies to a nested array under a key.
         return generate(GeneratorJson.readTree(json), "Root", useLombok, detectDates);
-    }
-
-    public String fromXml(String xml) throws Exception {
-        return fromXml(xml, false);
-    }
-
-    public String fromXml(String xml, boolean useLombok) throws Exception {
-        return fromXml(xml, useLombok, true);
-    }
-
-    public String fromXml(String xml, boolean useLombok, boolean detectDates) throws Exception {
-        if (xml == null || xml.isBlank())
-            throw new IllegalArgumentException("Input XML must not be null or blank");
-        return generate(xmlMapper.readTree(xml.getBytes(StandardCharsets.UTF_8)), "Root",
-              useLombok, detectDates);
     }
 
     // ── Internal generation ───────────────────────────────────────────────

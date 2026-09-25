@@ -40,12 +40,6 @@ public record ConversionOptions(
           false,   // sortKeys
           "");     // filterPath: empty means the whole document
 
-    /** Six-arg form kept so existing callers need no change. */
-    public ConversionOptions(CsvConverter.CsvMode csvMode, CsvConverter.CsvFormat csvFormat,
-          boolean useLombok, boolean detectDates, boolean inferTypes, boolean sortKeys) {
-        this(csvMode, csvFormat, useLombok, detectDates, inferTypes, sortKeys, "");
-    }
-
     /** True when a subtree filter is actually set. */
     public boolean hasFilter() {
         return filterPath != null && !filterPath.isBlank();

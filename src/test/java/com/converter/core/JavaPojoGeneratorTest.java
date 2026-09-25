@@ -138,15 +138,23 @@ class JavaPojoGeneratorTest {
 
     // ── from XML ──────────────────────────────────────────────────────────
 
+    /** XML reaches the generator the way the product sends it: through the JSON pivot. */
+    private static String pojoFromXml(String xml, boolean lombok) throws Exception {
+        ConversionPipeline pipeline = new ConversionPipeline();
+        ConversionOptions options = ConversionOptions.DEFAULTS.withLombok(lombok);
+        return pipeline.renderFromJson(pipeline.normalizeToJson(xml, Formats.FMT_XML, options),
+              Formats.FMT_JAVA, options);
+    }
+
     @Test @DisplayName("XML->POJO: simple flat XML")
     void fromXmlFlat() throws Exception {
-        String result = generator.fromXml("<root><name>Alice</name><age>30</age></root>");
+        String result = pojoFromXml("<root><name>Alice</name><age>30</age></root>", false);
         assertThat(result).contains("public class Root").contains("private String name");
     }
 
     @Test @DisplayName("XML->POJO: nested XML generates child class")
     void fromXmlNested() throws Exception {
-        String result = generator.fromXml("<root><user><id>1</id><email>a@b.com</email></user></root>");
+        String result = pojoFromXml("<root><user><id>1</id><email>a@b.com</email></user></root>", false);
         assertThat(result)
               .contains("public class Root")
               .contains("\nclass User")

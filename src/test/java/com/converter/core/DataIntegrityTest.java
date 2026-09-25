@@ -51,23 +51,23 @@ class DataIntegrityTest {
     @Test @DisplayName("JSONL is rejected rather than truncated to its first record")
     void jsonlRejected() {
         String jsonl = "{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n";
-        assertThatThrownBy(() -> pipeline.normalizeToJson(jsonl, ConversionPipeline.FMT_JSON,
+        assertThatThrownBy(() -> pipeline.normalizeToJson(jsonl, Formats.FMT_JSON,
               ConversionOptions.DEFAULTS)).isInstanceOf(Exception.class);
         // Format is the dangerous path: it overwrites the input editor.
-        assertThatThrownBy(() -> pipeline.formatInput(jsonl, ConversionPipeline.FMT_JSON,
+        assertThatThrownBy(() -> pipeline.formatInput(jsonl, Formats.FMT_JSON,
               ConversionOptions.DEFAULTS)).isInstanceOf(Exception.class);
     }
 
     @Test @DisplayName("garbage after a valid value is an error, not silently dropped")
     void trailingGarbageRejected() {
         assertThatThrownBy(() -> pipeline.normalizeToJson("{\"a\":1} oops",
-              ConversionPipeline.FMT_JSON, ConversionOptions.DEFAULTS))
+              Formats.FMT_JSON, ConversionOptions.DEFAULTS))
               .isInstanceOf(Exception.class);
     }
 
     @Test @DisplayName("a single value with only whitespace after it is still fine")
     void trailingWhitespaceStillValid() throws Exception {
-        assertThat(pipeline.normalizeToJson("  {\"a\":1}  \n\n", ConversionPipeline.FMT_JSON,
+        assertThat(pipeline.normalizeToJson("  {\"a\":1}  \n\n", Formats.FMT_JSON,
               ConversionOptions.DEFAULTS)).isEqualTo("{\"a\":1}");
     }
 
@@ -76,21 +76,21 @@ class DataIntegrityTest {
         // {"a":1,"a":2} read as {"a":2}, and Format wrote the half-document
         // back. The YAML reader already refused duplicates.
         assertThatThrownBy(() -> pipeline.normalizeToJson("{\"a\":1,\"a\":2}",
-              ConversionPipeline.FMT_JSON, ConversionOptions.DEFAULTS))
+              Formats.FMT_JSON, ConversionOptions.DEFAULTS))
               .hasMessageContaining("Duplicate field 'a'");
         assertThatThrownBy(() -> pipeline.formatInput("{\"b\":{\"x\":1,\"x\":2}}",
-              ConversionPipeline.FMT_JSON, ConversionOptions.DEFAULTS))
+              Formats.FMT_JSON, ConversionOptions.DEFAULTS))
               .hasMessageContaining("Duplicate field 'x'");
         // The same key at different levels is not a duplicate.
         assertThatCode(() -> pipeline.normalizeToJson("{\"a\":{\"a\":1}}",
-              ConversionPipeline.FMT_JSON, ConversionOptions.DEFAULTS)).doesNotThrowAnyException();
+              Formats.FMT_JSON, ConversionOptions.DEFAULTS)).doesNotThrowAnyException();
     }
 
     // ── YAML anchors and merge keys ───────────────────────────────────────
 
     @Test @DisplayName("an alias resolves to the anchored value, not the anchor name")
     void aliasResolves() throws Exception {
-        JsonNode tree = pivot("a: &x 1\nb: *x\n", ConversionPipeline.FMT_YAML);
+        JsonNode tree = pivot("a: &x 1\nb: *x\n", Formats.FMT_YAML);
         // Previously produced b = "x": wrong value AND wrong type.
         assertThat(tree.get("b").isNumber()).isTrue();
         assertThat(tree.get("b").asInt()).isEqualTo(1);
@@ -106,7 +106,7 @@ class DataIntegrityTest {
                 <<: *b
                 image: apache
               """;
-        JsonNode web = pivot(yaml, ConversionPipeline.FMT_YAML).get("web");
+        JsonNode web = pivot(yaml, Formats.FMT_YAML).get("web");
         assertThat(web.has("<<")).isFalse();
         // The local override wins and the inherited key survives.
         assertThat(web.get("image").asText()).isEqualTo("apache");
@@ -115,14 +115,14 @@ class DataIntegrityTest {
 
     @Test @DisplayName("an anchored collection is expanded at every alias site")
     void anchoredCollection() throws Exception {
-        JsonNode tree = pivot("defs: &d [1, 2]\nx: *d\ny: *d\n", ConversionPipeline.FMT_YAML);
+        JsonNode tree = pivot("defs: &d [1, 2]\nx: *d\ny: *d\n", Formats.FMT_YAML);
         assertThat(tree.get("x").toString()).isEqualTo("[1,2]");
         assertThat(tree.get("y").toString()).isEqualTo("[1,2]");
     }
 
     @Test @DisplayName("multi-document YAML still becomes an array")
     void multiDocumentStillWorks() throws Exception {
-        JsonNode tree = pivot("a: 1\n---\nb: 2\n", ConversionPipeline.FMT_YAML);
+        JsonNode tree = pivot("a: 1\n---\nb: 2\n", Formats.FMT_YAML);
         assertThat(tree.isArray()).isTrue();
         assertThat(tree).hasSize(2);
         assertThat(tree.get(0).get("a").asInt()).isEqualTo(1);
@@ -133,7 +133,7 @@ class DataIntegrityTest {
 
     @Test @DisplayName("a BOM does not become part of the first CSV column name")
     void bomStrippedFromCsv() throws Exception {
-        JsonNode row = pivot(BOM + "id,name\n1,Ada\n", ConversionPipeline.FMT_CSV).get(0);
+        JsonNode row = pivot(BOM + "id,name\n1,Ada\n", Formats.FMT_CSV).get(0);
         assertThat(row.has("id")).isTrue();
         assertThat(row.get("id").asInt()).isEqualTo(1);
         assertThat(row.toString()).doesNotContain(BOM);
@@ -141,18 +141,18 @@ class DataIntegrityTest {
 
     @Test @DisplayName("BOM-prefixed JSON, TOML and XML parse instead of throwing")
     void bomStrippedElsewhere() throws Exception {
-        assertThat(pipeline.normalizeToJson(BOM + "{\"a\":1}", ConversionPipeline.FMT_JSON,
+        assertThat(pipeline.normalizeToJson(BOM + "{\"a\":1}", Formats.FMT_JSON,
               ConversionOptions.DEFAULTS)).isEqualTo("{\"a\":1}");
-        assertThat(pivot(BOM + "a = 1\n", ConversionPipeline.FMT_TOML).get("a").asInt()).isEqualTo(1);
-        assertThat(pivot(BOM + "<r><a>1</a></r>", ConversionPipeline.FMT_XML).has("a")).isTrue();
+        assertThat(pivot(BOM + "a = 1\n", Formats.FMT_TOML).get("a").asInt()).isEqualTo(1);
+        assertThat(pivot(BOM + "<r><a>1</a></r>", Formats.FMT_XML).has("a")).isTrue();
     }
 
     @Test @DisplayName("detection sees through a BOM")
     void bomStrippedInDetection() {
         assertThat(ConversionPipeline.detectFormat(BOM + "{\"a\":1}"))
-              .isEqualTo(ConversionPipeline.FMT_JSON);
+              .isEqualTo(Formats.FMT_JSON);
         assertThat(ConversionPipeline.detectFormat(BOM + "<r/>"))
-              .isEqualTo(ConversionPipeline.FMT_XML);
+              .isEqualTo(Formats.FMT_XML);
     }
 
     // ── Format must not rewrite data ──────────────────────────────────────
@@ -162,13 +162,13 @@ class DataIntegrityTest {
         // Format is a layout action. Inferring types here rewrote the user's
         // data in place: 1.50 became 1.5 and the literal text null was erased.
         String formatted = pipeline.formatInput("sku,price,note\nA1,1.50,null\n",
-              ConversionPipeline.FMT_CSV, ConversionOptions.DEFAULTS);
+              Formats.FMT_CSV, ConversionOptions.DEFAULTS);
         assertThat(formatted).contains("1.50").contains("null");
     }
 
     @Test @DisplayName("Convert still infers CSV types — only Format is literal")
     void convertStillInfers() throws Exception {
-        assertThat(pivot("a\n1\n", ConversionPipeline.FMT_CSV).get(0).get("a").isNumber()).isTrue();
+        assertThat(pivot("a\n1\n", Formats.FMT_CSV).get(0).get("a").isNumber()).isTrue();
     }
 
     // ── Duplicate CSV headers ─────────────────────────────────────────────
@@ -176,14 +176,14 @@ class DataIntegrityTest {
     @Test @DisplayName("repeated header names keep every column instead of collapsing")
     void duplicateHeadersPreserved() throws Exception {
         // The trailing empty duplicate used to overwrite the populated column.
-        JsonNode row = pivot("Notes,Amount,Notes\nkeep-me,10,\n", ConversionPipeline.FMT_CSV).get(0);
+        JsonNode row = pivot("Notes,Amount,Notes\nkeep-me,10,\n", Formats.FMT_CSV).get(0);
         assertThat(row.get("Notes").asText()).isEqualTo("keep-me");
         assertThat(row.has("Notes_2")).isTrue();
     }
 
     @Test @DisplayName("an empty header cell gets an addressable name")
     void emptyHeaderNamed() throws Exception {
-        assertThat(pivot("a,,c\n1,2,3\n", ConversionPipeline.FMT_CSV).get(0).has("column_2"))
+        assertThat(pivot("a,,c\n1,2,3\n", Formats.FMT_CSV).get(0).has("column_2"))
               .isTrue();
     }
 
@@ -192,13 +192,13 @@ class DataIntegrityTest {
     @Test @DisplayName("long decimals keep every digit")
     void precisionPreserved() throws Exception {
         assertThat(pipeline.normalizeToJson("{\"v\":0.1234567890123456789}",
-              ConversionPipeline.FMT_JSON, ConversionOptions.DEFAULTS))
+              Formats.FMT_JSON, ConversionOptions.DEFAULTS))
               .contains("0.1234567890123456789");
     }
 
     @Test @DisplayName("a huge magnitude stays a number instead of becoming the string Infinity")
     void noInfinityString() throws Exception {
-        String out = pipeline.normalizeToJson("{\"v\":1e400}", ConversionPipeline.FMT_JSON,
+        String out = pipeline.normalizeToJson("{\"v\":1e400}", Formats.FMT_JSON,
               ConversionOptions.DEFAULTS);
         assertThat(out).doesNotContain("Infinity");
         assertThat(pipeline.parseJson(out).get("v").isNumber()).isTrue();
@@ -206,7 +206,7 @@ class DataIntegrityTest {
 
     @Test @DisplayName("a tiny magnitude is not flattened to zero")
     void noUnderflowToZero() throws Exception {
-        String out = pipeline.normalizeToJson("{\"v\":1e-400}", ConversionPipeline.FMT_JSON,
+        String out = pipeline.normalizeToJson("{\"v\":1e-400}", Formats.FMT_JSON,
               ConversionOptions.DEFAULTS);
         assertThat(pipeline.parseJson(out).get("v").decimalValue().signum()).isEqualTo(1);
     }
@@ -221,7 +221,7 @@ class DataIntegrityTest {
               "s = \"\"\"a \"\"\"\"\"\nid = 1723600000000000000\n",
               "s = '''a ''''\nid = 1723600000000000000\n",
               "s = \"\"\"a \\\"\"\"\"\nid = 1723600000000000000\n"}) {
-            assertThatThrownBy(() -> pipeline.normalizeToJson(doc, ConversionPipeline.FMT_TOML,
+            assertThatThrownBy(() -> pipeline.normalizeToJson(doc, Formats.FMT_TOML,
                   ConversionOptions.DEFAULTS))
                   .describedAs(doc)
                   .isInstanceOf(IllegalArgumentException.class)
@@ -229,7 +229,7 @@ class DataIntegrityTest {
         }
         // The string itself still reads back whole.
         assertThat(pipeline.normalizeToJson("s = \"\"\"a \"\"\"\"\nn = 1\n",
-              ConversionPipeline.FMT_TOML, ConversionOptions.DEFAULTS))
+              Formats.FMT_TOML, ConversionOptions.DEFAULTS))
               .contains("\"s\":\"a \\\"\"").contains("\"n\":1");
     }
 
@@ -240,29 +240,29 @@ class DataIntegrityTest {
         // Two prefixes for one namespace are one repeated element — a list —
         // and were refused as a collision because only the prefixes were compared.
         JsonNode tree = pivot("<r xmlns:a=\"urn:x\" xmlns:b=\"urn:x\"><a:v>1</a:v><b:v>2</b:v></r>",
-              ConversionPipeline.FMT_XML);
+              Formats.FMT_XML);
         assertThat(tree.get("v").isArray()).isTrue();
         assertThat(tree.get("v")).hasSize(2);
         // A default namespace and a prefix for the same URI, likewise.
         assertThat(pivot("<r xmlns=\"urn:x\" xmlns:b=\"urn:x\"><v>1</v><b:v>2</b:v></r>",
-              ConversionPipeline.FMT_XML).get("v")).hasSize(2);
+              Formats.FMT_XML).get("v")).hasSize(2);
         // Different namespaces with the same local name are still refused.
         assertThatThrownBy(() -> pivot(
               "<r xmlns:a=\"urn:x\" xmlns:b=\"urn:y\"><a:v>1</a:v><b:v>2</b:v></r>",
-              ConversionPipeline.FMT_XML))
+              Formats.FMT_XML))
               .isInstanceOf(IllegalArgumentException.class)
               .hasMessageContaining("<a:v>").hasMessageContaining("<b:v>");
         // The same prefix bound to two namespaces in nested scopes is two names.
         assertThatThrownBy(() -> pivot(
               "<r xmlns:p=\"urn:x\"><p:v>1</p:v><p:v xmlns:p=\"urn:y\">2</p:v></r>",
-              ConversionPipeline.FMT_XML))
+              Formats.FMT_XML))
               .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test @DisplayName("Compare no longer calls documents equal when they differ past digit 17")
     void comparePrecision() throws Exception {
-        assertThat(pipeline.canonicalJson("{\"v\":0.12345678901234567}", ConversionPipeline.FMT_JSON))
+        assertThat(pipeline.canonicalJson("{\"v\":0.12345678901234567}", Formats.FMT_JSON, ConversionOptions.DEFAULTS))
               .isNotEqualTo(pipeline.canonicalJson("{\"v\":0.12345678901234568}",
-                    ConversionPipeline.FMT_JSON));
+                    Formats.FMT_JSON, ConversionOptions.DEFAULTS));
     }
 }

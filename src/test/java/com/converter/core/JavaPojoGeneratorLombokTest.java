@@ -69,9 +69,16 @@ class JavaPojoGeneratorLombokTest {
               .contains("private String firstName");
     }
 
+    private static String pojoFromXml(String xml) throws Exception {
+        ConversionPipeline pipeline = new ConversionPipeline();
+        ConversionOptions options = ConversionOptions.DEFAULTS.withLombok(true);
+        return pipeline.renderFromJson(pipeline.normalizeToJson(xml, Formats.FMT_XML, options),
+              Formats.FMT_JAVA, options);
+    }
+
     @Test @DisplayName("XML input also supports Lombok mode")
     void lombokFromXml() throws Exception {
-        String result = generator.fromXml("<root><name>Alice</name></root>", true);
+        String result = pojoFromXml("<root><name>Alice</name></root>");
         assertThat(result).contains("@Data").contains("public class Root");
     }
 }

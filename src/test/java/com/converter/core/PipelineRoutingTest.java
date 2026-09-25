@@ -74,9 +74,9 @@ class PipelineRoutingTest {
 
     @Test @DisplayName("useLombok reaches the generator")
     void lombokFlagIsWired() throws Exception {
-        assertThat(pipeline.renderFromJson(INPUT, ConversionPipeline.FMT_JAVA,
+        assertThat(pipeline.renderFromJson(INPUT, Formats.FMT_JAVA,
               ConversionOptions.DEFAULTS.withLombok(true))).contains("@Data");
-        assertThat(pipeline.renderFromJson(INPUT, ConversionPipeline.FMT_JAVA,
+        assertThat(pipeline.renderFromJson(INPUT, Formats.FMT_JAVA,
               ConversionOptions.DEFAULTS.withLombok(false))).doesNotContain("@Data");
     }
 
@@ -84,9 +84,9 @@ class PipelineRoutingTest {
     void detectDatesFlagIsWired() throws Exception {
         // Transposing useLombok and detectDates compiles and changes the output;
         // asserting both separately is what makes that mistake fail a test.
-        assertThat(pipeline.renderFromJson(INPUT, ConversionPipeline.FMT_JAVA,
+        assertThat(pipeline.renderFromJson(INPUT, Formats.FMT_JAVA,
               ConversionOptions.DEFAULTS.withDetectDates(true))).contains("LocalDate born");
-        assertThat(pipeline.renderFromJson(INPUT, ConversionPipeline.FMT_JAVA,
+        assertThat(pipeline.renderFromJson(INPUT, Formats.FMT_JAVA,
               ConversionOptions.DEFAULTS.withDetectDates(false))).contains("String born");
     }
 
@@ -113,7 +113,7 @@ class PipelineRoutingTest {
 
     @Test @DisplayName("Format+Sort keys sorts JSON")
     void formatSortsJson() throws Exception {
-        String out = pipeline.formatInput("{\"b\":1,\"a\":2}", ConversionPipeline.FMT_JSON,
+        String out = pipeline.formatInput("{\"b\":1,\"a\":2}", Formats.FMT_JSON,
               ConversionOptions.DEFAULTS.withSortKeys(true));
         assertThat(out.indexOf("\"a\"")).isLessThan(out.indexOf("\"b\""));
     }
@@ -123,23 +123,23 @@ class PipelineRoutingTest {
         // Previously skipped, on the reasoning that sorting already-formatted
         // YAML would throw. It does not: Format already passes through the JSON
         // tree, so the sort happens there, while the tree exists.
-        String yaml = pipeline.formatInput("b: 1\na: 2\n", ConversionPipeline.FMT_YAML,
+        String yaml = pipeline.formatInput("b: 1\na: 2\n", Formats.FMT_YAML,
               ConversionOptions.DEFAULTS.withSortKeys(true));
         assertThat(yaml.indexOf("a:")).isLessThan(yaml.indexOf("b:"));
 
-        String toml = pipeline.formatInput("b = 1\na = 2\n", ConversionPipeline.FMT_TOML,
+        String toml = pipeline.formatInput("b = 1\na = 2\n", Formats.FMT_TOML,
               ConversionOptions.DEFAULTS.withSortKeys(true));
         assertThat(toml.indexOf("a ")).isLessThan(toml.indexOf("b "));
 
         // Without the option the document's own order is kept.
-        String unsorted = pipeline.formatInput("b: 1\na: 2\n", ConversionPipeline.FMT_YAML,
+        String unsorted = pipeline.formatInput("b: 1\na: 2\n", Formats.FMT_YAML,
               ConversionOptions.DEFAULTS);
         assertThat(unsorted.indexOf("b:")).isLessThan(unsorted.indexOf("a:"));
     }
 
     @Test @DisplayName("formatInput threads the CSV delimiter through both directions")
     void formatInputUsesDelimiter() throws Exception {
-        String out = pipeline.formatInput("a;b\n1;2\n", ConversionPipeline.FMT_CSV,
+        String out = pipeline.formatInput("a;b\n1;2\n", Formats.FMT_CSV,
               ConversionOptions.DEFAULTS.withCsvFormat(CsvConverter.CsvFormat.SEMICOLON));
         assertThat(out).contains("a;b").doesNotContain("a;b,");
     }

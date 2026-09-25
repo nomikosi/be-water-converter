@@ -58,9 +58,9 @@ class TomlLexicalGuardTest {
     @Test void escapedQuotesDoNotHideFormattingLosses() {
         String prefix = "text = \"\"\"before \\\"\"\" after\"\"\"\n";
         var pipeline = new ConversionPipeline();
-        assertThatThrownBy(() -> pipeline.formatInput(prefix + "date = 1979-05-27", "TOML", false))
+        assertThatThrownBy(() -> pipeline.formatInput(prefix + "date = 1979-05-27", "TOML", ConversionOptions.DEFAULTS.withInferTypes(false)))
               .hasMessageContaining("rewrite the date");
-        assertThatThrownBy(() -> pipeline.formatInput(prefix + "n = 0xFF", "TOML", false))
+        assertThatThrownBy(() -> pipeline.formatInput(prefix + "n = 0xFF", "TOML", ConversionOptions.DEFAULTS.withInferTypes(false)))
               .hasMessageContaining("hexadecimal");
     }
 }

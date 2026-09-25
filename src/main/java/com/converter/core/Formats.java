@@ -54,8 +54,6 @@ public final class Formats {
                 KotlinDataClassGenerator.ROOT_CLASS_NAME, false),
           new Format(FMT_SCHEMA, List.of("json"), false, SyntaxConstants.SYNTAX_STYLE_JSON, null, false));
 
-    public static List<Format> all() { return ALL; }
-
     public static Format named(String name) {
         return ALL.stream().filter(f -> f.name().equals(name)).findFirst().orElse(null);
     }

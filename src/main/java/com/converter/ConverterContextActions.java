@@ -309,7 +309,7 @@ public final class ConverterContextActions {
                 // The subtree filter is deliberately not carried over — it
                 // belongs to the document open in the panel.
                 ConversionOptions options = ConverterPanel.persistedOptions();
-                if (ConversionPipeline.FMT_CSV.equals(inputFormat)) {
+                if (Formats.FMT_CSV.equals(inputFormat)) {
                     // The document's own delimiter beats the remembered one: a
                     // semicolon file read with the comma setting is one column wide.
                     Character delimiter = ConversionPipeline.detectCsvDelimiter(text);
@@ -322,7 +322,7 @@ public final class ConverterContextActions {
                 // The same row-count confirmation the tool window gives: this
                 // path went straight to the Cartesian product, so a CROSS_JOIN
                 // over a few nested arrays could run away with nothing asked.
-                if (ConversionPipeline.FMT_CSV.equals(target)) {
+                if (Formats.FMT_CSV.equals(target)) {
                     long estimate = pipeline.estimateCsvRows(pipeline.parseJson(pivot), options.csvMode());
                     if (estimate > ConverterPanel.persistedRowWarningThreshold()
                           && !confirmRows(project, options.csvMode(), estimate)) return;

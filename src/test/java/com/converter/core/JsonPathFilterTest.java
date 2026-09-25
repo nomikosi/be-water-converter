@@ -95,12 +95,12 @@ class JsonPathFilterTest {
     void filterThroughPipeline() throws Exception {
         ConversionPipeline pipeline = new ConversionPipeline();
         String input = "{\"users\":[{\"name\":\"Ada\"},{\"name\":\"Grace\"}],\"meta\":{\"count\":2}}";
-        String pivot = pipeline.normalizeToJson(input, ConversionPipeline.FMT_JSON,
+        String pivot = pipeline.normalizeToJson(input, Formats.FMT_JSON,
               ConversionOptions.DEFAULTS.withFilterPath("users"));
         assertThat(pivot).contains("Ada").contains("Grace").doesNotContain("count");
 
         // And the narrowed pivot renders as CSV of just those rows.
-        String csv = pipeline.renderFromJson(pivot, ConversionPipeline.FMT_CSV,
+        String csv = pipeline.renderFromJson(pivot, Formats.FMT_CSV,
               ConversionOptions.DEFAULTS);
         assertThat(csv).contains("name").contains("Ada").contains("Grace");
     }
@@ -109,7 +109,7 @@ class JsonPathFilterTest {
     void noFilterByDefault() throws Exception {
         ConversionPipeline pipeline = new ConversionPipeline();
         String pivot = pipeline.normalizeToJson("{\"a\":1,\"b\":2}",
-              ConversionPipeline.FMT_JSON, ConversionOptions.DEFAULTS);
+              Formats.FMT_JSON, ConversionOptions.DEFAULTS);
         assertThat(pivot).contains("\"a\"").contains("\"b\"");
     }
 

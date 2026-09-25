@@ -42,7 +42,7 @@ class ConversionPipelineTest {
     @Test @DisplayName("JSON input tolerates comments, trailing commas and single quotes")
     void lenientJsonInput() throws Exception {
         String messy = "{\n  // a comment\n  'name': \"Alice\",\n  \"tags\": [1, 2,],\n}";
-        String strict = pipeline.normalizeToJson(messy, ConversionPipeline.FMT_JSON, true);
+        String strict = pipeline.normalizeToJson(messy, Formats.FMT_JSON, ConversionOptions.DEFAULTS.withInferTypes(true));
         JsonNode node = json.readTree(strict);
         assertThat(node.get("name").asText()).isEqualTo("Alice");
         assertThat(node.get("tags")).hasSize(2);
@@ -50,7 +50,7 @@ class ConversionPipelineTest {
 
     @Test @DisplayName("JSON input tolerates unquoted field names")
     void unquotedFieldNames() throws Exception {
-        String strict = pipeline.normalizeToJson("{name: \"Bob\"}", ConversionPipeline.FMT_JSON, true);
+        String strict = pipeline.normalizeToJson("{name: \"Bob\"}", Formats.FMT_JSON, ConversionOptions.DEFAULTS.withInferTypes(true));
         assertThat(json.readTree(strict).get("name").asText()).isEqualTo("Bob");
     }
 
@@ -59,7 +59,7 @@ class ConversionPipelineTest {
         // The pivot is re-parsed by the next stage and never displayed, so
         // indenting it only inflates a string nobody reads (~1.5x on large input).
         String compactInput = "[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]";
-        String pivot = pipeline.normalizeToJson(compactInput, ConversionPipeline.FMT_JSON, false);
+        String pivot = pipeline.normalizeToJson(compactInput, Formats.FMT_JSON, ConversionOptions.DEFAULTS.withInferTypes(false));
         assertThat(pivot).doesNotContain("\n").hasSameSizeAs(compactInput);
         // Still strict, parseable JSON with the same content.
         assertThat(json.readTree(pivot)).isEqualTo(json.readTree(compactInput));
@@ -67,8 +67,8 @@ class ConversionPipelineTest {
 
     @Test @DisplayName("JSON output stays pretty-printed for the user")
     void jsonOutputStaysIndented() throws Exception {
-        String pretty = pipeline.renderFromJson("[{\"id\":1}]", ConversionPipeline.FMT_JSON,
-              CsvConverter.CsvMode.FLAT_FIRST, false, false);
+        String pretty = pipeline.renderFromJson("[{\"id\":1}]", Formats.FMT_JSON,
+              ConversionOptions.DEFAULTS);
         assertThat(pretty).contains("\n");
     }
 
@@ -127,14 +127,14 @@ class ConversionPipelineTest {
 
     @Test @DisplayName("formatInput pretty-prints truncated JSON via autoClose")
     void formatInputJson() throws Exception {
-        String result = pipeline.formatInput("{\"a\":1", ConversionPipeline.FMT_JSON, true);
+        String result = pipeline.formatInput("{\"a\":1", Formats.FMT_JSON, ConversionOptions.DEFAULTS.withInferTypes(true));
         assertThat(json.readTree(result).get("a").intValue()).isEqualTo(1);
     }
 
     @Test @DisplayName("formatInput collapses excess blank lines in proto schemas")
     void formatInputProto() throws Exception {
         String result = pipeline.formatInput(
-              "message A {\n  string x = 1;   \n\n\n\n}", ConversionPipeline.FMT_PROTO, true);
+              "message A {\n  string x = 1;   \n\n\n\n}", Formats.FMT_PROTO, ConversionOptions.DEFAULTS.withInferTypes(true));
         assertThat(result).doesNotContain("\n\n\n");
     }
 }

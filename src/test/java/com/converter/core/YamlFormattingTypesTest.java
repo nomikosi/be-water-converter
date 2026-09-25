@@ -39,7 +39,7 @@ class YamlFormattingTypesTest {
           "v: !!pairs [{a: 1}, {a: 2}]"
     })
     void refusesYamlTypesThatFormattingCannotPreserve(String input) {
-        assertThatThrownBy(() -> pipeline.formatInput(input, "YAML", false))
+        assertThatThrownBy(() -> pipeline.formatInput(input, "YAML", ConversionOptions.DEFAULTS.withInferTypes(false)))
               .isInstanceOf(IllegalArgumentException.class)
               .hasMessageContaining("Format cannot preserve").hasMessageContaining("left as it is");
     }
@@ -55,7 +55,7 @@ class YamlFormattingTypesTest {
     void supportedValuesAndStringKeysKeepTheirMeaning(String input) throws Exception {
         for (boolean sort : new boolean[]{false, true}) {
             String formatted = pipeline.formatInput(input, "YAML", ConversionOptions.DEFAULTS.withSortKeys(sort));
-            assertThat(pipeline.canonicalJson(formatted, "YAML")).isEqualTo(pipeline.canonicalJson(input, "YAML"));
+            assertThat(pipeline.canonicalJson(formatted, "YAML", ConversionOptions.DEFAULTS)).isEqualTo(pipeline.canonicalJson(input, "YAML", ConversionOptions.DEFAULTS));
         }
     }
 }

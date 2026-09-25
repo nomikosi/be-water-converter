@@ -27,54 +27,54 @@ class FormatDetectionTest {
 
     @Test @DisplayName("JSON objects and arrays")
     void json() {
-        assertThat(detectFormat("{\"a\":1}")).isEqualTo(ConversionPipeline.FMT_JSON);
-        assertThat(detectFormat("  [1,2,3]  ")).isEqualTo(ConversionPipeline.FMT_JSON);
+        assertThat(detectFormat("{\"a\":1}")).isEqualTo(Formats.FMT_JSON);
+        assertThat(detectFormat("  [1,2,3]  ")).isEqualTo(Formats.FMT_JSON);
     }
 
     @Test @DisplayName("XML by leading angle bracket, with or without a declaration")
     void xml() {
-        assertThat(detectFormat("<root><a>1</a></root>")).isEqualTo(ConversionPipeline.FMT_XML);
-        assertThat(detectFormat("<?xml version=\"1.0\"?><r/>")).isEqualTo(ConversionPipeline.FMT_XML);
+        assertThat(detectFormat("<root><a>1</a></root>")).isEqualTo(Formats.FMT_XML);
+        assertThat(detectFormat("<?xml version=\"1.0\"?><r/>")).isEqualTo(Formats.FMT_XML);
     }
 
     @Test @DisplayName("YAML document marker and plain mappings")
     void yaml() {
-        assertThat(detectFormat("---\na: 1\n")).isEqualTo(ConversionPipeline.FMT_YAML);
-        assertThat(detectFormat("name: Ada\nage: 36\n")).isEqualTo(ConversionPipeline.FMT_YAML);
-        assertThat(detectFormat("- one\n- two\n")).isEqualTo(ConversionPipeline.FMT_YAML);
+        assertThat(detectFormat("---\na: 1\n")).isEqualTo(Formats.FMT_YAML);
+        assertThat(detectFormat("name: Ada\nage: 36\n")).isEqualTo(Formats.FMT_YAML);
+        assertThat(detectFormat("- one\n- two\n")).isEqualTo(Formats.FMT_YAML);
     }
 
     @Test @DisplayName("TOML tables and key = value win over YAML")
     void toml() {
         assertThat(detectFormat("[server]\nhost = \"localhost\"\n"))
-              .isEqualTo(ConversionPipeline.FMT_TOML);
+              .isEqualTo(Formats.FMT_TOML);
         assertThat(detectFormat("[[products]]\nname = \"hammer\"\n"))
-              .isEqualTo(ConversionPipeline.FMT_TOML);
+              .isEqualTo(Formats.FMT_TOML);
         // 'key = value' is TOML; the YAML pattern requires a colon, so no clash.
-        assertThat(detectFormat("title = \"demo\"\n")).isEqualTo(ConversionPipeline.FMT_TOML);
+        assertThat(detectFormat("title = \"demo\"\n")).isEqualTo(Formats.FMT_TOML);
     }
 
     @Test @DisplayName("'[' stays JSON unless a TOML key = value line follows")
     void bracketAmbiguity() {
         // A TOML [table] header and a JSON array open identically; only the
         // following lines disambiguate.
-        assertThat(detectFormat("[1,2,3]")).isEqualTo(ConversionPipeline.FMT_JSON);
-        assertThat(detectFormat("[\n  {\"a\": 1}\n]")).isEqualTo(ConversionPipeline.FMT_JSON);
-        assertThat(detectFormat("[\"only\"]")).isEqualTo(ConversionPipeline.FMT_JSON);
-        assertThat(detectFormat("[owner]\nname = \"Ada\"")).isEqualTo(ConversionPipeline.FMT_TOML);
+        assertThat(detectFormat("[1,2,3]")).isEqualTo(Formats.FMT_JSON);
+        assertThat(detectFormat("[\n  {\"a\": 1}\n]")).isEqualTo(Formats.FMT_JSON);
+        assertThat(detectFormat("[\"only\"]")).isEqualTo(Formats.FMT_JSON);
+        assertThat(detectFormat("[owner]\nname = \"Ada\"")).isEqualTo(Formats.FMT_TOML);
     }
 
     @Test @DisplayName("Protobuf by syntax/message/enum keyword")
     void proto() {
         assertThat(detectFormat("syntax = \"proto3\";\nmessage M { string s = 1; }"))
-              .isEqualTo(ConversionPipeline.FMT_PROTO);
+              .isEqualTo(Formats.FMT_PROTO);
         assertThat(detectFormat("message Person {\n  string name = 1;\n}"))
-              .isEqualTo(ConversionPipeline.FMT_PROTO);
+              .isEqualTo(Formats.FMT_PROTO);
     }
 
     @Test @DisplayName("CSV needs a delimiter and a consistent second row")
     void csv() {
-        assertThat(detectFormat("a,b,c\n1,2,3\n")).isEqualTo(ConversionPipeline.FMT_CSV);
+        assertThat(detectFormat("a,b,c\n1,2,3\n")).isEqualTo(Formats.FMT_CSV);
         // A single line is not enough evidence — prose with a comma is not CSV.
         assertThat(detectFormat("Hello, world")).isNull();
         // Inconsistent column counts: not CSV.
@@ -106,7 +106,7 @@ class FormatDetectionTest {
             String detected = detectFormat(sample);
             assertThat(detected).as("detected for: " + sample).isNotNull();
             // The real assertion: whatever we detected must parse as that format.
-            assertThat(pipeline.normalizeToJson(sample, detected, true))
+            assertThat(pipeline.normalizeToJson(sample, detected, ConversionOptions.DEFAULTS.withInferTypes(true)))
                   .as("pivot for: " + sample).isNotBlank();
         }
     }

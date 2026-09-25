@@ -111,23 +111,23 @@ class CsvFormatAndSortKeysTest {
 
     @Test @DisplayName("sortKeys applies through normalizeToJson when enabled")
     void sortViaOptions() throws Exception {
-        String pivot = pipeline.normalizeToJson("{\"b\":1,\"a\":2}", ConversionPipeline.FMT_JSON,
+        String pivot = pipeline.normalizeToJson("{\"b\":1,\"a\":2}", Formats.FMT_JSON,
               ConversionOptions.DEFAULTS.withSortKeys(true));
         assertThat(pivot.indexOf("\"a\"")).isLessThan(pivot.indexOf("\"b\""));
     }
 
     @Test @DisplayName("sorting is off by default, preserving document order")
     void offByDefault() throws Exception {
-        String pivot = pipeline.normalizeToJson("{\"b\":1,\"a\":2}", ConversionPipeline.FMT_JSON,
+        String pivot = pipeline.normalizeToJson("{\"b\":1,\"a\":2}", Formats.FMT_JSON,
               ConversionOptions.DEFAULTS);
         assertThat(pivot.indexOf("\"b\"")).isLessThan(pivot.indexOf("\"a\""));
     }
 
     @Test @DisplayName("sorted keys carry through to a rendered target format")
     void sortReachesOutput() throws Exception {
-        String pivot = pipeline.normalizeToJson("{\"b\":1,\"a\":2}", ConversionPipeline.FMT_JSON,
+        String pivot = pipeline.normalizeToJson("{\"b\":1,\"a\":2}", Formats.FMT_JSON,
               ConversionOptions.DEFAULTS.withSortKeys(true));
-        String yaml = pipeline.renderFromJson(pivot, ConversionPipeline.FMT_YAML,
+        String yaml = pipeline.renderFromJson(pivot, Formats.FMT_YAML,
               ConversionOptions.DEFAULTS);
         assertThat(yaml.indexOf("a:")).isLessThan(yaml.indexOf("b:"));
     }

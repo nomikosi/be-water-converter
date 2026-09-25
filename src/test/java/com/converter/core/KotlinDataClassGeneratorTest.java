@@ -255,7 +255,7 @@ class KotlinDataClassGeneratorTest {
     @Test @DisplayName("reachable as a pipeline output format")
     void viaPipeline() throws Exception {
         assertThat(new ConversionPipeline().renderFromJson("{\"a\":1}",
-              ConversionPipeline.FMT_KOTLIN, ConversionOptions.DEFAULTS))
+              Formats.FMT_KOTLIN, ConversionOptions.DEFAULTS))
               .contains("data class Root(");
     }
 

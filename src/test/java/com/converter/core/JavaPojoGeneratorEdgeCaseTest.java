@@ -304,7 +304,9 @@ class JavaPojoGeneratorEdgeCaseTest {
               .doesNotContain("import com.fasterxml.jackson");
 
         // The usual arrival route: XmlMapper files element text content under "".
-        assertThat(generator.fromXml("<root>hello</root>"))
+        ConversionPipeline pipeline = new ConversionPipeline();
+        assertThat(pipeline.renderFromJson(pipeline.normalizeToJson("<root>hello</root>",
+              Formats.FMT_XML, ConversionOptions.DEFAULTS), Formats.FMT_JAVA, ConversionOptions.DEFAULTS))
               .contains("// source key is empty")
               .doesNotContain("@JsonProperty(");
 

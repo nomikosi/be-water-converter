@@ -16,6 +16,16 @@
 
 package com.converter.core;
 
+import static com.converter.core.Formats.FMT_CSV;
+import static com.converter.core.Formats.FMT_JAVA;
+import static com.converter.core.Formats.FMT_JSON;
+import static com.converter.core.Formats.FMT_KOTLIN;
+import static com.converter.core.Formats.FMT_PROTO;
+import static com.converter.core.Formats.FMT_SCHEMA;
+import static com.converter.core.Formats.FMT_TOML;
+import static com.converter.core.Formats.FMT_XML;
+import static com.converter.core.Formats.FMT_YAML;
+
 import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -37,17 +47,6 @@ import java.util.regex.Pattern;
  * provides the per-format input formatting used by the Format action.
  */
 public class ConversionPipeline {
-
-    // Compatibility aliases; names and capabilities belong to Formats.
-    public static final String FMT_JSON  = Formats.FMT_JSON;
-    public static final String FMT_XML   = Formats.FMT_XML;
-    public static final String FMT_YAML  = Formats.FMT_YAML;
-    public static final String FMT_CSV   = Formats.FMT_CSV;
-    public static final String FMT_TOML  = Formats.FMT_TOML;
-    public static final String FMT_PROTO = Formats.FMT_PROTO;
-    public static final String FMT_JAVA  = Formats.FMT_JAVA;
-    public static final String FMT_SCHEMA = Formats.FMT_SCHEMA;
-    public static final String FMT_KOTLIN = Formats.FMT_KOTLIN;
 
     /**
      * Lenient read settings for JSON input: accepts comments, trailing commas,
@@ -110,11 +109,6 @@ public class ConversionPipeline {
      * Normalise input to JSON as the internal pivot format.
      * autoClose is applied once for JSON input to repair truncated brackets.
      */
-    public String normalizeToJson(String rawInput, String inFmt, boolean inferTypes)
-          throws Exception {
-        return normalizeToJson(rawInput, inFmt, ConversionOptions.DEFAULTS.withInferTypes(inferTypes));
-    }
-
     public String normalizeToJson(String rawInput, String inFmt, ConversionOptions opts)
           throws Exception {
         rawInput = stripBom(rawInput);
@@ -152,10 +146,6 @@ public class ConversionPipeline {
      * used to compare two documents that carry the same data in different
      * formats or different key orders.
      */
-    public String canonicalJson(String input, String fmt) throws Exception {
-        return canonicalJson(input, fmt, ConversionOptions.DEFAULTS);
-    }
-
     /**
      * @param opts the user's own settings. Passing defaults here made Compare
      *             read a semicolon- or tab-delimited CSV as a single column named
@@ -171,12 +161,6 @@ public class ConversionPipeline {
     }
 
     /** JSON pivot -> desired output format. */
-    public String renderFromJson(String asJson, String outFmt, CsvConverter.CsvMode csvMode,
-          boolean useLombok, boolean detectDates) throws Exception {
-        return renderFromJson(asJson, outFmt, ConversionOptions.DEFAULTS
-              .withCsvMode(csvMode).withLombok(useLombok).withDetectDates(detectDates));
-    }
-
     public String renderFromJson(String asJson, String outFmt, ConversionOptions opts)
           throws Exception {
         return switch (outFmt) {
@@ -203,10 +187,6 @@ public class ConversionPipeline {
     }
 
     /** Pretty-prints or canonicalizes input in its own format (the Format action). */
-    public String formatInput(String input, String fmt, boolean inferTypes) throws Exception {
-        return formatInput(input, fmt, ConversionOptions.DEFAULTS.withInferTypes(inferTypes));
-    }
-
     public String formatInput(String input, String fmt, ConversionOptions opts) throws Exception {
         input = stripBom(input);
         String formatted = switch (fmt) {
@@ -509,10 +489,6 @@ public class ConversionPipeline {
     public String renderCsv(JsonNode pivot, CsvConverter.CsvMode mode,
           CsvConverter.CsvFormat format) throws Exception {
         return csv.jsonToCsv(pivot, mode, format);
-    }
-
-    public String renderCsv(JsonNode pivot, CsvConverter.CsvMode mode) throws Exception {
-        return csv.jsonToCsv(pivot, mode);
     }
 
     /**

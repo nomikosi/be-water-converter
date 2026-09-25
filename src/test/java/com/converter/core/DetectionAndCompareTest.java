@@ -48,7 +48,7 @@ class DetectionAndCompareTest {
                         VERSION=1.2.3
                         echo $VERSION
               """;
-        assertThat(detectFormat(workflow)).isEqualTo(ConversionPipeline.FMT_YAML);
+        assertThat(detectFormat(workflow)).isEqualTo(Formats.FMT_YAML);
     }
 
     @Test @DisplayName("a k8s manifest with env KEY=value is YAML")
@@ -63,15 +63,15 @@ class DetectionAndCompareTest {
                   - name: app
                     command: ["sh", "-c", "FOO=bar exec app"]
               """;
-        assertThat(detectFormat(manifest)).isEqualTo(ConversionPipeline.FMT_YAML);
+        assertThat(detectFormat(manifest)).isEqualTo(Formats.FMT_YAML);
     }
 
     @Test @DisplayName("a leading comment block does not decide the format")
     void leadingCommentsSkipped() {
         assertThat(detectFormat("# a comment\n# another\nname: Ada\n"))
-              .isEqualTo(ConversionPipeline.FMT_YAML);
+              .isEqualTo(Formats.FMT_YAML);
         assertThat(detectFormat("# a comment\ntitle = \"demo\"\n"))
-              .isEqualTo(ConversionPipeline.FMT_TOML);
+              .isEqualTo(Formats.FMT_TOML);
     }
 
     @Test @DisplayName("real TOML is still TOML")
@@ -83,7 +83,7 @@ class DetectionAndCompareTest {
 
               [dependencies]
               serde = "1"
-              """)).isEqualTo(ConversionPipeline.FMT_TOML);
+              """)).isEqualTo(Formats.FMT_TOML);
     }
 
     @Test @DisplayName("every detected format actually parses as that format")
@@ -110,7 +110,7 @@ class DetectionAndCompareTest {
     void compareHonoursDelimiter() throws Exception {
         ConversionOptions semi = ConversionOptions.DEFAULTS.withCsvFormat(CsvFormat.SEMICOLON);
         String canonical = pipeline.canonicalJson("id;name\n1;Joe\n",
-              ConversionPipeline.FMT_CSV, semi);
+              Formats.FMT_CSV, semi);
         // With defaults this produced one column named "id;name".
         assertThat(pipeline.parseJson(canonical).get(0).has("id")).isTrue();
         assertThat(pipeline.parseJson(canonical).get(0).has("name")).isTrue();
@@ -120,17 +120,17 @@ class DetectionAndCompareTest {
     void roundTripComparesEqual() throws Exception {
         ConversionOptions tab = ConversionOptions.DEFAULTS.withCsvFormat(CsvFormat.TAB);
         String csv = "id\tname\n1\tJoe\n";
-        String pivot = pipeline.normalizeToJson(csv, ConversionPipeline.FMT_CSV, tab);
-        String rendered = pipeline.renderFromJson(pivot, ConversionPipeline.FMT_CSV, tab);
-        assertThat(pipeline.canonicalJson(csv, ConversionPipeline.FMT_CSV, tab))
-              .isEqualTo(pipeline.canonicalJson(rendered, ConversionPipeline.FMT_CSV, tab));
+        String pivot = pipeline.normalizeToJson(csv, Formats.FMT_CSV, tab);
+        String rendered = pipeline.renderFromJson(pivot, Formats.FMT_CSV, tab);
+        assertThat(pipeline.canonicalJson(csv, Formats.FMT_CSV, tab))
+              .isEqualTo(pipeline.canonicalJson(rendered, Formats.FMT_CSV, tab));
     }
 
     @Test @DisplayName("canonicalJson respects inferTypes")
     void compareHonoursInferTypes() throws Exception {
-        String typed = pipeline.canonicalJson("id\n1\n", ConversionPipeline.FMT_CSV,
+        String typed = pipeline.canonicalJson("id\n1\n", Formats.FMT_CSV,
               ConversionOptions.DEFAULTS);
-        String literal = pipeline.canonicalJson("id\n1\n", ConversionPipeline.FMT_CSV,
+        String literal = pipeline.canonicalJson("id\n1\n", Formats.FMT_CSV,
               ConversionOptions.DEFAULTS.withInferTypes(false));
         assertThat(typed).isNotEqualTo(literal);
     }
@@ -141,7 +141,7 @@ class DetectionAndCompareTest {
     void protoFieldOption() throws Exception {
         String json = pipeline.normalizeToJson(
               "message A { string a = 1 [deprecated = true]; int32 b = 2; }",
-              ConversionPipeline.FMT_PROTO, ConversionOptions.DEFAULTS);
+              Formats.FMT_PROTO, ConversionOptions.DEFAULTS);
         assertThat(json).contains("\"a\"").contains("\"b\"");
     }
 
@@ -150,7 +150,7 @@ class DetectionAndCompareTest {
         String json = pipeline.normalizeToJson("""
               enum Color { RED = 0 [deprecated = true]; GREEN = 1; }
               message M { Color c = 1; }
-              """, ConversionPipeline.FMT_PROTO, ConversionOptions.DEFAULTS);
+              """, Formats.FMT_PROTO, ConversionOptions.DEFAULTS);
         // Previously RED was skipped and GREEN silently became the default.
         assertThat(json).contains("RED").doesNotContain("GREEN");
     }
@@ -159,14 +159,14 @@ class DetectionAndCompareTest {
     void protoRepeatedOption() throws Exception {
         assertThat(pipeline.normalizeToJson(
               "message A { repeated int32 xs = 1 [packed = true]; }",
-              ConversionPipeline.FMT_PROTO, ConversionOptions.DEFAULTS)).contains("\"xs\"");
+              Formats.FMT_PROTO, ConversionOptions.DEFAULTS)).contains("\"xs\"");
     }
 
     // ── Degenerate outputs report themselves clearly ──────────────────────
 
     @Test @DisplayName("zero-column CSV explains itself instead of leaking Jackson internals")
     void zeroColumnCsv() {
-        assertThatThrownBy(() -> pipeline.renderFromJson("[{}]", ConversionPipeline.FMT_CSV,
+        assertThatThrownBy(() -> pipeline.renderFromJson("[{}]", Formats.FMT_CSV,
               ConversionOptions.DEFAULTS))
               .isInstanceOf(IllegalArgumentException.class)
               .hasMessageContaining("no columns");
@@ -174,11 +174,11 @@ class DetectionAndCompareTest {
 
     @Test @DisplayName("an empty object renders as TOML that parses back")
     void emptyTomlRoundTrips() throws Exception {
-        String toml = pipeline.renderFromJson("{}", ConversionPipeline.FMT_TOML,
+        String toml = pipeline.renderFromJson("{}", Formats.FMT_TOML,
               ConversionOptions.DEFAULTS);
         assertThat(toml).doesNotStartWith(" = ");
         // Format on a comment-only TOML file used to yield invalid output.
-        assertThat(pipeline.formatInput("# just a comment\n", ConversionPipeline.FMT_TOML,
+        assertThat(pipeline.formatInput("# just a comment\n", Formats.FMT_TOML,
               ConversionOptions.DEFAULTS)).doesNotStartWith(" = ");
     }
 
@@ -187,7 +187,7 @@ class DetectionAndCompareTest {
     @Test @DisplayName("objects differing only in key order collapse to one anyOf branch")
     void schemaDedupIgnoresKeyOrder() throws Exception {
         String schema = pipeline.renderFromJson("{\"items\":[{\"a\":1,\"b\":2},{\"b\":3,\"a\":4}]}",
-              ConversionPipeline.FMT_SCHEMA, ConversionOptions.DEFAULTS);
+              Formats.FMT_SCHEMA, ConversionOptions.DEFAULTS);
         assertThat(pipeline.parseJson(schema).at("/properties/items/items/anyOf").isMissingNode())
               .isTrue();
     }
@@ -195,7 +195,7 @@ class DetectionAndCompareTest {
     @Test @DisplayName("genuinely different shapes still produce anyOf")
     void schemaKeepsRealVariants() throws Exception {
         String schema = pipeline.renderFromJson("{\"items\":[{\"a\":1},{\"z\":\"s\"}]}",
-              ConversionPipeline.FMT_SCHEMA, ConversionOptions.DEFAULTS);
+              Formats.FMT_SCHEMA, ConversionOptions.DEFAULTS);
         assertThat(pipeline.parseJson(schema).at("/properties/items/items/anyOf")).hasSize(2);
     }
 }

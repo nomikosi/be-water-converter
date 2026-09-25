@@ -41,11 +41,11 @@ class NumericFidelityTest {
     void formatKeepsDecimalsExact() throws Exception {
         // Jackson's default node factory calls stripTrailingZeros, so Format
         // rewrote the document with numbers nobody typed.
-        assertThat(flat(pipeline.formatInput("{\"a\":1.0}", ConversionPipeline.FMT_JSON, opts)))
+        assertThat(flat(pipeline.formatInput("{\"a\":1.0}", Formats.FMT_JSON, opts)))
               .isEqualTo("{\"a\":1.0}");
-        assertThat(flat(pipeline.formatInput("{\"a\":100.00}", ConversionPipeline.FMT_JSON, opts)))
+        assertThat(flat(pipeline.formatInput("{\"a\":100.00}", Formats.FMT_JSON, opts)))
               .isEqualTo("{\"a\":100.00}");
-        assertThat(flat(pipeline.formatInput("{\"a\":0.10}", ConversionPipeline.FMT_JSON, opts)))
+        assertThat(flat(pipeline.formatInput("{\"a\":0.10}", Formats.FMT_JSON, opts)))
               .isEqualTo("{\"a\":0.10}");
     }
 
@@ -56,7 +56,7 @@ class NumericFidelityTest {
               .contains("1E+400").doesNotContain("Infinity");
         assertThat(new TomlConverter().jsonToToml("{\"a\":1e-400}"))
               .contains("1E-400").doesNotContain("0.0");
-        assertThat(flat(pipeline.formatInput("{\"a\":1e400}", ConversionPipeline.FMT_JSON, opts)))
+        assertThat(flat(pipeline.formatInput("{\"a\":1e400}", Formats.FMT_JSON, opts)))
               .isEqualTo("{\"a\":1E+400}");
     }
 
@@ -66,7 +66,7 @@ class NumericFidelityTest {
         assertThat(new JsonYamlConverter().jsonToYaml(json)).contains(LONG_DECIMAL);
         assertThat(new TomlConverter().jsonToToml(json)).contains(LONG_DECIMAL);
         assertThat(new JsonXmlConverter().jsonToXml(json)).contains(LONG_DECIMAL);
-        assertThat(flat(pipeline.formatInput(json, ConversionPipeline.FMT_JSON, opts)))
+        assertThat(flat(pipeline.formatInput(json, Formats.FMT_JSON, opts)))
               .isEqualTo(flat(json));
     }
 

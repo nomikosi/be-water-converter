@@ -34,8 +34,8 @@ class TomlFormattingTokensTest {
           "x = \"\"\"a \\\"\"\" b\"\"\"\n[2024-01-01]\ny = 1\n"
     })
     void keysAndQuotedTextDoNotTriggerValueGuards(String input) throws Exception {
-        String formatted = pipeline.formatInput(input, "TOML", false);
-        assertThat(pipeline.canonicalJson(formatted, "TOML")).isEqualTo(pipeline.canonicalJson(input, "TOML"));
+        String formatted = pipeline.formatInput(input, "TOML", ConversionOptions.DEFAULTS.withInferTypes(false));
+        assertThat(pipeline.canonicalJson(formatted, "TOML", ConversionOptions.DEFAULTS)).isEqualTo(pipeline.canonicalJson(input, "TOML", ConversionOptions.DEFAULTS));
     }
 
     @ParameterizedTest @ValueSource(strings = {
@@ -52,7 +52,7 @@ class TomlFormattingTokensTest {
           "text = \"\"\"a \\\"\"\" b\"\"\"\nd = 1979-05-27t07:32:00Z"
     })
     void refusesLossyValuesInEveryContainer(String input) {
-        assertThatThrownBy(() -> pipeline.formatInput(input, "TOML", false))
+        assertThatThrownBy(() -> pipeline.formatInput(input, "TOML", ConversionOptions.DEFAULTS.withInferTypes(false)))
               .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Format would rewrite");
     }
 }

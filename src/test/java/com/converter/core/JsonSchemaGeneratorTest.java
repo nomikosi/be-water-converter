@@ -119,7 +119,7 @@ class JsonSchemaGeneratorTest {
     @Test @DisplayName("reachable as a pipeline output format")
     void viaPipeline() throws Exception {
         String out = new ConversionPipeline()
-              .renderFromJson("{\"a\":1}", ConversionPipeline.FMT_SCHEMA,
+              .renderFromJson("{\"a\":1}", Formats.FMT_SCHEMA,
                     ConversionOptions.DEFAULTS);
         assertThat(mapper.readTree(out).get("$schema").asText())
               .isEqualTo(JsonSchemaGenerator.SCHEMA_DIALECT);

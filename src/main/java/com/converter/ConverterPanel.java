@@ -41,6 +41,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.converter.ConverterTheme.*;
+import static com.converter.core.Formats.*;
 
 public class ConverterPanel implements Disposable {
 
@@ -74,16 +75,6 @@ public class ConverterPanel implements Disposable {
      * EDT stalled the editor.
      */
     private static final int DETECT_SAMPLE_CHARS = 64 * 1024;
-
-    static final String FMT_JSON  = ConversionPipeline.FMT_JSON;
-    static final String FMT_XML   = ConversionPipeline.FMT_XML;
-    static final String FMT_YAML  = ConversionPipeline.FMT_YAML;
-    static final String FMT_CSV   = ConversionPipeline.FMT_CSV;
-    static final String FMT_TOML  = ConversionPipeline.FMT_TOML;
-    static final String FMT_PROTO  = ConversionPipeline.FMT_PROTO;
-    static final String FMT_JAVA   = ConversionPipeline.FMT_JAVA;
-    static final String FMT_SCHEMA = ConversionPipeline.FMT_SCHEMA;
-    static final String FMT_KOTLIN = ConversionPipeline.FMT_KOTLIN;
 
     private static final Map<String, Color> FORMAT_COLORS = new LinkedHashMap<>();
     static {
@@ -489,12 +480,6 @@ public class ConverterPanel implements Disposable {
             editors.replaceInput(text, true);
         }
         inputArea.requestFocusInWindow();
-    }
-
-    /** The format currently selected on the output side. */
-    public String selectedOutputFormat() {
-        String fmt = (String) outputCombo.getSelectedItem();
-        return fmt == null ? FMT_JSON : fmt;
     }
 
     public void convert()     { doConvert(); }
