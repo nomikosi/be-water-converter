@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.node.DecimalNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -46,8 +47,25 @@ final class JsonTrees {
             for (JsonNode item : node) out.add(sorted(item, normalizeNumbers));
             return out;
         }
-        if (normalizeNumbers && node.isNumber())
-            return DecimalNode.valueOf(node.decimalValue().stripTrailingZeros());
+        if (normalizeNumbers && node.isNumber()) return canonicalNumber(node.decimalValue());
         return node;
     }
+
+    /**
+     * A number in the one form every spelling of its value shares, as Compare
+     * shows it: 1, 1.0 and 1e0 all become 1, and 2.50 becomes 2.5.
+     *
+     * <p>Whole numbers are written out: stripping trailing zeros alone left 30
+     * as 3E+1 and 12000 as 1.2E+4 in the diff, a notation nobody wrote. Only
+     * within reason — written out, 1e400 would be four hundred digits.
+     */
+    static JsonNode canonicalNumber(BigDecimal value) {
+        BigDecimal canonical = value.stripTrailingZeros();
+        if (canonical.scale() < 0 && canonical.precision() - canonical.scale() <= MAX_PLAIN_DIGITS)
+            canonical = canonical.setScale(0);
+        return DecimalNode.valueOf(canonical);
+    }
+
+    /** Integer digits up to which Compare writes a whole number out in full. */
+    private static final int MAX_PLAIN_DIGITS = 64;
 }

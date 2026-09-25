@@ -122,4 +122,16 @@ class CanonicalJsonTest {
             assertThat(typed).isNotEqualTo(literal);
         }
     }
+
+    @Test @DisplayName("Compare writes whole numbers out rather than in exponent form")
+    void wholeNumbersAreWrittenOut() throws Exception {
+        String canonical = pipeline.canonicalJson(
+              "{\"age\":30,\"count\":100,\"big\":12000,\"price\":2.50,\"huge\":1e400,\"tiny\":1e-7}",
+              "JSON", ConversionOptions.DEFAULTS);
+        assertThat(canonical).contains("\"age\" : 30,", "\"count\" : 100", "\"big\" : 12000,",
+              "\"price\" : 2.5,", "\"huge\" : 1E+400,", "\"tiny\" : 1E-7");
+        // The same value however it is spelled.
+        assertThat(pipeline.canonicalJson("[1, 1.0, 1e0, 10, 1E+1]", "JSON", ConversionOptions.DEFAULTS)
+              .replaceAll("\\s", "")).isEqualTo("[1,1,1,10,10]");
+    }
 }

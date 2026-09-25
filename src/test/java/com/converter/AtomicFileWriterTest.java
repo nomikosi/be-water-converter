@@ -80,4 +80,34 @@ class AtomicFileWriterTest {
             assertThat(files.toList()).containsExactly(target);
         }
     }
+
+    @Test void keepsThePermissionsOfTheFileItReplaces() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+              java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+              "only POSIX file systems have permission bits");
+        Path target = dir.resolve("shared.yaml");
+        Files.writeString(target, "old");
+        Files.setPosixFilePermissions(target, java.nio.file.attribute.PosixFilePermissions.fromString("rw-r--r--"));
+        AtomicFileWriter.write(target, "new");
+        assertThat(java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(target)))
+              .isEqualTo("rw-r--r--");
+        // A new file gets what any new file in the directory gets, not owner-only.
+        Path fresh = dir.resolve("fresh.yaml");
+        AtomicFileWriter.write(fresh, "new");
+        Path reference = Files.createFile(dir.resolve("reference"));
+        assertThat(Files.getPosixFilePermissions(fresh)).isEqualTo(Files.getPosixFilePermissions(reference));
+    }
+
+    @Test void writesThroughASymbolicLinkAndKeepsTheLink() throws Exception {
+        Path real = Files.writeString(dir.resolve("real.json"), "old");
+        Path link = dir.resolve("link.json");
+        try {
+            Files.createSymbolicLink(link, real.getFileName());
+        } catch (IOException | UnsupportedOperationException noLinks) {
+            org.junit.jupiter.api.Assumptions.abort("symbolic links are not available here: " + noLinks);
+        }
+        AtomicFileWriter.write(link, "new");
+        assertThat(Files.isSymbolicLink(link)).isTrue();
+        assertThat(Files.readString(real)).isEqualTo("new");
+    }
 }

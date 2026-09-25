@@ -19,24 +19,67 @@ package com.converter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.security.SecureRandom;
 
 import static java.nio.file.StandardCopyOption.*;
 
 /** Replaces a file using a temporary file owned exclusively by this write. */
 final class AtomicFileWriter {
+    private static final SecureRandom RANDOM = new SecureRandom();
+
     private AtomicFileWriter() {}
 
     static void write(Path target, String text) throws IOException {
-        Path absolute = target.toAbsolutePath();
-        Path temp = Files.createTempFile(absolute.getParent(), ".bewater-", ".tmp");
+        // Through a symbolic link to the file it names: renaming onto the link
+        // replaced the link itself with a plain file, and the file it pointed
+        // at kept the old text.
+        Path destination = followLinks(target.toAbsolutePath());
+        Path temp = createTemp(destination.getParent());
         try {
             Files.writeString(temp, text, StandardCharsets.UTF_8);
-            replace(temp, absolute);
+            keepPermissions(destination, temp);
+            replace(temp, destination);
         } finally {
             Files.deleteIfExists(temp);
         }
+    }
+
+    private static Path followLinks(Path path) throws IOException {
+        for (int hops = 0; Files.isSymbolicLink(path); hops++) {
+            if (hops == 40) throw new IOException("Too many levels of symbolic links: " + path);
+            path = path.resolveSibling(Files.readSymbolicLink(path)).normalize();
+        }
+        return path;
+    }
+
+    /**
+     * A temporary file with the directory's ordinary permissions.
+     * Files.createTempFile makes it owner-only on Linux and macOS, and the
+     * rename then handed rw------- to the saved file: every save made the file
+     * unreadable to everyone else, even one that had been rw-r--r--.
+     */
+    private static Path createTemp(Path directory) throws IOException {
+        for (int attempt = 0; ; attempt++) {
+            Path candidate = directory.resolve(".bewater-" + Long.toUnsignedString(RANDOM.nextLong(), 36) + ".tmp");
+            try {
+                return Files.createFile(candidate);
+            } catch (FileAlreadyExistsException taken) {
+                if (attempt == 100) throw taken;
+            }
+        }
+    }
+
+    /** Gives the replacement the permissions of the file it replaces, where the file system has them. */
+    private static void keepPermissions(Path existing, Path replacement) throws IOException {
+        if (!Files.isRegularFile(existing, LinkOption.NOFOLLOW_LINKS)) return;
+        PosixFileAttributeView view = Files.getFileAttributeView(replacement, PosixFileAttributeView.class);
+        if (view == null) return;   // Windows: the directory's inherited ACLs apply, as they always did
+        view.setPermissions(Files.getPosixFilePermissions(existing));
     }
 
     // Windows can reject simultaneous replacements of the same destination.
