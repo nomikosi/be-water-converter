@@ -19,14 +19,16 @@ package com.converter.core;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import static org.assertj.core.api.Assertions.*;
 
 /**
- * Tests for the UI-independent ConversionPipeline: lenient JSON input,
- * autoClose repair, and structure-preserving XML pretty-printing.
+ * The UI-independent pipeline: lenient JSON input, the compact pivot it
+ * converts through, and which converter each format pair is routed to.
  */
-@DisplayName("ConversionPipeline")
+@DisplayName("Conversion pipeline")
 class ConversionPipelineTest {
 
     private ConversionPipeline pipeline;
@@ -37,7 +39,7 @@ class ConversionPipelineTest {
         json     = new ObjectMapper();
     }
 
-    // ── Lenient JSON input ────────────────────────────────────────────────
+    private final ConversionOptions opts = ConversionOptions.DEFAULTS;
 
     @Test @DisplayName("JSON input tolerates comments, trailing commas and single quotes")
     void lenientJsonInput() throws Exception {
@@ -72,69 +74,137 @@ class ConversionPipelineTest {
         assertThat(pretty).contains("\n");
     }
 
-    // ── autoClose ─────────────────────────────────────────────────────────
-
-    @Test @DisplayName("autoClose repairs an unterminated string and brackets")
-    void autoCloseUnterminatedString() throws Exception {
-        String repaired = JsonRepair.autoClose("{\"name\": \"Al");
-        assertThat(repaired).isEqualTo("{\"name\": \"Al\"}");
-        json.readTree(repaired); // must parse
+    @Test @DisplayName("a comment-only JSON document is refused, not converted to null")
+    void commentOnlyJsonIsRefused() {
+        // The reader hands back a missing node for it, which serialised as the
+        // document "null" and reported a successful conversion.
+        for (String input : new String[]{"// todo", "# todo", "/* todo */", "  \n// a\n// b\n"}) {
+            assertThatThrownBy(() -> pipeline.normalizeToJson(input, Formats.FMT_JSON, opts))
+                  .describedAs(input)
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("no value");
+            assertThatThrownBy(() -> pipeline.formatInput(input, Formats.FMT_JSON, opts))
+                  .describedAs(input)
+                  .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 
-    @Test @DisplayName("autoClose repairs unclosed brackets")
-    void autoCloseBrackets() {
-        assertThat(JsonRepair.autoClose("{\"a\": [1, 2")).isEqualTo("{\"a\": [1, 2]}");
-    }
+    /**
+     * Pins {@link ConversionPipeline}'s own routing. The converters were well
+     * covered but the switch that dispatches to them was not: several arms had no
+     * test at all, and the Java arm passes two adjacent booleans that could be
+     * transposed without a single failure.
+     */
+    @Nested @DisplayName("routing")
+    class Routing {
+        private ConversionPipeline pipeline;
 
-    @Test @DisplayName("autoClose repairs a dangling escape into parseable JSON")
-    void autoCloseDanglingEscape() throws Exception {
-        json.readTree(JsonRepair.autoClose("{\"path\": \"C:\\"));
-    }
+        private static final String INPUT = "{\"id\":1,\"born\":\"2024-01-31\"}";
 
-    @Test @DisplayName("autoClose leaves complete JSON untouched")
-    void autoCloseNoOp() {
-        String complete = "{\"a\": [1, 2]}";
-        assertThat(JsonRepair.autoClose(complete)).isEqualTo(complete);
-    }
+        @BeforeEach void setUp() { pipeline = new ConversionPipeline(); }
 
-    // ── prettyXml ─────────────────────────────────────────────────────────
+        @ParameterizedTest(name = "renderFromJson -> {0}")
+        @CsvSource({
+              "JSON,        '\"id\"'",
+              "XML,         '<id>'",
+              "YAML,        'id:'",
+              "CSV,         'id'",
+              "TOML,        'id ='",
+              "Protobuf,    'message Root'",
+              "Java POJO,   'public class Root'",
+              "Kotlin,      'data class Root('",
+              "JSON Schema, '$schema'",
+        })
+        @DisplayName("every output format is reachable and produces its own syntax")
+        void everyOutputFormatRoutes(String format, String marker) throws Exception {
+            assertThat(pipeline.renderFromJson(INPUT, format, ConversionOptions.DEFAULTS))
+                  .contains(marker);
+        }
 
-    @Test @DisplayName("prettyXml preserves the original root element and attributes")
-    void prettyXmlPreservesRoot() throws Exception {
-        String result = DocumentFormatter.prettyXml(
-              "<person id=\"7\"><name>Ada</name><langs><l>en</l><l>el</l></langs></person>");
-        assertThat(result).startsWith("<person id=\"7\">")
-              .contains("  <name>Ada</name>")
-              .contains("<langs>");
-    }
+        @Test @DisplayName("an unknown output format is rejected, not silently passed through")
+        void unknownOutputRejected() {
+            assertThatThrownBy(() -> pipeline.renderFromJson(INPUT, "Nonsense",
+                  ConversionOptions.DEFAULTS)).isInstanceOf(UnsupportedOperationException.class);
+        }
 
-    @Test @DisplayName("prettyXml keeps the XML declaration only when the input had one")
-    void prettyXmlDeclaration() throws Exception {
-        assertThat(DocumentFormatter.prettyXml("<?xml version=\"1.0\"?><r><a>1</a></r>"))
-              .startsWith("<?xml");
-        assertThat(DocumentFormatter.prettyXml("<r><a>1</a></r>"))
-              .doesNotContain("<?xml");
-    }
+        @Test @DisplayName("an unknown input format is rejected")
+        void unknownInputRejected() {
+            assertThatThrownBy(() -> pipeline.normalizeToJson(INPUT, "Nonsense",
+                  ConversionOptions.DEFAULTS)).isInstanceOf(UnsupportedOperationException.class);
+        }
 
-    @Test @DisplayName("prettyXml rejects DOCTYPE declarations (XXE hardening)")
-    void prettyXmlRejectsDoctype() {
-        assertThatThrownBy(() -> DocumentFormatter.prettyXml(
-              "<!DOCTYPE foo [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><foo>&x;</foo>"))
-              .isInstanceOf(Exception.class);
-    }
+        // ── The two same-typed booleans on the Java arm ───────────────────────
 
-    // ── formatInput dispatch ──────────────────────────────────────────────
+        @Test @DisplayName("useLombok reaches the generator")
+        void lombokFlagIsWired() throws Exception {
+            assertThat(pipeline.renderFromJson(INPUT, Formats.FMT_JAVA,
+                  ConversionOptions.DEFAULTS.withLombok(true))).contains("@Data");
+            assertThat(pipeline.renderFromJson(INPUT, Formats.FMT_JAVA,
+                  ConversionOptions.DEFAULTS.withLombok(false))).doesNotContain("@Data");
+        }
 
-    @Test @DisplayName("formatInput pretty-prints truncated JSON via autoClose")
-    void formatInputJson() throws Exception {
-        String result = pipeline.formatInput("{\"a\":1", Formats.FMT_JSON, ConversionOptions.DEFAULTS.withInferTypes(true));
-        assertThat(json.readTree(result).get("a").intValue()).isEqualTo(1);
-    }
+        @Test @DisplayName("detectDates reaches the generator")
+        void detectDatesFlagIsWired() throws Exception {
+            // Transposing useLombok and detectDates compiles and changes the output;
+            // asserting both separately is what makes that mistake fail a test.
+            assertThat(pipeline.renderFromJson(INPUT, Formats.FMT_JAVA,
+                  ConversionOptions.DEFAULTS.withDetectDates(true))).contains("LocalDate born");
+            assertThat(pipeline.renderFromJson(INPUT, Formats.FMT_JAVA,
+                  ConversionOptions.DEFAULTS.withDetectDates(false))).contains("String born");
+        }
 
-    @Test @DisplayName("formatInput collapses excess blank lines in proto schemas")
-    void formatInputProto() throws Exception {
-        String result = pipeline.formatInput(
-              "message A {\n  string x = 1;   \n\n\n\n}", Formats.FMT_PROTO, ConversionOptions.DEFAULTS.withInferTypes(true));
-        assertThat(result).doesNotContain("\n\n\n");
+        // ── formatInput arms ──────────────────────────────────────────────────
+
+        @ParameterizedTest(name = "formatInput({0}) round-trips")
+        @CsvSource(delimiter = '|', value = {
+              "JSON     | {\"a\":1}                  | a",
+              "XML      | <r><a>1</a></r>            | <a>",
+              "YAML     | a: 1                       | a:",
+              "TOML     | a = 1                      | a =",
+              "CSV      | a,b\\n1,2                  | a,b",
+              "Protobuf | message M { string s = 1; }| message M",
+        })
+        @DisplayName("each formatInput arm produces output still readable as that format")
+        void formatInputArms(String format, String input, String marker) throws Exception {
+            String text = input.replace("\\n", "\n");
+            String formatted = pipeline.formatInput(text, format, ConversionOptions.DEFAULTS);
+            assertThat(formatted).contains(marker);
+            // The real check: the result must still parse as the same format.
+            assertThat(pipeline.normalizeToJson(formatted, format, ConversionOptions.DEFAULTS))
+                  .isNotBlank();
+        }
+
+        @Test @DisplayName("Format+Sort keys sorts JSON")
+        void formatSortsJson() throws Exception {
+            String out = pipeline.formatInput("{\"b\":1,\"a\":2}", Formats.FMT_JSON,
+                  ConversionOptions.DEFAULTS.withSortKeys(true));
+            assertThat(out.indexOf("\"a\"")).isLessThan(out.indexOf("\"b\""));
+        }
+
+        @Test @DisplayName("Format+Sort keys now sorts YAML and TOML too")
+        void formatSortsTreeBackedFormats() throws Exception {
+            // Previously skipped, on the reasoning that sorting already-formatted
+            // YAML would throw. It does not: Format already passes through the JSON
+            // tree, so the sort happens there, while the tree exists.
+            String yaml = pipeline.formatInput("b: 1\na: 2\n", Formats.FMT_YAML,
+                  ConversionOptions.DEFAULTS.withSortKeys(true));
+            assertThat(yaml.indexOf("a:")).isLessThan(yaml.indexOf("b:"));
+
+            String toml = pipeline.formatInput("b = 1\na = 2\n", Formats.FMT_TOML,
+                  ConversionOptions.DEFAULTS.withSortKeys(true));
+            assertThat(toml.indexOf("a ")).isLessThan(toml.indexOf("b "));
+
+            // Without the option the document's own order is kept.
+            String unsorted = pipeline.formatInput("b: 1\na: 2\n", Formats.FMT_YAML,
+                  ConversionOptions.DEFAULTS);
+            assertThat(unsorted.indexOf("b:")).isLessThan(unsorted.indexOf("a:"));
+        }
+
+        @Test @DisplayName("formatInput threads the CSV delimiter through both directions")
+        void formatInputUsesDelimiter() throws Exception {
+            String out = pipeline.formatInput("a;b\n1;2\n", Formats.FMT_CSV,
+                  ConversionOptions.DEFAULTS.withCsvFormat(CsvConverter.CsvFormat.SEMICOLON));
+            assertThat(out).contains("a;b").doesNotContain("a;b,");
+        }
     }
 }

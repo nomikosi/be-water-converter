@@ -16,8 +16,10 @@
 
 package com.converter.core;
 
+import com.converter.core.CsvConverter.CsvFormat;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -88,4 +90,36 @@ class CanonicalJsonTest {
         assertThat(LenientJson.sortKeys(input)).isEqualTo("{\"a\":1.0,\"b\":100.00}");
     }
 
+    @Nested @DisplayName("Compare honours the user's settings")
+    class Settings {
+
+        @Test @DisplayName("canonicalJson respects a non-comma delimiter")
+        void compareHonoursDelimiter() throws Exception {
+            ConversionOptions semi = ConversionOptions.DEFAULTS.withCsvFormat(CsvFormat.SEMICOLON);
+            String canonical = pipeline.canonicalJson("id;name\n1;Joe\n",
+                  Formats.FMT_CSV, semi);
+            // With defaults this produced one column named "id;name".
+            assertThat(pipeline.parseJson(canonical).get(0).has("id")).isTrue();
+            assertThat(pipeline.parseJson(canonical).get(0).has("name")).isTrue();
+        }
+
+        @Test @DisplayName("a CSV converted and compared with the same delimiter is equivalent")
+        void roundTripComparesEqual() throws Exception {
+            ConversionOptions tab = ConversionOptions.DEFAULTS.withCsvFormat(CsvFormat.TAB);
+            String csv = "id\tname\n1\tJoe\n";
+            String pivot = pipeline.normalizeToJson(csv, Formats.FMT_CSV, tab);
+            String rendered = pipeline.renderFromJson(pivot, Formats.FMT_CSV, tab);
+            assertThat(pipeline.canonicalJson(csv, Formats.FMT_CSV, tab))
+                  .isEqualTo(pipeline.canonicalJson(rendered, Formats.FMT_CSV, tab));
+        }
+
+        @Test @DisplayName("canonicalJson respects inferTypes")
+        void compareHonoursInferTypes() throws Exception {
+            String typed = pipeline.canonicalJson("id\n1\n", Formats.FMT_CSV,
+                  ConversionOptions.DEFAULTS);
+            String literal = pipeline.canonicalJson("id\n1\n", Formats.FMT_CSV,
+                  ConversionOptions.DEFAULTS.withInferTypes(false));
+            assertThat(typed).isNotEqualTo(literal);
+        }
+    }
 }

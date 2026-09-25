@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -148,4 +149,24 @@ class JsonSchemaGeneratorTest {
         }
     }
 
+    @Nested @DisplayName("anyOf de-duplication")
+    class AnyOfDeduplication {
+
+        private final ConversionPipeline pipeline = new ConversionPipeline();
+
+        @Test @DisplayName("objects differing only in key order collapse to one anyOf branch")
+        void schemaDedupIgnoresKeyOrder() throws Exception {
+            String schema = pipeline.renderFromJson("{\"items\":[{\"a\":1,\"b\":2},{\"b\":3,\"a\":4}]}",
+                  Formats.FMT_SCHEMA, ConversionOptions.DEFAULTS);
+            assertThat(pipeline.parseJson(schema).at("/properties/items/items/anyOf").isMissingNode())
+                  .isTrue();
+        }
+
+        @Test @DisplayName("genuinely different shapes still produce anyOf")
+        void schemaKeepsRealVariants() throws Exception {
+            String schema = pipeline.renderFromJson("{\"items\":[{\"a\":1},{\"z\":\"s\"}]}",
+                  Formats.FMT_SCHEMA, ConversionOptions.DEFAULTS);
+            assertThat(pipeline.parseJson(schema).at("/properties/items/items/anyOf")).hasSize(2);
+        }
+    }
 }

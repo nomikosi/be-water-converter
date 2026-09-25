@@ -1,0 +1,394 @@
+/*
+ * Copyright (c) 2026 Nomikosi Consulting
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.converter.core;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+
+import static org.assertj.core.api.Assertions.*;
+
+/** Format re-lays-out a document in its own format; it must never change what the document says. */
+@DisplayName("Format")
+class DocumentFormatterTest {
+
+    private final ConversionPipeline pipeline = new ConversionPipeline();
+    private final ConversionOptions opts = ConversionOptions.DEFAULTS;
+    private final ObjectMapper json = new ObjectMapper();
+
+    @Test @DisplayName("formatLosses counts what Format would discard, and nothing else")
+    void formatLossesAreCounted() {
+        assertThat(pipeline.formatLosses("# top\na: 1 # inline\n\nb:\n  - x\n",
+              Formats.FMT_YAML)).isEqualTo("2 comments");
+        assertThat(pipeline.formatLosses("base: &b\n  x: 1\nother:\n  <<: *b\n",
+              Formats.FMT_YAML)).isEqualTo("1 anchor");
+        assertThat(pipeline.formatLosses("# c\nbase: &b {x: 1}\nu: *b\n",
+              Formats.FMT_YAML)).isEqualTo("1 comment and 1 anchor");
+        // A '#' inside a string is not a comment.
+        assertThat(pipeline.formatLosses("a: \"# not a comment\"\n", Formats.FMT_YAML))
+              .isNull();
+        assertThat(pipeline.formatLosses("a = 1 # note\n# another #hash\ns = \"#\"\n",
+              Formats.FMT_TOML)).isEqualTo("2 comments");
+        // A comment-only TOML file is returned untouched, so nothing is at risk.
+        assertThat(pipeline.formatLosses("# just a note\n", Formats.FMT_TOML)).isNull();
+        assertThat(pipeline.formatLosses("{\"a\":1 // one\n, \"b\":\"//\" /* two */}",
+              Formats.FMT_JSON)).isEqualTo("2 comments");
+        assertThat(pipeline.formatLosses("{\"a\":1}", Formats.FMT_JSON)).isNull();
+        // XML keeps its comments through the DOM, so there is nothing to warn about.
+        assertThat(pipeline.formatLosses("<r><!-- kept --></r>", Formats.FMT_XML)).isNull();
+    }
+
+    @Nested @DisplayName("JSON")
+    class Json {
+
+        @Test @DisplayName("formatInput pretty-prints truncated JSON via autoClose")
+        void formatInputJson() throws Exception {
+            String result = pipeline.formatInput("{\"a\":1", Formats.FMT_JSON, ConversionOptions.DEFAULTS.withInferTypes(true));
+            assertThat(json.readTree(result).get("a").intValue()).isEqualTo(1);
+        }
+    }
+
+    @Nested @DisplayName("YAML")
+    class Yaml {
+
+        @Test @DisplayName("Format keeps a multi-document YAML file multi-document")
+        void multiDocumentYamlSurvivesFormat() throws Exception {
+            // The stream became a JSON array and came back as one sequence, so two
+            // manifests were replaced by a single list.
+            String input = "kind: Service\nname: a\n---\nkind: ConfigMap\nname: b\n";
+            String out = pipeline.formatInput(input, Formats.FMT_YAML, opts);
+            assertThat(out).contains("---");
+            assertThat(out).contains("kind: Service").contains("kind: ConfigMap");
+            // Not a sequence: no document should have been turned into a list item.
+            assertThat(out.stripLeading()).doesNotStartWith("-");
+            // Round-trips back to two documents rather than one.
+            assertThat(pipeline.normalizeToJson(out, Formats.FMT_YAML, opts))
+                  .startsWith("[").contains("Service").contains("ConfigMap");
+        }
+
+        @Test @DisplayName("Format leaves a single YAML document unwrapped")
+        void singleDocumentYamlUnchanged() throws Exception {
+            assertThat(pipeline.formatInput("a: 1\n", Formats.FMT_YAML, opts))
+                  .contains("a: 1").doesNotContain("---");
+        }
+
+        @Test @DisplayName("Format keeps a ----prefixed single document as one document")
+        void leadingSeparatorIsNotAStreamOfDocuments() throws Exception {
+            // The text scan for "---" also matched the optional start marker, so a
+            // single sequence document was split into one document per element:
+            // "---\n- a\n- b" came back as "a\n---\nb".
+            String out = pipeline.formatInput("---\n- a\n- b\n", Formats.FMT_YAML, opts);
+            assertThat(out).doesNotContain("---");
+            assertThat(pipeline.normalizeToJson(out, Formats.FMT_YAML, opts))
+                  .isEqualTo("[\"a\",\"b\"]");
+            // Nor is a "---" line inside a block scalar a separator.
+            String block = "- |\n  x\n  ---\n  y\n- b\n";
+            assertThat(pipeline.normalizeToJson(
+                  pipeline.formatInput(block, Formats.FMT_YAML, opts),
+                  Formats.FMT_YAML, opts)).isEqualTo("[\"x\\n---\\ny\\n\",\"b\"]");
+        }
+
+        @Test @DisplayName("Format keeps YAML floats as written, and refuses .inf and .nan")
+        void yamlFormatKeepsFloats() throws Exception {
+            assertThat(pipeline.formatInput("price: 1.10\ntotal: 100.00\n", Formats.FMT_YAML, opts))
+                  .contains("price: 1.10").contains("total: 100.00");
+            // JSON has no infinity, so the only thing Format could write back is text.
+            assertThatThrownBy(() -> pipeline.formatInput("a: .inf\n", Formats.FMT_YAML, opts))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("Infinity");
+            assertThatThrownBy(() -> pipeline.formatInput("a: [1, .nan]\n", Formats.FMT_YAML, opts))
+                  .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @ParameterizedTest @ValueSource(strings = {
+              "1: value\n",
+              "true: value\n",
+              "null: value\n",
+              "1.5: value\n",
+              "? [a, b]\n: value\n",
+              "? {a: b}\n: value\n",
+              "rows:\n  - true: value\n",
+              "defaults: &d {1: x}\ncopy: {<<: *d}\n",
+              "!!timestamp 2024-01-01",
+              "v: !!timestamp 2024-01-01T12:30:00Z",
+              "v: !!set {a: null}",
+              "v: !!omap [{a: 1}, {b: 2}]",
+              "v: !!pairs [{a: 1}, {a: 2}]"
+        })
+        void refusesYamlTypesThatFormattingCannotPreserve(String input) {
+            assertThatThrownBy(() -> pipeline.formatInput(input, "YAML", ConversionOptions.DEFAULTS.withInferTypes(false)))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("Format cannot preserve").hasMessageContaining("left as it is");
+        }
+
+        @ParameterizedTest @ValueSource(strings = {
+              "\"1\": value\n\"true\": other\n\"null\": text\n",
+              "v: \"!!timestamp 2024-01-01\"\n",
+              "a: !!str 123\nb: !!int 42\nc: !!bool true\nd: !!null null\n",
+              "v: !!binary SGVsbG8=\n",
+              "base: &d {a: 1.10}\ncopy: {<<: *d, b: true}\n",
+              "null\n---\nrows: [{z: 1.10, a: yes}]\n"
+        })
+        void supportedValuesAndStringKeysKeepTheirMeaning(String input) throws Exception {
+            for (boolean sort : new boolean[]{false, true}) {
+                String formatted = pipeline.formatInput(input, "YAML", ConversionOptions.DEFAULTS.withSortKeys(sort));
+                assertThat(pipeline.canonicalJson(formatted, "YAML", ConversionOptions.DEFAULTS)).isEqualTo(pipeline.canonicalJson(input, "YAML", ConversionOptions.DEFAULTS));
+            }
+        }
+    }
+
+    @Nested @DisplayName("TOML")
+    class Toml {
+
+        @Test @DisplayName("Format keeps TOML floats as written, and refuses literals JSON cannot spell")
+        void tomlFormatKeepsNumbers() throws Exception {
+            assertThat(pipeline.formatInput("a = 1.10\n", Formats.FMT_TOML, opts))
+                  .contains("a = 1.10");
+            // 0xFF came back as 255, 1_000 as 1000 and inf as the STRING 'Infinity'.
+            for (String doc : new String[]{"a = 0xFF\n", "a = 0o17\n", "a = 0b101\n", "a = 1_000\n",
+                  "a = 1_000.5\n", "a = inf\n", "a = -inf\n", "a = nan\n", "a = [1, 2_0]\n",
+                  "t = {x = 0xA}\n"}) {
+                assertThatThrownBy(() -> pipeline.formatInput(doc, Formats.FMT_TOML, opts))
+                      .describedAs(doc)
+                      .isInstanceOf(IllegalArgumentException.class)
+                      .hasMessageContaining("Format would rewrite");
+            }
+            // Keys with underscores, and literals inside strings or comments, are not values.
+            assertThat(pipeline.formatInput("my_key = 1\ns = \"0xFF\" # 1_000\n",
+                  Formats.FMT_TOML, opts)).contains("my_key = 1");
+        }
+
+        @Test @DisplayName("Format refuses to rewrite a TOML date as a string")
+        void tomlDatesAreNotRetyped() {
+            // TOML has date types and JSON does not, so the pivot stringified them
+            // and Format wrote the quoted form back over the user's file.
+            assertThatThrownBy(() -> pipeline.formatInput(
+                  "[meta]\ncreated = 1979-05-27T07:32:00Z\n", Formats.FMT_TOML, opts))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("quoted string");
+            assertThatThrownBy(() -> pipeline.formatInput(
+                  "day = 1979-05-27\n", Formats.FMT_TOML, opts))
+                  .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test @DisplayName("Format refuses a TOML date wherever it sits, not only after '='")
+        void tomlDatesInAnyPositionAreCaught() {
+            // Anchoring on '=' meant only the first array element could match, so
+            // d = [1979-05-27] was still rewritten as a quoted string.
+            assertThatThrownBy(() -> pipeline.formatInput(
+                  "d = [1979-05-27]\n", Formats.FMT_TOML, opts))
+                  .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> pipeline.formatInput(
+                  "d = [1979-05-27, 1979-05-28]\n", Formats.FMT_TOML, opts))
+                  .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> pipeline.formatInput(
+                  "t = {at = 07:32:00}\n", Formats.FMT_TOML, opts))
+                  .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test @DisplayName("Format still tidies TOML that carries no dates")
+        void tomlWithoutDatesStillFormats() throws Exception {
+            assertThat(pipeline.formatInput("a=1\nb=\"x\"\n", Formats.FMT_TOML, opts))
+                  .contains("a = 1").contains("b = 'x'");   // the TOML writer quotes with '
+            // A date inside a string or a comment is not a date value.
+            assertThat(pipeline.formatInput("a = \"1979-05-27\"\n", Formats.FMT_TOML, opts))
+                  .contains("1979-05-27");
+        }
+
+        @Test @DisplayName("Format keeps a comment-only TOML file rather than replacing it")
+        void commentOnlyTomlSurvivesFormat() throws Exception {
+            // jsonToToml renders an empty table as the literal "# empty document",
+            // so Format replaced the user's own comments with that sentence.
+            assertThat(pipeline.formatInput("# just a note\n", Formats.FMT_TOML, opts))
+                  .contains("just a note").doesNotContain("empty document");
+        }
+
+        @ParameterizedTest @ValueSource(strings = {
+              "[2024-01-01]\nx = 1\n",
+              "[0xFF]\nx = 1\n",
+              "[inf]\nx = 1\n",
+              "[1_000]\nx = 1\n",
+              "[[nan]]\nx = 1\n",
+              "x = {inf = 1, 2024-01-01 = 2, 0xFF = 3}\n",
+              "inf = \"1979-05-27t07:32:00Z\"\n",
+              "x = \"\"\"a \\\"\"\" b\"\"\"\n[2024-01-01]\ny = 1\n"
+        })
+        void keysAndQuotedTextDoNotTriggerValueGuards(String input) throws Exception {
+            String formatted = pipeline.formatInput(input, "TOML", ConversionOptions.DEFAULTS.withInferTypes(false));
+            assertThat(pipeline.canonicalJson(formatted, "TOML", ConversionOptions.DEFAULTS)).isEqualTo(pipeline.canonicalJson(input, "TOML", ConversionOptions.DEFAULTS));
+        }
+
+        @ParameterizedTest @ValueSource(strings = {
+              "d = 1979-05-27t07:32:00Z",
+              "d = 1979-05-27T07:32:00Z",
+              "d = 1979-05-27 07:32:00Z",
+              "d = 1979-05-27",
+              "d = 07:32:00",
+              "d = [1, 1979-05-27t07:32:00Z]",
+              "d = {v = 1979-05-27t07:32:00Z}",
+              "d = [[1, 0xFF]]",
+              "d = {v = -inf}",
+              "d = [1, 1_000]",
+              "text = \"\"\"a \\\"\"\" b\"\"\"\nd = 1979-05-27t07:32:00Z"
+        })
+        void refusesLossyValuesInEveryContainer(String input) {
+            assertThatThrownBy(() -> pipeline.formatInput(input, "TOML", ConversionOptions.DEFAULTS.withInferTypes(false)))
+                  .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Format would rewrite");
+        }
+    }
+
+    @Nested @DisplayName("XML")
+    class Xml {
+
+        @Test @DisplayName("Format refuses XML mixed content and keeps the declaration as written")
+        void xmlFormatMixedContentAndDeclaration() throws Exception {
+            // The serializer indents text nodes too, so the text of a paragraph
+            // gained line breaks and indentation — a content change, not layout.
+            assertThatThrownBy(() -> pipeline.formatInput("<p>Hello <b>big</b> world</p>",
+                  Formats.FMT_XML, opts))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("<p>");
+            assertThatThrownBy(() -> pipeline.formatInput("<r><d>text <e>in</e> mixed</d></r>",
+                  Formats.FMT_XML, opts))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("<d>");
+            // standalone="no" was appended to a declaration that never had it.
+            String out = pipeline.formatInput("<?xml version=\"1.0\"?><a><b>x</b></a>",
+                  Formats.FMT_XML, opts);
+            assertThat(out).startsWith("<?xml").doesNotContain("standalone");
+            // Element-only content with formatting whitespace is not mixed content.
+            assertThat(pipeline.formatInput("<r>\n  <a>1</a>\n  <b>  spaced  </b>\n</r>",
+                  Formats.FMT_XML, opts))
+                  .contains("<a>1</a>").contains("<b>  spaced  </b>");
+        }
+
+        @Test @DisplayName("XML Format keeps a DOCTYPE without an internal subset")
+        void xmlFormatKeepsDoctype() throws Exception {
+            // Any DOCTYPE was refused with the parser's sentence about a feature
+            // flag, while Convert accepted the same file.
+            String plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                  + "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+                  + "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+                  + "<plist version=\"1.0\"><dict><key>a</key><string>b</string></dict></plist>";
+            String out = pipeline.formatInput(plist, Formats.FMT_XML, opts);
+            assertThat(out).startsWith("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+                  .contains("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+                        + "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">")
+                  .contains("\n    <key>a</key>")
+                  .doesNotContain("standalone");
+            // A system identifier alone, and a bare name alone.
+            assertThat(pipeline.formatInput("<!DOCTYPE a SYSTEM \"a.dtd\"><a><b>1</b></a>",
+                  Formats.FMT_XML, opts))
+                  .startsWith("<!DOCTYPE a SYSTEM \"a.dtd\">").contains("<b>1</b>");
+            assertThat(pipeline.formatInput("<!DOCTYPE html>\n<html><body><p>x</p></body></html>",
+                  Formats.FMT_XML, opts))
+                  .startsWith("<!DOCTYPE html>\n<html>");
+            assertThat(pipeline.formatInput("<?xml version=\"1.0\"?><!DOCTYPE html><html><p>x</p></html>",
+                  Formats.FMT_XML, opts))
+                  .startsWith("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html>");
+            // A root named html made the serializer switch to its HTML method:
+            // no declaration, the DOCTYPE renamed, and <br/> written as <br>.
+            String xhtml = pipeline.formatInput(
+                  "<?xml version=\"1.0\"?><!DOCTYPE html SYSTEM \"x.dtd\"><html><body><br/></body></html>",
+                  Formats.FMT_XML, opts);
+            assertThat(xhtml).startsWith("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+                  .contains("<!DOCTYPE html SYSTEM \"x.dtd\">").contains("<br/>").contains("\n  <body>");
+            // An internal subset declares entities the DOM path would drop.
+            assertThatThrownBy(() -> pipeline.formatInput(
+                  "<!DOCTYPE a [<!ENTITY x \"hi\">]><a><b>&x;</b></a>", Formats.FMT_XML, opts))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("<!DOCTYPE a [...]>");
+            // Malformed XML still fails through the exception, with the location.
+            assertThatThrownBy(() -> pipeline.formatInput("<a><b>1</a>", Formats.FMT_XML, opts))
+                  .isInstanceOf(org.xml.sax.SAXParseException.class);
+        }
+
+        @Test @DisplayName("prettyXml preserves the original root element and attributes")
+        void prettyXmlPreservesRoot() throws Exception {
+            String result = DocumentFormatter.prettyXml(
+                  "<person id=\"7\"><name>Ada</name><langs><l>en</l><l>el</l></langs></person>");
+            assertThat(result).startsWith("<person id=\"7\">")
+                  .contains("  <name>Ada</name>")
+                  .contains("<langs>");
+        }
+
+        @Test @DisplayName("prettyXml keeps the XML declaration only when the input had one")
+        void prettyXmlDeclaration() throws Exception {
+            assertThat(DocumentFormatter.prettyXml("<?xml version=\"1.0\"?><r><a>1</a></r>"))
+                  .startsWith("<?xml");
+            assertThat(DocumentFormatter.prettyXml("<r><a>1</a></r>"))
+                  .doesNotContain("<?xml");
+        }
+
+        @Test @DisplayName("prettyXml rejects DOCTYPE declarations (XXE hardening)")
+        void prettyXmlRejectsDoctype() {
+            assertThatThrownBy(() -> DocumentFormatter.prettyXml(
+                  "<!DOCTYPE foo [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><foo>&x;</foo>"))
+                  .isInstanceOf(Exception.class);
+        }
+    }
+
+    @Nested @DisplayName("CSV")
+    class Csv {
+
+        @Test @DisplayName("Format keeps CSV headers and ragged rows exactly")
+        void csvFormatIsPositional() throws Exception {
+            // Through the pivot, headers were renamed (id,id,, became id,id_2,column_3),
+            // a ragged row dropped the headers it lacked (a,b,c\n1 became a\n1), and
+            // a header-only file was refused as having nothing to write.
+            assertThat(pipeline.formatInput("id,id,,name\n1,2,3,4\n", Formats.FMT_CSV, opts))
+                  .isEqualTo("id,id,,name\n1,2,3,4\n");
+            assertThat(pipeline.formatInput("a,b,c\n1\n", Formats.FMT_CSV, opts))
+                  .isEqualTo("a,b,c\n1\n");
+            assertThat(pipeline.formatInput("a,b\n", Formats.FMT_CSV, opts))
+                  .isEqualTo("a,b\n");
+            // A row with more cells than headers is kept as well: nothing is discarded.
+            assertThat(pipeline.formatInput("a,b\n1,2,3\n", Formats.FMT_CSV, opts))
+                  .isEqualTo("a,b\n1,2,3\n");
+            // Blank lines and CRLF are layout, and are tidied.
+            assertThat(pipeline.formatInput("a,b\r\n1,2\r\n\r\n3,4\r\n", Formats.FMT_CSV, opts))
+                  .isEqualTo("a,b\n1,2\n3,4\n");
+            // Content that needs quotes keeps them.
+            assertThat(pipeline.formatInput("a,b\n\"x,y\",\"q\"\"q\"\n", Formats.FMT_CSV, opts))
+                  .isEqualTo("a,b\n\"x,y\",\"q\"\"q\"\n");
+        }
+    }
+
+    @Nested @DisplayName("Protobuf")
+    class Protobuf {
+
+        @Test @DisplayName("Protobuf Format tidies CRLF files too")
+        void protoFormatHandlesCrlf() throws Exception {
+            // Anchored on "\n" alone, a file with Windows line endings came back
+            // untouched, trailing blanks and all.
+            String crlf = "message A {\r\n  string a = 1;   \r\n\r\n\r\n\r\n  int32 b = 2;\r\n}\r\n";
+            assertThat(pipeline.formatInput(crlf, Formats.FMT_PROTO, opts))
+                  .isEqualTo("message A {\r\n  string a = 1;\r\n\r\n  int32 b = 2;\r\n}");
+            String lf = "message A {\n  string a = 1;   \n\n\n\n  int32 b = 2;\n}\n";
+            assertThat(pipeline.formatInput(lf, Formats.FMT_PROTO, opts))
+                  .isEqualTo("message A {\n  string a = 1;\n\n  int32 b = 2;\n}");
+        }
+
+        @Test @DisplayName("formatInput collapses excess blank lines in proto schemas")
+        void formatInputProto() throws Exception {
+            String result = pipeline.formatInput(
+                  "message A {\n  string x = 1;   \n\n\n\n}", Formats.FMT_PROTO, ConversionOptions.DEFAULTS.withInferTypes(true));
+            assertThat(result).doesNotContain("\n\n\n");
+        }
+    }
+}
