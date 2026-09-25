@@ -16,7 +16,7 @@
 
 package com.converter;
 
-import com.converter.converter.*;
+import com.converter.core.*;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.ui.JBColor;

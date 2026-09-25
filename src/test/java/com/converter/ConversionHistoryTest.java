@@ -27,16 +27,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ConversionHistoryTest {
 
     @Test void recordsOptionsNeededToRepeatTheConversion() {
-        var options = com.converter.converter.ConversionOptions.DEFAULTS
+        var options = com.converter.core.ConversionOptions.DEFAULTS
               .withFilterPath("/users").withInferTypes(false).withSortKeys(true)
-              .withCsvFormat(com.converter.converter.CsvConverter.CsvFormat.SEMICOLON);
+              .withCsvFormat(com.converter.core.CsvConverter.CsvFormat.SEMICOLON);
         var history = new ConversionHistory();
         history.push(new ConversionHistory.Entry("JSON", "CSV", "input", "output", LocalTime.NOON, options));
         assertThat(history.entries().getFirst().options()).isEqualTo(options);
     }
 
     @Test void includesFilterTextInTheHistorySizeLimit() {
-        var options = com.converter.converter.ConversionOptions.DEFAULTS
+        var options = com.converter.core.ConversionOptions.DEFAULTS
               .withFilterPath("x".repeat(ConversionHistory.MAX_ENTRY_CHARS));
         var history = new ConversionHistory();
         assertThat(history.push(new ConversionHistory.Entry("JSON", "CSV", "x", "y", LocalTime.NOON, options)))

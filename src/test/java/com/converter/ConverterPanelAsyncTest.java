@@ -16,7 +16,7 @@
 
 package com.converter;
 
-import com.converter.converter.*;
+import com.converter.core.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.junit.jupiter.api.AfterEach;

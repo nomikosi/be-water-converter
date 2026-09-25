@@ -16,7 +16,7 @@
 
 package com.converter;
 
-import com.converter.converter.Formats;
+import com.converter.core.Formats;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 

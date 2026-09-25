@@ -16,7 +16,7 @@
 
 package com.converter;
 
-import com.converter.converter.ConversionFileNames;
+import com.converter.core.ConversionFileNames;
 import com.intellij.ide.scratch.ScratchRootType;
 import com.intellij.lang.Language;
 

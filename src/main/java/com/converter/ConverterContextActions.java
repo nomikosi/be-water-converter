@@ -16,9 +16,9 @@
 
 package com.converter;
 
-import com.converter.converter.ConversionOptions;
-import com.converter.converter.ConversionPipeline;
-import com.converter.converter.Formats;
+import com.converter.core.ConversionOptions;
+import com.converter.core.ConversionPipeline;
+import com.converter.core.Formats;
 import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
@@ -315,7 +315,7 @@ public final class ConverterContextActions {
                     Character delimiter = ConversionPipeline.detectCsvDelimiter(text);
                     if (delimiter != null)
                         options = options.withCsvFormat(
-                              com.converter.converter.CsvConverter.CsvFormat.forDelimiter(delimiter));
+                              com.converter.core.CsvConverter.CsvFormat.forDelimiter(delimiter));
                 }
                 String pivot = pipeline.normalizeToJson(text, inputFormat, options);
                 indicator.checkCanceled();
@@ -347,7 +347,7 @@ public final class ConverterContextActions {
         }
 
         /** Asks on the EDT from the background task; false when declined or the project is gone. */
-        private static boolean confirmRows(Project project, com.converter.converter.CsvConverter.CsvMode mode,
+        private static boolean confirmRows(Project project, com.converter.core.CsvConverter.CsvMode mode,
               long estimate) {
             java.util.concurrent.atomic.AtomicBoolean proceed = new java.util.concurrent.atomic.AtomicBoolean(false);
             if (project.isDisposed()) return false;

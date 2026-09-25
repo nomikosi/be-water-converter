@@ -16,8 +16,8 @@
 
 package com.converter;
 
-import com.converter.converter.ConversionFileNames;
-import com.converter.converter.Formats;
+import com.converter.core.ConversionFileNames;
+import com.converter.core.Formats;
 import com.intellij.openapi.fileChooser.FileChooser;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.fileChooser.FileChooserFactory;
@@ -169,7 +169,7 @@ final class ConverterFileOps {
             try {
                 // By its byte-order mark first: read as UTF-8 with a Latin-1
                 // fallback, a UTF-16 file opened as NUL-interleaved garbage.
-                var decoded = com.converter.converter.TextDecoder.decode(
+                var decoded = com.converter.core.TextDecoder.decode(
                       Files.readAllBytes(file.toPath()));
                 String note = decoded.fallback()
                       ? " (not valid UTF-8 — read as ISO-8859-1)"

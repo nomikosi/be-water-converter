@@ -16,7 +16,7 @@
 
 package com.converter;
 
-import com.converter.converter.ConversionOptions;
+import com.converter.core.ConversionOptions;
 import java.time.LocalTime;
 import java.util.ArrayDeque;
 import java.util.Deque;
