@@ -19,7 +19,7 @@ package com.converter.core;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import static com.converter.core.ConversionPipeline.detectFormat;
+import static com.converter.core.FormatDetector.detectFormat;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @DisplayName("Content-based format detection")

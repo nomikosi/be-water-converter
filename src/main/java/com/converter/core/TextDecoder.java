@@ -95,4 +95,17 @@ public final class TextDecoder {
             return null;
         }
     }
+
+    /**
+     * Strips a leading UTF-8 BOM. Excel writes one on "CSV UTF-8" export, and
+     * nothing downstream treats U+FEFF as whitespace: it silently became part of
+     * the first CSV header name, and made JSON, TOML and XML fail to parse.
+     */
+    public static String stripBom(String text) {
+        // The escape, not a literal U+FEFF char: the character is invisible, so
+        // a literal survives review poorly and dies silently if the file is
+        // ever re-encoded.
+        return text != null && !text.isEmpty() && text.charAt(0) == '\uFEFF'
+              ? text.substring(1) : text;
+    }
 }

@@ -96,7 +96,7 @@ class CsvFormatAndSortKeysTest {
 
     @Test @DisplayName("object keys are sorted recursively, array order preserved")
     void sortsRecursively() throws Exception {
-        String sorted = pipeline.sortKeys("{\"b\":1,\"a\":{\"z\":1,\"y\":2},\"c\":[3,1,2]}");
+        String sorted = LenientJson.sortKeys("{\"b\":1,\"a\":{\"z\":1,\"y\":2},\"c\":[3,1,2]}");
         assertThat(sorted.indexOf("\"a\"")).isLessThan(sorted.indexOf("\"b\""));
         assertThat(sorted.indexOf("\"y\"")).isLessThan(sorted.indexOf("\"z\""));
         // Arrays are ordered data, not key sets — order must survive.
@@ -105,8 +105,8 @@ class CsvFormatAndSortKeysTest {
 
     @Test @DisplayName("differently-ordered equivalent documents canonicalize identically")
     void canonicalFormIsStable() throws Exception {
-        assertThat(pipeline.sortKeys("{\"b\":1,\"a\":2}"))
-              .isEqualTo(pipeline.sortKeys("{\"a\":2,\"b\":1}"));
+        assertThat(LenientJson.sortKeys("{\"b\":1,\"a\":2}"))
+              .isEqualTo(LenientJson.sortKeys("{\"a\":2,\"b\":1}"));
     }
 
     @Test @DisplayName("sortKeys applies through normalizeToJson when enabled")

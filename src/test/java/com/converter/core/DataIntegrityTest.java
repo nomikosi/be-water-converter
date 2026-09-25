@@ -149,9 +149,9 @@ class DataIntegrityTest {
 
     @Test @DisplayName("detection sees through a BOM")
     void bomStrippedInDetection() {
-        assertThat(ConversionPipeline.detectFormat(BOM + "{\"a\":1}"))
+        assertThat(FormatDetector.detectFormat(BOM + "{\"a\":1}"))
               .isEqualTo(Formats.FMT_JSON);
-        assertThat(ConversionPipeline.detectFormat(BOM + "<r/>"))
+        assertThat(FormatDetector.detectFormat(BOM + "<r/>"))
               .isEqualTo(Formats.FMT_XML);
     }
 

@@ -156,7 +156,7 @@ public class CsvConverter {
               // gained a phantom {"a":""} row, and Format wrote it back.
               .with(CsvParser.Feature.SKIP_EMPTY_LINES)
               .with(schemaFor(format))
-              .readValues(ConversionPipeline.stripBom(csv));
+              .readValues(TextDecoder.stripBom(csv));
         return it.readAll();
     }
 

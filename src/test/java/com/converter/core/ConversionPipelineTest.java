@@ -76,32 +76,32 @@ class ConversionPipelineTest {
 
     @Test @DisplayName("autoClose repairs an unterminated string and brackets")
     void autoCloseUnterminatedString() throws Exception {
-        String repaired = pipeline.autoClose("{\"name\": \"Al");
+        String repaired = JsonRepair.autoClose("{\"name\": \"Al");
         assertThat(repaired).isEqualTo("{\"name\": \"Al\"}");
         json.readTree(repaired); // must parse
     }
 
     @Test @DisplayName("autoClose repairs unclosed brackets")
     void autoCloseBrackets() {
-        assertThat(pipeline.autoClose("{\"a\": [1, 2")).isEqualTo("{\"a\": [1, 2]}");
+        assertThat(JsonRepair.autoClose("{\"a\": [1, 2")).isEqualTo("{\"a\": [1, 2]}");
     }
 
     @Test @DisplayName("autoClose repairs a dangling escape into parseable JSON")
     void autoCloseDanglingEscape() throws Exception {
-        json.readTree(pipeline.autoClose("{\"path\": \"C:\\"));
+        json.readTree(JsonRepair.autoClose("{\"path\": \"C:\\"));
     }
 
     @Test @DisplayName("autoClose leaves complete JSON untouched")
     void autoCloseNoOp() {
         String complete = "{\"a\": [1, 2]}";
-        assertThat(pipeline.autoClose(complete)).isEqualTo(complete);
+        assertThat(JsonRepair.autoClose(complete)).isEqualTo(complete);
     }
 
     // ── prettyXml ─────────────────────────────────────────────────────────
 
     @Test @DisplayName("prettyXml preserves the original root element and attributes")
     void prettyXmlPreservesRoot() throws Exception {
-        String result = pipeline.prettyXml(
+        String result = DocumentFormatter.prettyXml(
               "<person id=\"7\"><name>Ada</name><langs><l>en</l><l>el</l></langs></person>");
         assertThat(result).startsWith("<person id=\"7\">")
               .contains("  <name>Ada</name>")
@@ -110,15 +110,15 @@ class ConversionPipelineTest {
 
     @Test @DisplayName("prettyXml keeps the XML declaration only when the input had one")
     void prettyXmlDeclaration() throws Exception {
-        assertThat(pipeline.prettyXml("<?xml version=\"1.0\"?><r><a>1</a></r>"))
+        assertThat(DocumentFormatter.prettyXml("<?xml version=\"1.0\"?><r><a>1</a></r>"))
               .startsWith("<?xml");
-        assertThat(pipeline.prettyXml("<r><a>1</a></r>"))
+        assertThat(DocumentFormatter.prettyXml("<r><a>1</a></r>"))
               .doesNotContain("<?xml");
     }
 
     @Test @DisplayName("prettyXml rejects DOCTYPE declarations (XXE hardening)")
     void prettyXmlRejectsDoctype() {
-        assertThatThrownBy(() -> pipeline.prettyXml(
+        assertThatThrownBy(() -> DocumentFormatter.prettyXml(
               "<!DOCTYPE foo [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><foo>&x;</foo>"))
               .isInstanceOf(Exception.class);
     }

@@ -209,7 +209,7 @@ public class JsonYamlConverter {
             throw new IllegalArgumentException("Input YAML must not be empty");
 
         List<JsonNode> docs = new ArrayList<>();
-        for (Object document : composer(formatting).loadAll(ConversionPipeline.stripBom(yaml))) {
+        for (Object document : composer(formatting).loadAll(TextDecoder.stripBom(yaml))) {
             rejectRunawayAliases(document, yaml.length());
             if (formatting) rejectNonStringKeys(document,
                   java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
@@ -235,7 +235,7 @@ public class JsonYamlConverter {
     }
 
     private boolean hasExplicitScalar(String yaml) {
-        for (Event event : composer().parse(new StringReader(ConversionPipeline.stripBom(yaml)))) {
+        for (Event event : composer().parse(new StringReader(TextDecoder.stripBom(yaml)))) {
             if (event instanceof org.yaml.snakeyaml.events.ScalarEvent scalar
                   && (!scalar.getValue().isEmpty() || scalar.getTag() != null)) return true;
         }
@@ -437,7 +437,7 @@ public class JsonYamlConverter {
      * neither, and when it cannot be parsed at all — {@link #yamlToJson} then
      * reports the real error.
      */
-    public ConversionPipeline.FormatLosses countFormatLosses(String yaml) {
+    public FormatLosses countFormatLosses(String yaml) {
         LoaderOptions options = new LoaderOptions();
         options.setCodePointLimit(CODE_POINT_LIMIT);
         options.setProcessComments(true);
@@ -447,7 +447,7 @@ public class JsonYamlConverter {
         try {
             // Events only: nothing is constructed, so this costs a parse and
             // holds no document in memory.
-            for (Event event : parser.parse(new StringReader(ConversionPipeline.stripBom(yaml)))) {
+            for (Event event : parser.parse(new StringReader(TextDecoder.stripBom(yaml)))) {
                 if (event instanceof CommentEvent comment) {
                     if (comment.getCommentType() != CommentType.BLANK_LINE) comments++;
                 } else if (event instanceof NodeEvent node
@@ -456,9 +456,9 @@ public class JsonYamlConverter {
                 }
             }
         } catch (RuntimeException notParseable) {
-            return new ConversionPipeline.FormatLosses(0, 0);
+            return new FormatLosses(0, 0);
         }
-        return new ConversionPipeline.FormatLosses(comments, anchors);
+        return new FormatLosses(comments, anchors);
     }
 
     /**

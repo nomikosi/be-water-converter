@@ -169,28 +169,28 @@ class FormatAndDetectionTest {
         // lines took seven seconds, on the EDT, for a paste.
         String text = "x\n" + "\n".repeat(16_000) + "a: 1\n";
         long started = System.nanoTime();
-        assertThat(ConversionPipeline.detectFormat(text)).isEqualTo(Formats.FMT_YAML);
+        assertThat(FormatDetector.detectFormat(text)).isEqualTo(Formats.FMT_YAML);
         long millis = (System.nanoTime() - started) / 1_000_000;
         assertThat(millis).describedAs("detection took %d ms", millis).isLessThan(2_000);
         // The markers still see an indented or a bare line for what it is.
-        assertThat(ConversionPipeline.detectFormat("x\n\n\n  key = 1\n"))
+        assertThat(FormatDetector.detectFormat("x\n\n\n  key = 1\n"))
               .isEqualTo(Formats.FMT_TOML);
-        assertThat(ConversionPipeline.detectFormat("x\n-\n  a: 1\n"))
+        assertThat(FormatDetector.detectFormat("x\n-\n  a: 1\n"))
               .isEqualTo(Formats.FMT_YAML);
     }
 
     @Test @DisplayName("semicolon- and tab-separated CSV are detected, with their delimiter")
     void csvDelimiterDetection() {
         // Only the comma was tried, so a semicolon file was not CSV at all.
-        assertThat(ConversionPipeline.detectFormat("id;name\n1;Ada\n")).isEqualTo(Formats.FMT_CSV);
-        assertThat(ConversionPipeline.detectCsvDelimiter("id;name\n1;Ada\n")).isEqualTo(';');
-        assertThat(ConversionPipeline.detectFormat("id\tname\n1\tAda\n")).isEqualTo(Formats.FMT_CSV);
-        assertThat(ConversionPipeline.detectCsvDelimiter("id\tname\n1\tAda\n")).isEqualTo('\t');
-        assertThat(ConversionPipeline.detectCsvDelimiter("id,name\n1,Ada\n")).isEqualTo(',');
+        assertThat(FormatDetector.detectFormat("id;name\n1;Ada\n")).isEqualTo(Formats.FMT_CSV);
+        assertThat(FormatDetector.detectCsvDelimiter("id;name\n1;Ada\n")).isEqualTo(';');
+        assertThat(FormatDetector.detectFormat("id\tname\n1\tAda\n")).isEqualTo(Formats.FMT_CSV);
+        assertThat(FormatDetector.detectCsvDelimiter("id\tname\n1\tAda\n")).isEqualTo('\t');
+        assertThat(FormatDetector.detectCsvDelimiter("id,name\n1,Ada\n")).isEqualTo(',');
         // A decimal comma inside a semicolon file does not make it comma-separated.
-        assertThat(ConversionPipeline.detectCsvDelimiter("price;qty\n1,5;2\n2,5;3\n")).isEqualTo(';');
-        assertThat(ConversionPipeline.detectCsvDelimiter("just some prose\nwith no delimiter\n")).isNull();
-        assertThat(ConversionPipeline.detectCsvDelimiter("a: 1\nb: 2\n")).isNull();
+        assertThat(FormatDetector.detectCsvDelimiter("price;qty\n1,5;2\n2,5;3\n")).isEqualTo(';');
+        assertThat(FormatDetector.detectCsvDelimiter("just some prose\nwith no delimiter\n")).isNull();
+        assertThat(FormatDetector.detectCsvDelimiter("a: 1\nb: 2\n")).isNull();
     }
 
     @Test @DisplayName("Format refuses to rewrite a TOML date as a string")
@@ -244,16 +244,16 @@ class FormatAndDetectionTest {
         // searched for across the whole document.
         String configMap = "apiVersion: v1\nkind: ConfigMap\ndata:\n  Main.java: |\n"
               + "    package com.example;\n    class Main {}\n";
-        assertThat(ConversionPipeline.detectFormat(configMap)).isEqualTo(Formats.FMT_YAML);
+        assertThat(FormatDetector.detectFormat(configMap)).isEqualTo(Formats.FMT_YAML);
     }
 
     @Test @DisplayName("real Protobuf is still detected")
     void realProtoStillDetected() {
-        assertThat(ConversionPipeline.detectFormat("syntax = \"proto3\";\nmessage P { string a = 1; }"))
+        assertThat(FormatDetector.detectFormat("syntax = \"proto3\";\nmessage P { string a = 1; }"))
               .isEqualTo(Formats.FMT_PROTO);
-        assertThat(ConversionPipeline.detectFormat("message Person {\n  string name = 1;\n}"))
+        assertThat(FormatDetector.detectFormat("message Person {\n  string name = 1;\n}"))
               .isEqualTo(Formats.FMT_PROTO);
-        assertThat(ConversionPipeline.detectFormat("enum Colour {\n  RED = 0;\n}"))
+        assertThat(FormatDetector.detectFormat("enum Colour {\n  RED = 0;\n}"))
               .isEqualTo(Formats.FMT_PROTO);
     }
 
@@ -261,13 +261,13 @@ class FormatAndDetectionTest {
     void autoCloseRespectsCommentsAndSingleQuotes() throws Exception {
         // A brace inside a comment or a single-quoted string was counted as
         // real, and the appended closer made valid input fail to parse.
-        assertThat(pipeline.autoClose("{\"a\":1} // trailing {")).isEqualTo("{\"a\":1} // trailing {");
-        assertThat(pipeline.autoClose("{'a':'it {'}")).isEqualTo("{'a':'it {'}");
-        assertThat(pipeline.autoClose("{\"a\":1} /* note [ */")).isEqualTo("{\"a\":1} /* note [ */");
-        assertThat(pipeline.autoClose("{\"a\":1} # hash {")).isEqualTo("{\"a\":1} # hash {");
+        assertThat(JsonRepair.autoClose("{\"a\":1} // trailing {")).isEqualTo("{\"a\":1} // trailing {");
+        assertThat(JsonRepair.autoClose("{'a':'it {'}")).isEqualTo("{'a':'it {'}");
+        assertThat(JsonRepair.autoClose("{\"a\":1} /* note [ */")).isEqualTo("{\"a\":1} /* note [ */");
+        assertThat(JsonRepair.autoClose("{\"a\":1} # hash {")).isEqualTo("{\"a\":1} # hash {");
         // Genuinely unclosed input is still completed.
-        assertThat(pipeline.autoClose("{\"a\":[1,2")).isEqualTo("{\"a\":[1,2]}");
-        assertThat(pipeline.autoClose("{\"a\":\"unterminated")).isEqualTo("{\"a\":\"unterminated\"}");
+        assertThat(JsonRepair.autoClose("{\"a\":[1,2")).isEqualTo("{\"a\":[1,2]}");
+        assertThat(JsonRepair.autoClose("{\"a\":\"unterminated")).isEqualTo("{\"a\":\"unterminated\"}");
         // And the completed forms parse.
         assertThat(pipeline.formatInput("{\"a\":1} // trailing {", Formats.FMT_JSON, opts))
               .contains("\"a\"");
@@ -276,14 +276,14 @@ class FormatAndDetectionTest {
     @Test @DisplayName("autoClose puts its closers after a trailing line comment, not inside it")
     void autoCloseClosesAfterTrailingLineComment() throws Exception {
         // {"a":1 // note} is a document whose brace is part of the comment.
-        assertThat(pipeline.autoClose("{\"a\":1 // note")).isEqualTo("{\"a\":1 // note\n}");
-        assertThat(pipeline.autoClose("{\"a\":[1 # note")).isEqualTo("{\"a\":[1 # note\n]}");
+        assertThat(JsonRepair.autoClose("{\"a\":1 // note")).isEqualTo("{\"a\":1 // note\n}");
+        assertThat(JsonRepair.autoClose("{\"a\":[1 # note")).isEqualTo("{\"a\":[1 # note\n]}");
         assertThat(pipeline.formatInput("{\"a\":1 // note", Formats.FMT_JSON, opts))
               .contains("\"a\" : 1");
         assertThat(pipeline.normalizeToJson("{\"a\":1 // note", Formats.FMT_JSON, opts))
               .isEqualTo("{\"a\":1}");
         // Complete input ending in a comment gains nothing.
-        assertThat(pipeline.autoClose("{\"a\":1} // note")).isEqualTo("{\"a\":1} // note");
+        assertThat(JsonRepair.autoClose("{\"a\":1} // note")).isEqualTo("{\"a\":1} // note");
     }
 
     @Test @DisplayName("a comment-only JSON document is refused, not converted to null")
@@ -303,21 +303,21 @@ class FormatAndDetectionTest {
 
     @Test @DisplayName("detection looks past leading comment lines")
     void detectionSkipsLeadingComments() {
-        assertThat(ConversionPipeline.detectFormat("// note\n{\"a\": 1}")).isEqualTo(Formats.FMT_JSON);
-        assertThat(ConversionPipeline.detectFormat("# note\n{\"a\": 1}")).isEqualTo(Formats.FMT_JSON);
-        assertThat(ConversionPipeline.detectFormat("/* note\n   more */\n{\"a\": 1}")).isEqualTo(Formats.FMT_JSON);
+        assertThat(FormatDetector.detectFormat("// note\n{\"a\": 1}")).isEqualTo(Formats.FMT_JSON);
+        assertThat(FormatDetector.detectFormat("# note\n{\"a\": 1}")).isEqualTo(Formats.FMT_JSON);
+        assertThat(FormatDetector.detectFormat("/* note\n   more */\n{\"a\": 1}")).isEqualTo(Formats.FMT_JSON);
         // A bracket line after a comment was the TOML table-header check's
         // first line, so a JSON array with a comment above it was TOML.
-        assertThat(ConversionPipeline.detectFormat("# note\n[1, 2]")).isEqualTo(Formats.FMT_JSON);
-        assertThat(ConversionPipeline.detectFormat("# note\n[server]\nport = 1")).isEqualTo(Formats.FMT_TOML);
-        assertThat(ConversionPipeline.detectFormat("# note\n- a\n- b")).isEqualTo(Formats.FMT_YAML);
-        assertThat(ConversionPipeline.detectFormat("// licence\nsyntax = \"proto3\";\nmessage A { int32 x = 1; }"))
+        assertThat(FormatDetector.detectFormat("# note\n[1, 2]")).isEqualTo(Formats.FMT_JSON);
+        assertThat(FormatDetector.detectFormat("# note\n[server]\nport = 1")).isEqualTo(Formats.FMT_TOML);
+        assertThat(FormatDetector.detectFormat("# note\n- a\n- b")).isEqualTo(Formats.FMT_YAML);
+        assertThat(FormatDetector.detectFormat("// licence\nsyntax = \"proto3\";\nmessage A { int32 x = 1; }"))
               .isEqualTo(Formats.FMT_PROTO);
         // Nothing but comments is nothing.
-        assertThat(ConversionPipeline.detectFormat("# note\n// note")).isNull();
-        assertThat(ConversionPipeline.detectFormat("/* never closed")).isNull();
+        assertThat(FormatDetector.detectFormat("# note\n// note")).isNull();
+        assertThat(FormatDetector.detectFormat("/* never closed")).isNull();
         // A comment inside the document does not start it over.
-        assertThat(ConversionPipeline.withoutLeadingComments("a: 1\n# c\nb: 2")).isEqualTo("a: 1\n# c\nb: 2");
+        assertThat(FormatDetector.withoutLeadingComments("a: 1\n# c\nb: 2")).isEqualTo("a: 1\n# c\nb: 2");
     }
 
     @Test @DisplayName("a '#'-prefixed CSV header is a header, not a comment")
@@ -327,27 +327,27 @@ class FormatAndDetectionTest {
         // too little to compare column counts against: a two-line file stopped
         // being detected at all. The convention is ordinary in tab-separated
         // exports, so the CSV check reads the document as written.
-        assertThat(ConversionPipeline.detectFormat("#id,name\n1,Ann")).isEqualTo(Formats.FMT_CSV);
-        assertThat(ConversionPipeline.detectFormat("#id,name\n1,Ann\n2,Bob")).isEqualTo(Formats.FMT_CSV);
-        assertThat(ConversionPipeline.detectFormat("#chrom\tpos\nchr1\t100"))
+        assertThat(FormatDetector.detectFormat("#id,name\n1,Ann")).isEqualTo(Formats.FMT_CSV);
+        assertThat(FormatDetector.detectFormat("#id,name\n1,Ann\n2,Bob")).isEqualTo(Formats.FMT_CSV);
+        assertThat(FormatDetector.detectFormat("#chrom\tpos\nchr1\t100"))
               .isEqualTo(Formats.FMT_CSV);
-        assertThat(ConversionPipeline.detectFormat("#id;name\n1;Ann")).isEqualTo(Formats.FMT_CSV);
+        assertThat(FormatDetector.detectFormat("#id;name\n1;Ann")).isEqualTo(Formats.FMT_CSV);
         // The delimiter comes from the same reading, so the panel selects it
         // rather than leaving the combo on whatever was there before.
-        assertThat(ConversionPipeline.detectCsvDelimiter("#chrom\tpos\nchr1\t100")).isEqualTo('\t');
-        assertThat(ConversionPipeline.detectCsvDelimiter("#id;name\n1;Ann")).isEqualTo(';');
+        assertThat(FormatDetector.detectCsvDelimiter("#chrom\tpos\nchr1\t100")).isEqualTo('\t');
+        assertThat(FormatDetector.detectCsvDelimiter("#id;name\n1;Ann")).isEqualTo(';');
         // The other shape: a genuine note above a real header. Both are CSV,
         // so both readings are tried and the delimiter is found either way.
-        assertThat(ConversionPipeline.detectFormat("# exported\nid,name\n1,Ann"))
+        assertThat(FormatDetector.detectFormat("# exported\nid,name\n1,Ann"))
               .isEqualTo(Formats.FMT_CSV);
-        assertThat(ConversionPipeline.detectCsvDelimiter("# exported\nid;name\n1;Ann")).isEqualTo(';');
+        assertThat(FormatDetector.detectCsvDelimiter("# exported\nid;name\n1;Ann")).isEqualTo(';');
         // A commented header block over YAML or TOML must not tip either into
         // CSV: every structural check still runs first, on the stripped text.
-        assertThat(ConversionPipeline.detectFormat("# id, name\n# 1, Ann\nkey: value"))
+        assertThat(FormatDetector.detectFormat("# id, name\n# 1, Ann\nkey: value"))
               .isEqualTo(Formats.FMT_YAML);
-        assertThat(ConversionPipeline.detectFormat("# id, name\n# 1, Ann\n[server]\nport = 1"))
+        assertThat(FormatDetector.detectFormat("# id, name\n# 1, Ann\n[server]\nport = 1"))
               .isEqualTo(Formats.FMT_TOML);
-        assertThat(ConversionPipeline.detectFormat("# id, name\n// 1, Ann\n{\"a\": 1}"))
+        assertThat(FormatDetector.detectFormat("# id, name\n// 1, Ann\n{\"a\": 1}"))
               .isEqualTo(Formats.FMT_JSON);
     }
 

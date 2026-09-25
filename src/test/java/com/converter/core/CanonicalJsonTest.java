@@ -85,7 +85,7 @@ class CanonicalJsonTest {
         pipeline.canonicalJson(input, "JSON", ConversionOptions.DEFAULTS);
         assertThat(pipeline.formatInput(input, "JSON", ConversionOptions.DEFAULTS))
               .contains("100.00", "1.0");
-        assertThat(pipeline.sortKeys(input)).isEqualTo("{\"a\":1.0,\"b\":100.00}");
+        assertThat(LenientJson.sortKeys(input)).isEqualTo("{\"a\":1.0,\"b\":100.00}");
     }
 
 }

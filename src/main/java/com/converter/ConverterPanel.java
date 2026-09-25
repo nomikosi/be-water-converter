@@ -761,7 +761,7 @@ public class ConverterPanel implements Disposable {
      * matched or nothing could be told.
      */
     private String applyDetectedDelimiter(String text) {
-        Character found = ConversionPipeline.detectCsvDelimiter(text);
+        Character found = FormatDetector.detectCsvDelimiter(text);
         CsvDelimiter option = found == null ? null : CsvDelimiter.forChar(found);
         if (option == null || option == csvDelimiterCombo.getSelectedItem()) return "";
         csvDelimiterCombo.setSelectedItem(option);   // its listener persists the choice
@@ -791,7 +791,7 @@ public class ConverterPanel implements Disposable {
                     String text = inputArea.getText();
                     String head = text.length() > DETECT_SAMPLE_CHARS
                           ? text.substring(0, DETECT_SAMPLE_CHARS) : text;
-                    String detected = ConversionPipeline.detectFormat(head);
+                    String detected = FormatDetector.detectFormat(head);
                     if (detected == null) return;
                     // The delimiter is part of what "CSV" means for a paste, so
                     // it is set even when the format itself is already right.

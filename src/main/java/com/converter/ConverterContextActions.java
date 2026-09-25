@@ -18,6 +18,7 @@ package com.converter;
 
 import com.converter.core.ConversionOptions;
 import com.converter.core.ConversionPipeline;
+import com.converter.core.FormatDetector;
 import com.converter.core.Formats;
 import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
@@ -135,13 +136,13 @@ public final class ConverterContextActions {
         String sample = selected != null && !selected.isBlank() ? selected
               : editor.getDocument().getText(new com.intellij.openapi.util.TextRange(0,
                     Math.min(SNIFF_PREFIX_CHARS, editor.getDocument().getTextLength())));
-        return ConversionPipeline.detectFormat(sample) != null;
+        return FormatDetector.detectFormat(sample) != null;
     }
 
     /** Extension wins when there is one; otherwise fall back to sniffing the text. */
     private static String formatFor(String fileName, String text) {
         String byExtension = Formats.inputForFileName(fileName);
-        return byExtension != null ? byExtension : ConversionPipeline.detectFormat(text);
+        return byExtension != null ? byExtension : FormatDetector.detectFormat(text);
     }
 
     private static void notifyError(Project project, String message) {
@@ -312,7 +313,7 @@ public final class ConverterContextActions {
                 if (Formats.FMT_CSV.equals(inputFormat)) {
                     // The document's own delimiter beats the remembered one: a
                     // semicolon file read with the comma setting is one column wide.
-                    Character delimiter = ConversionPipeline.detectCsvDelimiter(text);
+                    Character delimiter = FormatDetector.detectCsvDelimiter(text);
                     if (delimiter != null)
                         options = options.withCsvFormat(
                               com.converter.core.CsvConverter.CsvFormat.forDelimiter(delimiter));
