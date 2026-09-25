@@ -340,6 +340,18 @@ public class JsonYamlConverter {
             super(options);
             this.formatting = formatting;
             yamlConstructors.put(Tag.FLOAT, new ConstructExactFloat());
+            // Format writes an integer back in decimal: 0x1F came back as 31,
+            // 0b101 as 5 and 1_000 as 1000. Conversions may; Format may not.
+            if (formatting) {
+                org.yaml.snakeyaml.constructor.Construct integers = yamlConstructors.get(Tag.INT);
+                yamlConstructors.put(Tag.INT, new AbstractConstruct() {
+                    @Override public Object construct(Node node) {
+                        Object value = integers.construct(node);
+                        DocumentFormatter.rejectRewrittenNumber(((ScalarNode) node).getValue(), value);
+                        return value;
+                    }
+                });
+            }
         }
 
         @Override protected Object constructObject(Node node) {
@@ -357,11 +369,16 @@ public class JsonYamlConverter {
                 String text = constructScalar((ScalarNode) node).replace("_", "");
                 String lower = text.toLowerCase(Locale.ROOT);
                 if (lower.endsWith("inf") || lower.endsWith("nan")) return nonFinite.construct(node);
+                BigDecimal value;
                 try {
-                    return new BigDecimal(text);
+                    value = new BigDecimal(text);
                 } catch (NumberFormatException notADecimal) {
                     return nonFinite.construct(node);
                 }
+                // 1.5e1 came back as 15 and 1. as 1, turning floats into
+                // integers, and -0.0 as 0.0.
+                if (formatting) DocumentFormatter.rejectRewrittenNumber(((ScalarNode) node).getValue(), value);
+                return value;
             }
         }
     }

@@ -23,8 +23,18 @@ import static com.converter.core.Formats.FMT_TOML;
 import static com.converter.core.Formats.FMT_XML;
 import static com.converter.core.Formats.FMT_YAML;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.util.RawValue;
+
+import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.math.BigDecimal;
 import java.util.regex.Pattern;
 
 /**
@@ -47,7 +57,7 @@ final class DocumentFormatter {
     String format(String input, String fmt, ConversionOptions opts) throws Exception {
         input = TextDecoder.stripBom(input);
         String formatted = switch (fmt) {
-            case FMT_JSON  -> LenientJson.pretty(JsonRepair.autoClose(input));
+            case FMT_JSON  -> formatJson(JsonRepair.autoClose(input), opts.sortKeys());
             case FMT_XML   -> prettyXml(input);
             // Per document, not once over the whole stream: yamlToJson turns a
             // multi-document file into a JSON array, and rendering that back
@@ -67,11 +77,59 @@ final class DocumentFormatter {
                                    .replaceAll("(\r?\n)(?:\r?\n){2,}", "$1$1").trim();
             default        -> input;
         };
-        // YAML and TOML sort inside their own formatters above, because both
-        // already pass through the JSON tree there and the sort has to happen
+        // JSON, YAML and TOML sort inside their own formatters above, because
+        // all three pass through the JSON tree there and the sort has to happen
         // while the tree exists.
-        if (opts.sortKeys() && FMT_JSON.equals(fmt)) return LenientJson.pretty(LenientJson.sortKeys(formatted));
         return formatted;
+    }
+
+    /**
+     * Re-indents JSON, writing every number exactly as the document spelled it.
+     *
+     * <p>Through the ordinary tree a number is kept by value, and Format wrote
+     * that value back its own way: {@code 1.5e1} came back as {@code 15},
+     * {@code 1.0e2} as {@code 1.0E+2} and {@code -0.0} as {@code 0.0}. A float
+     * turned integer is a different type to half the JSON readers there are.
+     * The document is still read by the lenient reader first, so everything it
+     * refuses is refused here too.
+     */
+    private static String formatJson(String input, boolean sortKeys) throws Exception {
+        LenientJson.read(LenientJson.PRETTY, input);
+        JsonNode tree;
+        try (JsonParser parser = LenientJson.PRETTY.createParser(input)) {
+            parser.nextToken();
+            tree = literalTree(parser, LenientJson.PRETTY.getNodeFactory());
+        }
+        return LenientJson.PRETTY.writeValueAsString(sortKeys ? JsonTrees.sorted(tree) : tree);
+    }
+
+    private static JsonNode literalTree(JsonParser parser, JsonNodeFactory nodes) throws IOException {
+        switch (parser.currentToken()) {
+            case START_OBJECT -> {
+                ObjectNode object = nodes.objectNode();
+                while (parser.nextToken() != JsonToken.END_OBJECT) {
+                    String name = parser.currentName();
+                    parser.nextToken();
+                    object.set(name, literalTree(parser, nodes));
+                }
+                return object;
+            }
+            case START_ARRAY -> {
+                ArrayNode array = nodes.arrayNode();
+                while (parser.nextToken() != JsonToken.END_ARRAY)
+                    array.add(literalTree(parser, nodes));
+                return array;
+            }
+            // Written back verbatim as a JSON value: the reader already
+            // checked it is one.
+            case VALUE_NUMBER_INT, VALUE_NUMBER_FLOAT -> {
+                return nodes.rawValueNode(new RawValue(parser.getText()));
+            }
+            case VALUE_STRING -> { return nodes.textNode(parser.getText()); }
+            case VALUE_TRUE -> { return nodes.booleanNode(true); }
+            case VALUE_FALSE -> { return nodes.booleanNode(false); }
+            default -> { return nodes.nullNode(); }
+        }
     }
 
     /**
@@ -95,6 +153,8 @@ final class DocumentFormatter {
                       + "underscore-separated numbers come back as plain decimals, and inf and nan "
                       + "as text, because the JSON step this uses has no other way to write them. "
                       + "The document is left as it is.");
+            if (TOML_DECIMAL_NUMBER.matcher(token).matches())
+                rejectRewrittenNumber(token, new BigDecimal(token.startsWith("+") ? token.substring(1) : token));
         });
         String pivot = toml.tomlToJson(input);
         // jsonToToml renders an empty table as the literal "# empty document",
@@ -102,6 +162,23 @@ final class DocumentFormatter {
         // There is no layout to apply to a document with no values anyway.
         if (LenientJson.PRETTY.readTree(pivot).isEmpty()) return input;
         return toml.jsonToToml(sortKeys ? LenientJson.sortKeys(pivot) : pivot);
+    }
+
+    /**
+     * Refuses a number the JSON step would write back differently. It keeps a
+     * number's value, not its spelling, so {@code 1.5e1} came back as
+     * {@code 15} — a float turned integer in a format that tells them apart —
+     * and {@code -0.0} as {@code 0.0}. A leading plus sign is the one
+     * difference allowed through: it changes neither value nor type.
+     */
+    static void rejectRewrittenNumber(String written, Object value) {
+        String unsigned = written.startsWith("+") ? written.substring(1) : written;
+        String rewritten = value.toString();
+        if (!rewritten.equals(unsigned))
+            throw new IllegalArgumentException(
+                  "Format would rewrite the number " + written + " as " + rewritten + ": the JSON "
+                  + "step this uses keeps a number's value, not the way it was written. "
+                  + "The document is left as it is.");
     }
 
     // Whole unquoted value tokens supplied by the TOML scanner. Keys, strings,
@@ -112,6 +189,8 @@ final class DocumentFormatter {
           "[+-]?0[xob][0-9A-Fa-f_]+"
           + "|[+-]?(?=[0-9.eE+\\-]*_)[0-9][0-9_.eE+\\-]*"
           + "|[+-]?(?:inf|nan)");
+    private static final Pattern TOML_DECIMAL_NUMBER = Pattern.compile(
+          "[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?");
 
     /**
      * What Format would silently discard from a document, as a phrase ("2

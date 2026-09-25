@@ -56,8 +56,9 @@ class NumericFidelityTest {
               .contains("1E+400").doesNotContain("Infinity");
         assertThat(new TomlConverter().jsonToToml("{\"a\":1e-400}"))
               .contains("1E-400").doesNotContain("0.0");
+        // Format goes further than keeping the value: it keeps the spelling.
         assertThat(flat(pipeline.formatInput("{\"a\":1e400}", Formats.FMT_JSON, opts)))
-              .isEqualTo("{\"a\":1E+400}");
+              .isEqualTo("{\"a\":1e400}");
     }
 
     @Test @DisplayName("a decimal longer than double keeps every digit")

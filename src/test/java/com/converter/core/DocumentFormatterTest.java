@@ -61,6 +61,29 @@ class DocumentFormatterTest {
             String result = pipeline.formatInput("{\"a\":1", Formats.FMT_JSON, ConversionOptions.DEFAULTS.withInferTypes(true));
             assertThat(json.readTree(result).get("a").intValue()).isEqualTo(1);
         }
+
+        @Test @DisplayName("Format writes every number exactly as the document spelled it")
+        void numbersKeepTheirSpelling() throws Exception {
+            String input = "{\"ratio\": 1.5e1, \"unit\": 1e0, \"c\": 1.0e2, \"n\": -0.0, \"price\": 1.10,"
+                  + " \"huge\": 1e400, \"big\": 12345678901234567890123, \"tiny\": 1E-7}";
+            for (ConversionOptions options : new ConversionOptions[]{opts, opts.withSortKeys(true)}) {
+                String formatted = pipeline.formatInput(input, Formats.FMT_JSON, options);
+                assertThat(formatted).contains(": 1.5e1", ": 1e0", ": 1.0e2", ": -0.0", ": 1.10", ": 1e400",
+                      ": 12345678901234567890123", ": 1E-7");
+            }
+            String sorted = pipeline.formatInput(input, Formats.FMT_JSON, opts.withSortKeys(true));
+            assertThat(sorted.indexOf("\"big\"")).isLessThan(sorted.indexOf("\"ratio\""));
+        }
+
+        @Test @DisplayName("Format still refuses what the reader refuses")
+        void readerRulesStillApply() {
+            assertThatThrownBy(() -> pipeline.formatInput("{\"a\":1,\"a\":2}", Formats.FMT_JSON, opts))
+                  .hasMessageContaining("Duplicate");
+            assertThatThrownBy(() -> pipeline.formatInput("{\"a\":1} {\"b\":2}", Formats.FMT_JSON, opts))
+                  .isInstanceOf(Exception.class);
+            assertThatThrownBy(() -> pipeline.formatInput("// only a comment", Formats.FMT_JSON, opts))
+                  .hasMessageContaining("no value");
+        }
     }
 
     @Nested @DisplayName("YAML")
@@ -149,6 +172,20 @@ class DocumentFormatterTest {
                 String formatted = pipeline.formatInput(input, "YAML", ConversionOptions.DEFAULTS.withSortKeys(sort));
                 assertThat(pipeline.canonicalJson(formatted, "YAML", ConversionOptions.DEFAULTS)).isEqualTo(pipeline.canonicalJson(input, "YAML", ConversionOptions.DEFAULTS));
             }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"0x1F", "0b101", "1_000", "1_000.5", "1.5e1", "1.0e2", "-0.0", "-0", ".5", "1."})
+        @DisplayName("Format refuses a number it would write back differently")
+        void refusesRewrittenNumbers(String number) {
+            assertThatThrownBy(() -> pipeline.formatInput("a: " + number + "\n", Formats.FMT_YAML, opts))
+                  .hasMessageContaining("Format would rewrite the number " + number);
+        }
+
+        @Test @DisplayName("numbers written the way JSON writes them format as before")
+        void plainNumbersStillFormat() throws Exception {
+            assertThat(pipeline.formatInput("a: 1.10\nb: +1\nc: 1E+2\nd: -12\n", Formats.FMT_YAML, opts))
+                  .isEqualTo("a: 1.10\nb: 1\nc: 1E+2\nd: -12\n");
         }
     }
 
@@ -249,6 +286,20 @@ class DocumentFormatterTest {
         void refusesLossyValuesInEveryContainer(String input) {
             assertThatThrownBy(() -> pipeline.formatInput(input, "TOML", ConversionOptions.DEFAULTS.withInferTypes(false)))
                   .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Format would rewrite");
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"5e+22", "6.626e-34", "1.5e1", "-0.0", "-0"})
+        @DisplayName("Format refuses a number it would write back differently")
+        void refusesRewrittenNumbers(String number) {
+            assertThatThrownBy(() -> pipeline.formatInput("a = " + number + "\n", Formats.FMT_TOML, opts))
+                  .hasMessageContaining("Format would rewrite the number " + number);
+        }
+
+        @Test @DisplayName("numbers written the way JSON writes them format as before")
+        void plainNumbersStillFormat() throws Exception {
+            assertThat(pipeline.formatInput("a = 1.10\nb = +1.5\nc = 1E+2\nd = -12\n", Formats.FMT_TOML, opts))
+                  .isEqualTo("a = 1.10\nb = 1.5\nc = 1E+2\nd = -12\n");
         }
     }
 
