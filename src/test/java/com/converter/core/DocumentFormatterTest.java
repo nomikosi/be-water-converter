@@ -341,6 +341,26 @@ class DocumentFormatterTest {
                   "<!DOCTYPE foo [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><foo>&x;</foo>"))
                   .isInstanceOf(Exception.class);
         }
+
+        @Test @DisplayName("Format keeps whitespace that is an element's whole value")
+        void whitespaceValuesSurvive() throws Exception {
+            String input = "<r><sep> </sep><indent>    </indent><b>1</b></r>";
+            String formatted = pipeline.formatInput(input, Formats.FMT_XML, opts);
+            assertThat(formatted).contains("<sep> </sep>").contains("<indent>    </indent>");
+            assertThat(pipeline.normalizeToJson(formatted, Formats.FMT_XML, opts))
+                  .isEqualTo(pipeline.normalizeToJson(input, Formats.FMT_XML, opts));
+        }
+
+        @Test @DisplayName("Format refuses to re-indent content declared xml:space=\"preserve\"")
+        void preservedSpaceIsNotReindented() throws Exception {
+            assertThatThrownBy(() -> pipeline.formatInput(
+                  "<r xml:space=\"preserve\"><a>1</a> <b>2</b></r>", Formats.FMT_XML, opts))
+                  .hasMessageContaining("xml:space");
+            // A preserved leaf has nothing to indent inside it, so it formats as written.
+            String leaf = pipeline.formatInput("<r><pre xml:space=\"preserve\">  two  spaces  </pre><b>1</b></r>",
+                  Formats.FMT_XML, opts);
+            assertThat(leaf).contains("<pre xml:space=\"preserve\">  two  spaces  </pre>");
+        }
     }
 
     @Nested @DisplayName("CSV")

@@ -22,8 +22,8 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
+import com.fasterxml.jackson.dataformat.xml.ser.ToXmlGenerator;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
@@ -41,6 +41,10 @@ public class JsonXmlConverter {
         jsonMapper = PivotJson.mapper();
         xmlMapper  = new XmlMapper();
         xmlMapper.enable(SerializationFeature.INDENT_OUTPUT);
+        // XML has no null, and an empty element reads back as "": the JSON
+        // {"middleName": null} came back as {"middleName": ""}. xsi:nil is the
+        // standard spelling, and the reader already turns it back into null.
+        xmlMapper.enable(ToXmlGenerator.Feature.WRITE_NULLS_AS_XSI_NIL);
     }
 
     public String jsonToXml(String json) throws Exception {
@@ -76,7 +80,11 @@ public class JsonXmlConverter {
             throw new IllegalArgumentException("Input XML must not be empty");
         }
         rejectMergingNames(xml);
-        JsonNode node = xmlMapper.readTree(xml.getBytes(StandardCharsets.UTF_8));
+        // The text, not its UTF-8 bytes: the document has been decoded already,
+        // and bytes made the parser decode it again by the XML declaration. An
+        // encoding="ISO-8859-1" file turned José into JosÃ©, and one declared
+        // UTF-16 failed outright.
+        JsonNode node = xmlMapper.readTree(xml);
         if (inferTypes) node = inferLeafTypes(node);
         return jsonMapper.writeValueAsString(node);
     }
@@ -239,20 +247,41 @@ public class JsonXmlConverter {
      */
     static final String NESTED_ARRAY_ELEMENT = "values";
 
-    /** Maps an arbitrary JSON key to a well-formed XML element name. */
+    /**
+     * Maps an arbitrary JSON key to a well-formed XML element name.
+     *
+     * <p>By XML's own name rules rather than Java's idea of a letter: µ, ª and º
+     * are letters to {@link Character#isLetter} and not name characters to XML,
+     * so {@code {"latency_µs": 12}} wrote an element this plugin's own reader
+     * then refused. The colon is excluded too, because in a name it declares a
+     * namespace prefix nobody bound.
+     */
     static String xmlElementName(String key) {
         if (key == null || key.isEmpty()) return "_";
         StringBuilder sb = new StringBuilder(key.length());
-        for (int i = 0; i < key.length(); i++) {
-            char c = key.charAt(i);
-            boolean valid = Character.isLetterOrDigit(c) || c == '_' || c == '-' || c == '.';
-            sb.append(valid ? c : '_');
-        }
-        char first = sb.charAt(0);
-        if (!(Character.isLetter(first) || first == '_')) {
-            sb.insert(0, '_');
-        }
+        key.codePoints().forEach(c -> {
+            if (c != ':' && isXmlNameChar(c)) sb.appendCodePoint(c);
+            else sb.append('_');
+        });
+        if (!isXmlNameStartChar(sb.codePointAt(0))) sb.insert(0, '_');
         return sb.toString();
+    }
+
+    /** XML 1.0 (fifth edition) NameStartChar, which is what the parsers enforce. */
+    static boolean isXmlNameStartChar(int c) {
+        return c == ':' || c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+              || (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) || (c >= 0xF8 && c <= 0x2FF)
+              || (c >= 0x370 && c <= 0x37D) || (c >= 0x37F && c <= 0x1FFF)
+              || (c >= 0x200C && c <= 0x200D) || (c >= 0x2070 && c <= 0x218F)
+              || (c >= 0x2C00 && c <= 0x2FEF) || (c >= 0x3001 && c <= 0xD7FF)
+              || (c >= 0xF900 && c <= 0xFDCF) || (c >= 0xFDF0 && c <= 0xFFFD)
+              || (c >= 0x10000 && c <= 0xEFFFF);
+    }
+
+    /** XML 1.0 (fifth edition) NameChar. */
+    static boolean isXmlNameChar(int c) {
+        return isXmlNameStartChar(c) || c == '-' || c == '.' || (c >= '0' && c <= '9') || c == 0xB7
+              || (c >= 0x300 && c <= 0x36F) || (c >= 0x203F && c <= 0x2040);
     }
 
     /** Suffixes a counter when a sanitized element name is already used by a sibling. */

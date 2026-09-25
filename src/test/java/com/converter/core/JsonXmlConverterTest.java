@@ -550,4 +550,45 @@ class JsonXmlConverterTest {
                   .isEqualTo("{\"m\":[1,2]}");
         }
     }
+
+    /** What XML cannot spell directly still has to come back as it went in. */
+    @Nested @DisplayName("round trips")
+    class RoundTrips {
+
+        @Test @DisplayName("a declared encoding does not decode the text a second time")
+        void declaredEncodingIsNotReapplied() throws Exception {
+            String latin = "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><r><name>José</name></r>";
+            assertThat(json.readTree(converter.xmlToJson(latin)).get("name").asText()).isEqualTo("José");
+            String utf16 = "<?xml version=\"1.0\" encoding=\"UTF-16\"?><r><name>日本</name></r>";
+            assertThat(json.readTree(converter.xmlToJson(utf16)).get("name").asText()).isEqualTo("日本");
+        }
+
+        @Test @DisplayName("element names follow XML's name rules, so the output reads back")
+        void elementNamesFollowXmlRules() throws Exception {
+            // Letters to Java, not name characters to XML.
+            assertThat(JsonXmlConverter.xmlElementName("latency_µs")).isEqualTo("latency__s");
+            assertThat(JsonXmlConverter.xmlElementName("ªº")).isEqualTo("__");
+            // Middle dot may follow a name but not start one; a supplementary letter is a name.
+            assertThat(JsonXmlConverter.xmlElementName("a·b")).isEqualTo("a·b");
+            assertThat(JsonXmlConverter.xmlElementName("·x")).isEqualTo("_·x");
+            assertThat(JsonXmlConverter.xmlElementName("𝒳")).isEqualTo("𝒳");
+            assertThat(JsonXmlConverter.xmlElementName("größe")).isEqualTo("größe");
+            assertThat(JsonXmlConverter.xmlElementName("ns:key")).isEqualTo("ns_key");
+
+            String input = "{\"latency_µs\":12,\"ª\":1,\"𝒳\":2,\"a·b\":3,"
+                  + "\"·x\":4,\"日本\":5,\"é\":6}";
+            JsonNode back = json.readTree(converter.xmlToJson(converter.jsonToXml(input), true));
+            assertThat(back.size()).isEqualTo(7);
+            assertThat(back.get("latency__s").asInt()).isEqualTo(12);
+            assertThat(back.get("𝒳").asInt()).isEqualTo(2);
+        }
+
+        @Test @DisplayName("null comes back as null, not as an empty string")
+        void nullSurvives() throws Exception {
+            String xml = converter.jsonToXml("{\"middleName\":null,\"xs\":[1,null,2],\"o\":{\"n\":null}}");
+            assertThat(xml).contains("xsi:nil=\"true\"");
+            assertThat(json.readTree(converter.xmlToJson(xml, true)))
+                  .isEqualTo(json.readTree("{\"middleName\":null,\"xs\":[1,null,2],\"o\":{\"n\":null}}"));
+        }
+    }
 }

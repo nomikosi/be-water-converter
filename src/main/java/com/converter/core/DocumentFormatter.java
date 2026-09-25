@@ -173,7 +173,7 @@ final class DocumentFormatter {
         doc.setXmlStandalone(true);
         doc.getDocumentElement().normalize();
         rejectMixedContent(doc.getDocumentElement());
-        stripWhitespaceNodes(doc.getDocumentElement());
+        stripIndentation(doc.getDocumentElement(), false);
 
         javax.xml.transform.TransformerFactory tf =
               javax.xml.transform.TransformerFactory.newInstance();
@@ -248,17 +248,43 @@ final class DocumentFormatter {
             if (children.item(i) instanceof org.w3c.dom.Element child) rejectMixedContent(child);
     }
 
-    /** Removes whitespace-only text nodes so re-indenting doesn't stack blank lines. */
-    private static void stripWhitespaceNodes(org.w3c.dom.Node node) {
-        org.w3c.dom.NodeList children = node.getChildNodes();
+    /**
+     * Removes the whitespace between child elements, so re-indenting doesn't
+     * stack blank lines.
+     *
+     * <p>Only BETWEEN elements: whitespace that is an element's whole content
+     * is its value. {@code <sep> </sep>} came back as {@code <sep/>}, and
+     * converting that read {@code ""} where the document said {@code " "}.
+     *
+     * <p>{@code xml:space="preserve"} makes the whitespace between children
+     * content too. The indenter cannot be told to leave one subtree alone, so an
+     * element that asks for it and has children to indent is refused.
+     *
+     * @param preserve whether an enclosing element asked for preservation
+     */
+    private static void stripIndentation(org.w3c.dom.Element element, boolean preserve) {
+        String space = element.getAttribute("xml:space");
+        if ("preserve".equals(space)) preserve = true;
+        else if ("default".equals(space)) preserve = false;
+
+        org.w3c.dom.NodeList children = element.getChildNodes();
+        boolean indented = false;
+        for (int i = 0; i < children.getLength(); i++) {
+            short type = children.item(i).getNodeType();
+            indented |= type == org.w3c.dom.Node.ELEMENT_NODE || type == org.w3c.dom.Node.COMMENT_NODE
+                  || type == org.w3c.dom.Node.PROCESSING_INSTRUCTION_NODE;
+        }
+        if (!indented) return;   // a leaf: its text is its value, whitespace included
+        if (preserve)
+            throw new IllegalArgumentException(
+                  "Format would re-indent <" + element.getTagName() + ">, whose whitespace is "
+                  + "declared significant with xml:space=\"preserve\". The document is left as it is.");
         for (int i = children.getLength() - 1; i >= 0; i--) {
             org.w3c.dom.Node child = children.item(i);
-            if (child.getNodeType() == org.w3c.dom.Node.TEXT_NODE
-                  && child.getTextContent().isBlank()) {
-                node.removeChild(child);
-            } else if (child.getNodeType() == org.w3c.dom.Node.ELEMENT_NODE) {
-                stripWhitespaceNodes(child);
-            }
+            if (child.getNodeType() == org.w3c.dom.Node.TEXT_NODE && child.getTextContent().isBlank())
+                element.removeChild(child);
+            else if (child instanceof org.w3c.dom.Element nested)
+                stripIndentation(nested, preserve);
         }
     }
 }
