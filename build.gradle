@@ -5,11 +5,22 @@ import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
 plugins {
     id 'java'
     id 'jacoco'
-    id 'org.jetbrains.intellij.platform' version '2.18.1'
+    id 'org.jetbrains.intellij.platform' version '2.19.0'
 }
 
 group = 'com.converter'
 version = '1.5.2'
+
+// Declared before anything else in the script: the IntelliJ Platform plugin
+// reads the toolchain while it configures tasks, and a value once read can
+// no longer be set.
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
 
 repositories {
     mavenCentral()
@@ -18,23 +29,29 @@ repositories {
     }
 }
 
-
 configurations {
     kotlinCompiler
     lombokProcessor
     kotlinJackson
 }
 
+def jacksonBom = 'com.fasterxml.jackson:jackson-bom:2.22.3'
+
 dependencies {
     intellijPlatform {
         intellijIdeaCommunity('2025.1.7.1')
     }
 
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.21.1'
-    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml:2.21.1'
-    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.21.1'
-    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-csv:2.21.1'
-    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-toml:2.21.1'
+    // The BOM gives every Jackson module one version, so they cannot drift apart.
+    implementation platform(jacksonBom)
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-csv'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-toml'
+    // The YAML reader is built on SnakeYAML's own classes, not only Jackson's,
+    // so it is a direct dependency: the version jackson-dataformat-yaml uses.
+    implementation 'org.yaml:snakeyaml:2.5'
     implementation 'com.fifesoft:rsyntaxtextarea:3.5.4'
     // Isolated from both the plugin and the IDE test class loader. Tests invoke
     // this compiler in a separate JVM and load the resulting classes.
@@ -42,17 +59,19 @@ dependencies {
     lombokProcessor 'org.projectlombok:lombok:1.18.48'
     // Binds the compiled Kotlin data classes the way their users will, in an
     // isolated class loader: a class that compiles can still fail to read its JSON.
-    kotlinJackson 'com.fasterxml.jackson.module:jackson-module-kotlin:2.21.1'
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    kotlinJackson platform(jacksonBom)
+    kotlinJackson 'com.fasterxml.jackson.module:jackson-module-kotlin'
+    testImplementation platform('org.junit:junit-bom:5.14.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter-api'
     // Parameterised tests: routing tables are covered per-format rather than by
     // one test per arm, which is what let several arms go untested.
-    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params'
     testImplementation 'org.assertj:assertj-core:3.27.7'
     // JUnit 4 is required at runtime by the IntelliJ platform test executor,
     // even though all tests are JUnit 5.
     testRuntimeOnly 'junit:junit:4.13.2'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 test {
@@ -178,14 +197,6 @@ tasks.withType(Test).configureEach {
     systemProperty 'bewater.jackson.annotations.classpath', configurations.testRuntimeClasspath.filter {
         it.name.startsWith('jackson-annotations-')
     }.asPath
-}
-
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
-    }
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
 }
 
 tasks.withType(JavaCompile).configureEach {

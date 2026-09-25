@@ -1,10 +1,25 @@
 version: 2
 updates:
+  # Related updates arrive as one pull request: the Jackson and JUnit BOMs set
+  # every module's version, and the workflow actions are tested together.
+  # Major versions still arrive one at a time, since each can change behaviour
+  # or, as gradle/actions v6 did, licence terms.
   - package-ecosystem: gradle
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      jackson:
+        patterns: ["com.fasterxml.jackson*"]
+        update-types: ["minor", "patch"]
+      junit:
+        patterns: ["org.junit*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

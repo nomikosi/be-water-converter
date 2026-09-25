@@ -42,7 +42,7 @@ public class TomlConverter {
 
     /**
      * Digit count at which jackson-dataformat-toml mis-reads a decimal integer.
-     * Measured across 2.17.2, 2.18.2, 2.19.0 and 2.21.1 — all identical, so this
+     * Measured across 2.17.2, 2.18.2, 2.19.0, 2.21.1 and 2.22.3 — all identical, so this
      * is a long-standing upstream defect rather than a regression to wait out.
      */
     private static final int BROKEN_DIGITS = 19;
