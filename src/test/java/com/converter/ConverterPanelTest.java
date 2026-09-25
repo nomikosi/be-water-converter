@@ -125,34 +125,40 @@ class ConverterPanelTest {
     void currentOptionsReflectsTheOptionControls() throws Exception {
         runOnEdt(() -> {
             ConverterPanel panel = new ConverterPanel();
-            field(panel, "sortKeysCheck", JCheckBox.class).setSelected(true);
-            field(panel, "inferTypesCheck", JCheckBox.class).setSelected(false);
-            field(panel, "filterField", JTextField.class).setText("users[0]");
-            JComboBox<?> delimiter = field(panel, "csvDelimiterCombo", JComboBox.class);
+            OptionsBar options = field(panel, "options", OptionsBar.class);
+            field(options, "sortKeysCheck", JCheckBox.class).setSelected(true);
+            field(options, "inferTypesCheck", JCheckBox.class).setSelected(false);
+            field(options, "filterField", JTextField.class).setText("users[0]");
+            JComboBox<?> delimiter = field(options, "csvDelimiterCombo", JComboBox.class);
             delimiter.setSelectedIndex(1);   // semicolon
 
-            Method m = ConverterPanel.class.getDeclaredMethod("currentOptions");
-            m.setAccessible(true);
-            Object opts = m.invoke(panel);
+            com.converter.core.ConversionOptions opts = options.currentOptions();
 
-            assertThat(readBool(opts, "sortKeys")).isTrue();
-            assertThat(readBool(opts, "inferTypes")).isFalse();
-            assertThat(String.valueOf(read(opts, "filterPath"))).isEqualTo("users[0]");
+            assertThat(opts.sortKeys()).isTrue();
+            assertThat(opts.inferTypes()).isFalse();
+            assertThat(opts.filterPath()).isEqualTo("users[0]");
             // The delimiter must reach the options record, not just the combo:
             // Compare read the wrong one for exactly this reason.
-            Object csvFormat = read(opts, "csvFormat");
-            assertThat(String.valueOf(read(csvFormat, "delimiter"))).isEqualTo(";");
+            assertThat(opts.csvFormat().delimiter()).isEqualTo(';');
         });
     }
 
-    private static Object read(Object target, String accessor) throws Exception {
-        Method m = target.getClass().getDeclaredMethod(accessor);
-        m.setAccessible(true);
-        return m.invoke(target);
-    }
-
-    private static boolean readBool(Object target, String accessor) throws Exception {
-        return (Boolean) read(target, accessor);
+    @Test
+    void theToolbarWrapsOntoMoreRowsWhenNarrow() throws Exception {
+        runOnEdt(() -> {
+            JPanel content = new ConverterPanel().getContent();
+            JPanel toolbar = findComponents(content, JPanel.class).stream()
+                  .filter(p -> p.getLayout() instanceof com.intellij.util.ui.WrapLayout)
+                  .findFirst().orElseThrow();
+            content.setSize(2400, 800);
+            content.validate();
+            int wide = toolbar.getPreferredSize().height;
+            content.setSize(260, 800);
+            content.validate();
+            // The bar reports the height of every row it wraps onto, so the
+            // panel above the editors grows instead of clipping them.
+            assertThat(toolbar.getPreferredSize().height).isGreaterThan(wide);
+        });
     }
 
     private static String comboSelection(ConverterPanel panel, String fieldName) throws Exception {

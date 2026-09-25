@@ -32,7 +32,8 @@ public class OpenConverterAction extends AnAction implements DumbAware {
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
         if (project == null) return;
-        ToolWindow tw = ToolWindowManager.getInstance(project).getToolWindow("Be Water");
+        ToolWindow tw = ToolWindowManager.getInstance(project)
+              .getToolWindow(ConverterToolWindowAccess.TOOL_WINDOW_ID);
         if (tw != null) {
             tw.show();
         }

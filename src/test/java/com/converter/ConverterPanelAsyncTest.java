@@ -255,7 +255,7 @@ class ConverterPanelAsyncTest {
             Method restore = ConverterPanel.class.getDeclaredMethod("restoreFromHistory", ConversionHistory.Entry.class);
             restore.setAccessible(true);
             restore.invoke(panel, entry);
-            assertThat(call(panel, "currentOptions")).isEqualTo(original);
+            assertThat(field(panel, "options", OptionsBar.class).currentOptions()).isEqualTo(original);
             assertThat(history().entries().getFirst().options()).isEqualTo(ConversionOptions.DEFAULTS);
             assertThat(new ConversionPipeline().renderFromJson(
                   new ConversionPipeline().normalizeToJson(input().getText(), "JSON", original), "CSV", original))
@@ -299,7 +299,7 @@ class ConverterPanelAsyncTest {
             else assertThat(status()).isEqualTo(expectedStatus);
             assertThat(field(panel, "outputFormatLabel", JLabel.class).getText()).isEqualTo(expectedFormat);
             assertThat(history().entries()).isEqualTo(expectedHistory);
-            assertThat(field(panel, "converting", AtomicBoolean.class)).isFalse();
+            assertThat(field(panel, "run", ConversionRun.class).isRunning()).isFalse();
             assertThat(field(panel, "convertBtn", JButton.class).getText()).isEqualTo("Convert");
         });
     }
@@ -388,14 +388,12 @@ class ConverterPanelAsyncTest {
         assertThat(output().getText()).isEqualTo("previous output");
         assertThat(history().entries()).isEmpty();
         assertThat(status()).contains("cancelled");
-        assertThat(field(panel, "converting", AtomicBoolean.class)).isFalse();
+        assertThat(field(panel, "run", ConversionRun.class).isRunning()).isFalse();
         assertThat(field(panel, "convertBtn", JButton.class).getText()).isEqualTo("Convert");
     }
 
     private void applyOptions(ConversionOptions options) throws Exception {
-        Method method = ConverterPanel.class.getDeclaredMethod("applyOptions", ConversionOptions.class);
-        method.setAccessible(true);
-        method.invoke(panel, options);
+        field(panel, "options", OptionsBar.class).applyOptions(options);
     }
 
     private Path writeFile(String name, String content) throws Exception {

@@ -16,12 +16,13 @@
 
 package com.converter;
 
+import com.intellij.util.ui.JBFont;
+import com.intellij.util.ui.JBUI;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.fife.ui.rtextarea.SearchContext;
 import org.fife.ui.rtextarea.SearchEngine;
 
 import javax.swing.*;
-import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
@@ -52,12 +53,12 @@ final class FindBar extends JPanel {
         this.status = status;
 
         field = new JTextField(24);
-        field.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        field.setFont(JBFont.label());
         field.setBackground(DROPDOWN_BG);
         field.setForeground(TEXT_BRIGHT);
         field.setCaretColor(TEXT_BRIGHT);
         field.setBorder(BorderFactory.createCompoundBorder(
-              BorderFactory.createLineBorder(BORDER, 1), new EmptyBorder(3, 6, 3, 6)));
+              BorderFactory.createLineBorder(BORDER, 1), JBUI.Borders.empty(3, 6)));
 
         field.addActionListener(e -> find(true));
         field.getInputMap().put(
@@ -84,7 +85,7 @@ final class FindBar extends JPanel {
         setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, BORDER));
         JLabel label = new JLabel("Find:");
         label.setForeground(TEXT_DIM);
-        label.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        label.setFont(JBFont.medium());
         add(label);
         add(field);
         add(prevBtn);

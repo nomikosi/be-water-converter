@@ -20,8 +20,6 @@ import com.converter.core.ConversionOptions;
 import com.converter.core.ConversionPipeline;
 import com.converter.core.FormatDetector;
 import com.converter.core.Formats;
-import com.intellij.notification.NotificationGroupManager;
-import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
@@ -48,8 +46,6 @@ public final class ConverterContextActions {
 
     /** Text size above which conversion runs on a background task with a progress bar. */
     private static final int BACKGROUND_THRESHOLD_CHARS = 100_000;
-
-    private static final String NOTIFICATION_GROUP = "Be Water Converter";
 
     // ── Shared context extraction ────────────────────────────────────────
 
@@ -146,13 +142,7 @@ public final class ConverterContextActions {
     }
 
     private static void notifyError(Project project, String message) {
-        try {
-            NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATION_GROUP)
-                  .createNotification("Be Water: conversion failed", message, NotificationType.ERROR)
-                  .notify(project);
-        } catch (Throwable ignored) {
-            // Notification group unavailable (e.g. headless): nothing else to do.
-        }
+        ConverterNotifications.error(project, "Be Water: conversion failed", message);
     }
 
     // ── Open in the tool window ──────────────────────────────────────────
@@ -178,11 +168,9 @@ public final class ConverterContextActions {
             // The same question the toolbar's Open asks: the panel's editor is
             // what slows down on a large document, whichever way it arrives.
             if (source.approximateSize() > ConverterFileOps.LARGE_FILE_WARNING_BYTES
-                  && com.intellij.openapi.ui.Messages.showYesNoDialog(project,
+                  && !ConverterDialogs.confirm(project, null, "Large File",
                         String.format("%s is %,d MB. Loading large files may be slow. Continue?",
-                              describe(source), source.approximateSize() / (1024 * 1024)),
-                        "Large File", com.intellij.openapi.ui.Messages.getWarningIcon())
-                        != com.intellij.openapi.ui.Messages.YES)
+                              describe(source), source.approximateSize() / (1024 * 1024))))
                 return;
             withResolvedText(project, source, "Loading " + describe(source), text ->
                   ConverterToolWindowAccess.withPanel(project,
@@ -210,7 +198,7 @@ public final class ConverterContextActions {
                 onText.accept(source.resolve());
             } catch (Exception unreadable) {
                 notifyError(project, "Could not read " + describe(source) + ": "
-                      + unreadable.getMessage());
+                      + ConverterNotifications.describe(unreadable));
             }
             return;
         }
@@ -223,7 +211,7 @@ public final class ConverterContextActions {
                 } catch (Exception unreadable) {
                     ApplicationManager.getApplication().invokeLater(
                           () -> notifyError(project, "Could not read " + describe(source) + ": "
-                                + unreadable.getMessage()),
+                                + ConverterNotifications.describe(unreadable)),
                           project.getDisposed());
                     return;
                 }
@@ -269,6 +257,18 @@ public final class ConverterContextActions {
             return ActionUpdateThread.BGT;
         }
 
+        /**
+         * Greys out the file's own format. It was offered, and picking it
+         * reported that input and output were the same format. Only a format
+         * the file name gives away is known here; sniffed content is not
+         * read on every menu update.
+         */
+        @Override public void update(@NotNull AnActionEvent e) {
+            VirtualFile file = e.getData(CommonDataKeys.VIRTUAL_FILE);
+            String own = file == null || file.isDirectory() ? null : Formats.inputForFileName(file.getName());
+            e.getPresentation().setEnabled(!target.equals(own));
+        }
+
         @Override public void actionPerformed(@NotNull AnActionEvent e) {
             Project project = e.getProject();
             Source source = sourceFrom(e);
@@ -309,7 +309,7 @@ public final class ConverterContextActions {
                 // document converted differently depending on the entry point.
                 // The subtree filter is deliberately not carried over — it
                 // belongs to the document open in the panel.
-                ConversionOptions options = ConverterPanel.persistedOptions();
+                ConversionOptions options = ConverterSettings.options();
                 if (Formats.FMT_CSV.equals(inputFormat)) {
                     // The document's own delimiter beats the remembered one: a
                     // semicolon file read with the comma setting is one column wide.
@@ -325,7 +325,7 @@ public final class ConverterContextActions {
                 // over a few nested arrays could run away with nothing asked.
                 if (Formats.FMT_CSV.equals(target)) {
                     long estimate = pipeline.estimateCsvRows(pipeline.parseJson(pivot), options.csvMode());
-                    if (estimate > ConverterPanel.persistedRowWarningThreshold()
+                    if (estimate > ConverterSettings.rowWarningThreshold()
                           && !confirmRows(project, options.csvMode(), estimate)) return;
                     indicator.checkCanceled();
                 }
@@ -337,8 +337,7 @@ public final class ConverterContextActions {
             } catch (com.intellij.openapi.progress.ProcessCanceledException cancelled) {
                 throw cancelled;
             } catch (Exception failure) {
-                String message = failure.getMessage() == null
-                      ? failure.getClass().getSimpleName() : failure.getMessage();
+                String message = ConverterNotifications.describe(failure);
                 ApplicationManager.getApplication().invokeLater(
                       () -> notifyError(project, message), project.getDisposed());
                 return;
@@ -353,10 +352,8 @@ public final class ConverterContextActions {
             java.util.concurrent.atomic.AtomicBoolean proceed = new java.util.concurrent.atomic.AtomicBoolean(false);
             if (project.isDisposed()) return false;
             ApplicationManager.getApplication().invokeAndWait(() -> proceed.set(
-                  com.intellij.openapi.ui.Messages.showYesNoDialog(project,
-                        String.format("%s will produce ~%,d rows. Continue?", mode, estimate),
-                        "Row Count Warning", com.intellij.openapi.ui.Messages.getWarningIcon())
-                        == com.intellij.openapi.ui.Messages.YES));
+                  ConverterDialogs.confirm(project, null, "Row Count Warning",
+                        String.format("%s will produce ~%,d rows. Continue?", mode, estimate))));
             return proceed.get();
         }
 
@@ -379,9 +376,8 @@ public final class ConverterContextActions {
                 } catch (Throwable failure) {
                     // Escaping this runnable would reach IdeEventQueue and be
                     // reported as an IDE internal error rather than as ours.
-                    String message = failure.getMessage() == null
-                          ? failure.getClass().getSimpleName() : failure.getMessage();
-                    notifyError(project, "Could not open the " + target + " result: " + message);
+                    notifyError(project, "Could not open the " + target + " result: "
+                          + ConverterNotifications.describe(failure));
                 }
             }, project.getDisposed());
         }

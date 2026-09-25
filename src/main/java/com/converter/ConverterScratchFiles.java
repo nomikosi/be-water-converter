@@ -26,7 +26,6 @@ import com.intellij.openapi.fileTypes.FileTypeManager;
 import com.intellij.openapi.fileTypes.LanguageFileType;
 import com.intellij.openapi.fileTypes.PlainTextLanguage;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.vfs.VirtualFile;
 
 import java.util.Locale;
@@ -84,10 +83,9 @@ final class ConverterScratchFiles {
     }
 
     private static boolean confirmLarge(Project project, int length) {
-        return Messages.showYesNoDialog(project,
+        return ConverterDialogs.confirm(project, null, "Large Result",
               String.format("The result is %,d characters. Writing it to a scratch file "
-                    + "will block the IDE until it is done. Continue?", length),
-              "Large Result", Messages.getWarningIcon()) == Messages.YES;
+                    + "will block the IDE until it is done. Continue?", length));
     }
 
     /**

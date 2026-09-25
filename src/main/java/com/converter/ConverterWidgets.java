@@ -17,12 +17,14 @@
 package com.converter;
 
 import com.intellij.ui.JBColor;
+import com.intellij.util.ui.JBFont;
 import com.intellij.util.ui.JBUI;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.Icon;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -32,8 +34,6 @@ import javax.swing.border.EmptyBorder;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
-import java.awt.Dimension;
-import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
@@ -48,6 +48,10 @@ import static com.converter.ConverterTheme.*;
  * Stateless factories for the converter's custom-painted Swing controls.
  * Kept apart from {@link ConverterPanel} so the panel holds behaviour rather
  * than widget construction; nothing here touches panel state.
+ *
+ * <p>Fonts come from {@link JBFont} and sizes from {@link JBUI}, so the
+ * controls follow the IDE's font size and Zoom IDE. Hard-coded SansSerif
+ * points and pixel sizes stayed small while the rest of the IDE grew.
  */
 final class ConverterWidgets {
 
@@ -101,7 +105,7 @@ final class ConverterWidgets {
 
             @Override protected void paintBorder(Graphics g) { /* rounded rect is the border */ }
         };
-        btn.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        btn.setFont(JBFont.medium());
         btn.setForeground(utilStyle ? UTIL_TEXT : BTN_TEXT);
         btn.setBackground(bg);
         btn.setOpaque(false);
@@ -128,7 +132,7 @@ final class ConverterWidgets {
     static void styleCombo(JComboBox<?> combo) {
         combo.setBackground(DROPDOWN_BG);
         combo.setForeground(TEXT_BRIGHT);
-        combo.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        combo.setFont(JBFont.label());
         combo.setBorder(BorderFactory.createLineBorder(BORDER, 1));
         combo.setRenderer(new DefaultListCellRenderer() {
             @Override
@@ -169,23 +173,34 @@ final class ConverterWidgets {
         };
         lbl.setOpaque(false);
         lbl.setForeground(Color.WHITE);
-        lbl.setFont(new Font("SansSerif", Font.BOLD, 11));
+        lbl.setFont(JBFont.small().asBold());
         lbl.setBorder(JBUI.Borders.empty(3, 10));
         return lbl;
+    }
+
+    /** A checkbox styled for the options bar. */
+    static JCheckBox checkBox(String label, boolean selected, String tooltip) {
+        JCheckBox check = new JCheckBox(label, selected);
+        check.setToolTipText(tooltip);
+        check.setOpaque(false);
+        check.setForeground(TEXT_BRIGHT);
+        check.setFont(JBFont.label());
+        check.setFocusPainted(false);
+        return check;
     }
 
     /** Dimmed caption used for toolbar and options-bar labels. */
     static JLabel toolbarLabel(String text) {
         JLabel lbl = new JLabel(text);
         lbl.setForeground(TEXT_DIM);
-        lbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        lbl.setFont(JBFont.medium());
         return lbl;
     }
 
     /** Vertical rule separating toolbar groups. */
     static JSeparator separator() {
         JSeparator sep = new JSeparator(SwingConstants.VERTICAL);
-        sep.setPreferredSize(new Dimension(1, 24));
+        sep.setPreferredSize(JBUI.size(1, 24));
         sep.setForeground(new JBColor(new Color(200, 200, 200), new Color(80, 80, 80)));
         return sep;
     }

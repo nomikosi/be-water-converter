@@ -20,7 +20,9 @@ import com.converter.core.*;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.ui.JBColor;
+import com.intellij.util.ui.JBFont;
 import com.intellij.util.ui.JBUI;
+import com.intellij.util.ui.WrapLayout;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 import org.fife.ui.rsyntaxtextarea.Theme;
@@ -50,19 +52,6 @@ public class ConverterPanel implements Disposable {
     /** Client-property key under which the panel registers itself on its root component. */
     public static final String PANEL_CLIENT_PROPERTY = "beWater.converterPanel";
 
-    private static final String NOTIFICATION_GROUP = "Be Water Converter";
-
-    // PropertiesComponent keys for options persisted across IDE restarts.
-    private static final String PROP_CSV_MODE       = "beWater.csvMode";
-    private static final String PROP_ROW_THRESHOLD  = "beWater.rowThreshold";
-    private static final String PROP_LOMBOK         = "beWater.lombok";
-    private static final String PROP_INFER_TYPES    = "beWater.csvInferTypes";
-    private static final String PROP_DETECT_DATES   = "beWater.detectDates";
-    private static final String PROP_SPLIT_VERTICAL = "beWater.splitVertical";
-    private static final String PROP_WRAP_LINES     = "beWater.wrapLines";
-    private static final String PROP_SORT_KEYS      = "beWater.sortKeys";
-    private static final String PROP_CSV_DELIMITER  = "beWater.csvDelimiter";
-
     /**
      * A single insertion of at least this many characters is treated as a paste
      * or drop rather than typing, and triggers input-format detection.
@@ -91,36 +80,6 @@ public class ConverterPanel implements Disposable {
 
     private static final String[] ALL_INPUTS = Formats.inputNames();
 
-    /** Delimiter choices offered in the options bar, with their converter format. */
-    enum CsvDelimiter {
-        COMMA("Comma  ,",     "comma",     CsvConverter.CsvFormat.DEFAULT),
-        SEMICOLON("Semicolon  ;", "semicolon", CsvConverter.CsvFormat.SEMICOLON),
-        TAB("Tab",            "tab",       CsvConverter.CsvFormat.TAB);
-
-        private final String label;
-        /** How a status message names the delimiter: "semicolon-separated". */
-        final String noun;
-        final CsvConverter.CsvFormat format;
-
-        CsvDelimiter(String label, String noun, CsvConverter.CsvFormat format) {
-            this.label = label;
-            this.noun = noun;
-            this.format = format;
-        }
-
-        /** The option for a delimiter character detection found, or null for one not offered. */
-        static CsvDelimiter forChar(char delimiter) {
-            for (CsvDelimiter option : values())
-                if (option.format.delimiter() == delimiter) return option;
-            return null;
-        }
-
-        @Override public String toString() { return label; }
-    }
-
-    private static final long DEFAULT_ROW_WARNING_THRESHOLD = 1_000L;
-
-
     private static final int STATUS_MAX_LEN = 120;
     private static final String ACTION_CONVERT = "convert";
     private static final String ACTION_FORMAT = "format";
@@ -139,23 +98,8 @@ public class ConverterPanel implements Disposable {
     private final JLabel            outputFormatLabel;
     private final JComboBox<String> inputCombo;
     private final JComboBox<String> outputCombo;
-    private final JComboBox<CsvConverter.CsvMode> csvModeCombo;
-    private final JLabel    csvModeHint;
-    private final JSpinner  rowThresholdSpinner;
-    private final JLabel    rowThresholdLabel;
-    private final JCheckBox lombokCheck;
-    private final JCheckBox detectDatesCheck;
-    private final JCheckBox inferTypesCheck;
-    private final JCheckBox sortKeysCheck;
-    private final JTextField filterField;
-    private final JComboBox<CsvDelimiter> csvDelimiterCombo;
+    private final OptionsBar options;
     private final ConversionHistory history = new ConversionHistory();
-    private final JPanel    csvOptions;
-    private final JPanel    csvInputOptions;
-    private final JPanel    csvDelimiterOptions;
-    private final JPanel    javaOptions;
-    private final JPanel    generalOptions;
-    private final JPanel    optionsBar;
     private final JSplitPane splitPane;
     private JButton convertBtn;
     private JButton splitToggleBtn;
@@ -164,14 +108,9 @@ public class ConverterPanel implements Disposable {
     private RSyntaxTextArea findTarget;
 
     private final com.intellij.openapi.project.Project project;
-    private final AtomicBoolean converting = new AtomicBoolean(false);
-    /** Set by Cancel; also covers the window before the pooled task starts running. */
-    private final AtomicBoolean cancelRequested = new AtomicBoolean(false);
+    private final ConversionRun run = new ConversionRun();
     private final PropertyChangeListener lafListener;
     private volatile boolean disposed;
-    private volatile Thread convertWorker;
-    /** Guards convertWorker so a cancel cannot interrupt the pool's next task. */
-    private final Object workerLock = new Object();
 
     private final ConversionPipeline pipeline;
     private final BackgroundTasks tasks;
@@ -212,7 +151,7 @@ public class ConverterPanel implements Disposable {
                       if (detectedFormat != null) {
                           setInputTextQuietly(content);
                           inputCombo.setSelectedItem(detectedFormat);
-                          if (FMT_CSV.equals(detectedFormat)) note = applyDetectedDelimiter(content);
+                          if (FMT_CSV.equals(detectedFormat)) note = options.applyDetectedDelimiter(content);
                       } else {
                           editors.replaceInput(content, true);
                       }
@@ -229,122 +168,7 @@ public class ConverterPanel implements Disposable {
         outputCombo = buildCombo(Formats.outputsFor(FMT_JSON));
         outputCombo.setSelectedItem(FMT_XML);
 
-        // ── conversion-specific option controls ──────────────────────────
-        csvModeCombo = ConverterWidgets.combo(CsvConverter.CsvMode.values());
-        csvModeCombo.setToolTipText("How arrays of objects are expanded into CSV rows");
-
-        csvModeHint = new JLabel(csvModeHintFor(CsvConverter.CsvMode.FLAT_FIRST));
-        csvModeHint.setForeground(TEXT_DIM);
-        csvModeHint.setFont(new Font("SansSerif", Font.ITALIC, 12));
-
-        rowThresholdLabel = toolbarLabel("Row warning:");
-        rowThresholdSpinner = new JSpinner(
-              new SpinnerNumberModel(
-                    (Number) DEFAULT_ROW_WARNING_THRESHOLD, 10L, 10_000_000L, 100L));
-        rowThresholdSpinner.setToolTipText(
-              "CSV conversions estimated to exceed this row count trigger a confirmation");
-        rowThresholdSpinner.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        rowThresholdSpinner.setPreferredSize(new Dimension(90, 26));
-
-        csvModeCombo.addActionListener(e -> {
-            CsvConverter.CsvMode m = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
-            if (m != null) csvModeHint.setText(csvModeHintFor(m));
-        });
-
-        lombokCheck = new JCheckBox("Lombok annotations");
-        lombokCheck.setToolTipText(
-              "Annotate generated classes with @Data, @NoArgsConstructor and @AllArgsConstructor");
-        lombokCheck.setOpaque(false);
-        lombokCheck.setForeground(TEXT_BRIGHT);
-        lombokCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        lombokCheck.setFocusPainted(false);
-
-        detectDatesCheck = new JCheckBox("Detect dates", true);
-        detectDatesCheck.setToolTipText(
-              "Type ISO-8601 values as LocalDate / LocalDateTime / OffsetDateTime instead of String");
-        detectDatesCheck.setOpaque(false);
-        detectDatesCheck.setForeground(TEXT_BRIGHT);
-        detectDatesCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        detectDatesCheck.setFocusPainted(false);
-
-        inferTypesCheck = new JCheckBox("Infer types", true);
-        inferTypesCheck.setToolTipText(
-              "Convert CSV/XML values that look like numbers, booleans or null into typed JSON values");
-        inferTypesCheck.setOpaque(false);
-        inferTypesCheck.setForeground(TEXT_BRIGHT);
-        inferTypesCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        inferTypesCheck.setFocusPainted(false);
-
-        sortKeysCheck = new JCheckBox("Sort keys", false);
-        sortKeysCheck.setToolTipText("<html>Sort object keys alphabetically so output is "
-              + "stable and diffable (array order is kept).<br>"
-              + "Applies to conversions, and to Format for JSON, YAML and TOML.</html>");
-        sortKeysCheck.setOpaque(false);
-        sortKeysCheck.setForeground(TEXT_BRIGHT);
-        sortKeysCheck.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        sortKeysCheck.setFocusPainted(false);
-
-        csvDelimiterCombo = ConverterWidgets.combo(CsvDelimiter.values());
-        csvDelimiterCombo.setToolTipText(
-              "Delimiter used when reading and writing CSV (semicolon is common in Europe)");
-
-        csvOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        csvOptions.setOpaque(false);
-        csvOptions.add(toolbarLabel("CSV mode:"));
-        csvOptions.add(csvModeCombo);
-        csvOptions.add(csvModeHint);
-        csvOptions.add(rowThresholdLabel);
-        csvOptions.add(rowThresholdSpinner);
-        // Visible for both CSV modes: the warning it governs fires for both, so
-        // hiding it under FLAT_FIRST left the default 1,000-row modal with no
-        // visible way to change the limit.
-
-        csvInputOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        csvInputOptions.setOpaque(false);
-        csvInputOptions.add(toolbarLabel("Input:"));
-        csvInputOptions.add(inferTypesCheck);
-
-        // Shown whenever CSV is on either side — the delimiter applies to both.
-        csvDelimiterOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        csvDelimiterOptions.setOpaque(false);
-        csvDelimiterOptions.add(toolbarLabel("Delimiter:"));
-        csvDelimiterOptions.add(csvDelimiterCombo);
-
-        javaOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        javaOptions.setOpaque(false);
-        javaOptions.add(toolbarLabel("Code gen:"));
-        javaOptions.add(lombokCheck);
-        javaOptions.add(detectDatesCheck);
-
-        filterField = new JTextField(16);
-        filterField.setToolTipText("<html>Convert only part of the document.<br>"
-              + "JSON Pointer (<code>/users/0/name</code>) or dotted "
-              + "(<code>users[0].name</code>). Empty converts everything.</html>");
-        filterField.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        filterField.setBackground(DROPDOWN_BG);
-        filterField.setForeground(TEXT_BRIGHT);
-        filterField.setCaretColor(TEXT_BRIGHT);
-        filterField.setBorder(BorderFactory.createCompoundBorder(
-              BorderFactory.createLineBorder(BORDER, 1),
-              new javax.swing.border.EmptyBorder(3, 6, 3, 6)));
-        filterField.addActionListener(e -> doConvert());   // Enter re-runs the conversion
-
-        // Applies to every conversion, so it is always visible.
-        generalOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        generalOptions.setOpaque(false);
-        generalOptions.add(sortKeysCheck);
-        generalOptions.add(toolbarLabel("Filter:"));
-        generalOptions.add(filterField);
-
-        optionsBar = new JPanel(new WrapLayout(FlowLayout.LEFT, 8, 5));
-        optionsBar.setBackground(BG_LABEL_BAR);
-        optionsBar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, BORDER));
-        optionsBar.add(toolbarLabel("Options:"));
-        optionsBar.add(generalOptions);
-        optionsBar.add(csvInputOptions);
-        optionsBar.add(csvDelimiterOptions);
-        optionsBar.add(csvOptions);
-        optionsBar.add(javaOptions);
+        options = new OptionsBar(this::doConvert);   // Enter in the filter re-runs the conversion
 
         inputCombo.addActionListener(e -> {
             String fmt = (String) inputCombo.getSelectedItem();
@@ -364,16 +188,17 @@ public class ConverterPanel implements Disposable {
         splitPane.setBorder(null);
         splitPane.setBackground(BG_DARK);
         installDividerUI();
-        applyPersistedOptions();
+        restoreLayout();
+        options.restoreAndRemember();
 
         statusLabel = new JLabel("Ready");
         statusLabel.setForeground(TEXT_DIM);
-        statusLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        statusLabel.setFont(JBFont.medium());
         statusLabel.setBorder(JBUI.Borders.empty(4, 10));
 
         charCountLabel = new JLabel("");
         charCountLabel.setForeground(TEXT_DIM);
-        charCountLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        charCountLabel.setFont(JBFont.small());
         charCountLabel.setBorder(JBUI.Borders.empty(4, 10));
         updateCharCount();
 
@@ -404,7 +229,7 @@ public class ConverterPanel implements Disposable {
         JPanel north = new JPanel(new BorderLayout());
         north.setOpaque(false);
         north.add(toolbar,    BorderLayout.NORTH);
-        north.add(optionsBar, BorderLayout.SOUTH);
+        north.add(options.component(), BorderLayout.SOUTH);
 
         mainPanel.addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
@@ -448,16 +273,7 @@ public class ConverterPanel implements Disposable {
     @Override
     public void dispose() {
         disposed = true;
-        // Without this a conversion in flight when the project closes runs to
-        // completion on a pooled thread, and the CSV row-warning path could put
-        // up an application-modal dialog owned by the shared frame.
-        cancelRequested.set(true);
-        // Under the same lock the worker clears itself under, for the reason
-        // cancelConvert gives: the thread belongs to the shared pool, and an
-        // interrupt landing after the task finished would hit its next job.
-        synchronized (workerLock) {
-            if (convertWorker != null) convertWorker.interrupt();
-        }
+        run.stop();
         UIManager.removePropertyChangeListener(lafListener);
     }
 
@@ -473,7 +289,7 @@ public class ConverterPanel implements Disposable {
             setInputTextQuietly(text);
             inputCombo.setSelectedItem(format);
             if (FMT_CSV.equals(format)) {
-                String note = applyDetectedDelimiter(text);
+                String note = options.applyDetectedDelimiter(text);
                 if (!note.isEmpty()) setStatus("Loaded CSV input" + note, true);
             }
         } else {
@@ -488,125 +304,15 @@ public class ConverterPanel implements Disposable {
     public void openFile()    { doOpenFile(); }
     public void saveOutput()  { doSaveFile(); }
 
-    // ── Option persistence (application-level, survives IDE restarts) ────
-    private void applyPersistedOptions() {
-        String mode = loadProp(PROP_CSV_MODE);
-        if (mode != null) {
-            try {
-                csvModeCombo.setSelectedItem(CsvConverter.CsvMode.valueOf(mode));
-            } catch (IllegalArgumentException ignored) {}
-        }
-        String threshold = loadProp(PROP_ROW_THRESHOLD);
-        if (threshold != null) {
-            try {
-                long v = Long.parseLong(threshold);
-                if (v >= 10L && v <= 10_000_000L) rowThresholdSpinner.setValue(v);
-            } catch (NumberFormatException ignored) {}
-        }
-        lombokCheck.setSelected("true".equals(loadProp(PROP_LOMBOK)));
-        if (loadProp(PROP_INFER_TYPES) != null) {
-            inferTypesCheck.setSelected("true".equals(loadProp(PROP_INFER_TYPES)));
-        }
-        if (loadProp(PROP_DETECT_DATES) != null) {
-            detectDatesCheck.setSelected("true".equals(loadProp(PROP_DETECT_DATES)));
-        }
-        sortKeysCheck.setSelected("true".equals(loadProp(PROP_SORT_KEYS)));
-        String delimiter = loadProp(PROP_CSV_DELIMITER);
-        if (delimiter != null) {
-            try {
-                csvDelimiterCombo.setSelectedItem(CsvDelimiter.valueOf(delimiter));
-            } catch (IllegalArgumentException ignored) {}
-        }
-        if ("true".equals(loadProp(PROP_WRAP_LINES))) {
-            setLineWrap(true);
-        }
-        if ("true".equals(loadProp(PROP_SPLIT_VERTICAL))) {
+    /** Restores the remembered editor layout: soft-wrap and split orientation. */
+    private void restoreLayout() {
+        if (ConverterSettings.wrapLines()) setLineWrap(true);
+        if (ConverterSettings.splitVertical()) {
             splitPane.setOrientation(JSplitPane.VERTICAL_SPLIT);
             if (splitToggleBtn != null) {
                 splitToggleBtn.setIcon(com.intellij.icons.AllIcons.Actions.SplitHorizontally);
             }
             installDividerUI();
-        }
-
-        csvModeCombo.addActionListener(e -> {
-            Object m = csvModeCombo.getSelectedItem();
-            if (m != null) saveProp(PROP_CSV_MODE, m.toString());
-        });
-        rowThresholdSpinner.addChangeListener(e ->
-              saveProp(PROP_ROW_THRESHOLD, rowThresholdSpinner.getValue().toString()));
-        lombokCheck.addActionListener(e ->
-              saveProp(PROP_LOMBOK, String.valueOf(lombokCheck.isSelected())));
-        inferTypesCheck.addActionListener(e ->
-              saveProp(PROP_INFER_TYPES, String.valueOf(inferTypesCheck.isSelected())));
-        detectDatesCheck.addActionListener(e ->
-              saveProp(PROP_DETECT_DATES, String.valueOf(detectDatesCheck.isSelected())));
-        sortKeysCheck.addActionListener(e ->
-              saveProp(PROP_SORT_KEYS, String.valueOf(sortKeysCheck.isSelected())));
-        csvDelimiterCombo.addActionListener(e -> {
-            Object d = csvDelimiterCombo.getSelectedItem();
-            if (d != null) saveProp(PROP_CSV_DELIMITER, ((CsvDelimiter) d).name());
-        });
-    }
-
-    /**
-     * The options the user last chose in the tool window, for callers that have
-     * no panel of their own.
-     *
-     * <p>The context-menu conversions used {@code ConversionOptions.DEFAULTS},
-     * so a semicolon CSV was read and written as comma-separated and Sort keys,
-     * Detect dates and Lombok were all ignored — the same document converted two
-     * different ways depending on which entry point ran it.
-     */
-    static ConversionOptions persistedOptions() {
-        CsvConverter.CsvFormat delimiter = CsvConverter.CsvFormat.DEFAULT;
-        String saved = loadProp(PROP_CSV_DELIMITER);
-        if (saved != null) {
-            try { delimiter = CsvDelimiter.valueOf(saved).format; }
-            catch (IllegalArgumentException unknownName) { /* keep the default */ }
-        }
-        CsvConverter.CsvMode mode = CsvConverter.CsvMode.FLAT_FIRST;
-        String savedMode = loadProp(PROP_CSV_MODE);
-        if (savedMode != null) {
-            try { mode = CsvConverter.CsvMode.valueOf(savedMode); }
-            catch (IllegalArgumentException unknownName) { /* keep the default */ }
-        }
-        // Absent means "never set", and these two default to on in the UI. Read
-        // once each: the rule belongs in one place, and a later edit touching
-        // only one of a repeated pair would flip the default silently.
-        String savedInfer = loadProp(PROP_INFER_TYPES);
-        String savedDates = loadProp(PROP_DETECT_DATES);
-        boolean inferTypes  = savedInfer == null || "true".equals(savedInfer);
-        boolean detectDates = savedDates == null || "true".equals(savedDates);
-        return new ConversionOptions(mode, delimiter,
-              "true".equals(loadProp(PROP_LOMBOK)), detectDates, inferTypes,
-              "true".equals(loadProp(PROP_SORT_KEYS)), "");
-    }
-
-    /** The row count above which a CSV conversion asks first, as last set in the tool window. */
-    static long persistedRowWarningThreshold() {
-        String saved = loadProp(PROP_ROW_THRESHOLD);
-        if (saved != null) {
-            try {
-                long value = Long.parseLong(saved);
-                if (value >= 10L && value <= 10_000_000L) return value;
-            } catch (NumberFormatException ignored) { /* keep the default */ }
-        }
-        return DEFAULT_ROW_WARNING_THRESHOLD;
-    }
-
-    private static String loadProp(String key) {
-        try {
-            return com.intellij.ide.util.PropertiesComponent.getInstance().getValue(key);
-        } catch (Throwable outsideIde) {
-            return null;
-        }
-    }
-
-    private static void saveProp(String key, String value) {
-        try {
-            com.intellij.ide.util.PropertiesComponent.getInstance().setValue(key, value);
-        } catch (Throwable outsideIde) {
-            // Outside a full IDE (tests, standalone) options simply aren't persisted.
         }
     }
 
@@ -647,16 +353,8 @@ public class ConverterPanel implements Disposable {
     }
 
     private void bindShortcut(KeyStroke keyStroke, String actionKey, Action action) {
-        JComponent[] targets = {
-              mainPanel,
-              inputArea,
-              outputArea,
-              inputCombo,
-              outputCombo,
-              csvModeCombo,
-              rowThresholdSpinner,
-              lombokCheck
-        };
+        List<JComponent> targets = new ArrayList<>(List.of(mainPanel, inputArea, outputArea, inputCombo, outputCombo));
+        targets.addAll(List.of(options.shortcutTargets()));
         for (JComponent target : targets) {
             target.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
                   .put(keyStroke, actionKey);
@@ -682,10 +380,10 @@ public class ConverterPanel implements Disposable {
         outputCombo.addActionListener(e -> updateConversionOptions());
 
         convertBtn = buildButton("Convert", ACCENT, ACCENT_HOVER, false);
-        convertBtn.setFont(new Font("SansSerif", Font.BOLD, 13));
+        convertBtn.setFont(JBFont.label().asBold());
         convertBtn.setToolTipText("Convert (Ctrl+Enter)");
         convertBtn.addActionListener(e -> {
-            if (converting.get()) cancelConvert(); else doConvert();
+            if (run.isRunning()) cancelConvert(); else doConvert();
         });
         bar.add(convertBtn);
 
@@ -755,20 +453,6 @@ public class ConverterPanel implements Disposable {
     }
 
     /**
-     * Selects the delimiter a CSV text actually uses, so a semicolon file is
-     * not read as one wide column because the option still said comma. Returns
-     * a status suffix naming the change, or "" when the selection already
-     * matched or nothing could be told.
-     */
-    private String applyDetectedDelimiter(String text) {
-        Character found = FormatDetector.detectCsvDelimiter(text);
-        CsvDelimiter option = found == null ? null : CsvDelimiter.forChar(found);
-        if (option == null || option == csvDelimiterCombo.getSelectedItem()) return "";
-        csvDelimiterCombo.setSelectedItem(option);   // its listener persists the choice
-        return " (" + option.noun + "-separated)";
-    }
-
-    /**
      * Switches the input format to match pasted content. Only large single
      * insertions are considered a paste — reacting to ordinary typing would
      * fight the user as a document takes shape mid-keystroke. A detection that
@@ -795,7 +479,7 @@ public class ConverterPanel implements Disposable {
                     if (detected == null) return;
                     // The delimiter is part of what "CSV" means for a paste, so
                     // it is set even when the format itself is already right.
-                    String note = FMT_CSV.equals(detected) ? applyDetectedDelimiter(head) : "";
+                    String note = FMT_CSV.equals(detected) ? options.applyDetectedDelimiter(head) : "";
                     if (detected.equals(inputCombo.getSelectedItem())) {
                         if (!note.isEmpty()) setStatus("Detected " + detected + " input" + note, true);
                         return;
@@ -812,7 +496,7 @@ public class ConverterPanel implements Disposable {
     // ── Soft-wrap ─────────────────────────────────────────────────────────
     private void setLineWrap(boolean wrap) {
         editors.setLineWrap(wrap);
-        saveProp(PROP_WRAP_LINES, String.valueOf(wrap));
+        ConverterSettings.saveWrapLines(wrap);
     }
 
     /** Popup listing recent conversions; selecting one restores both editors. */
@@ -852,11 +536,12 @@ public class ConverterPanel implements Disposable {
         if (!previous.input().text().isEmpty() || !previous.output().text().isEmpty()) {
             previousKept = history.push(new ConversionHistory.Entry(
                   previous.input().format(), previous.output().format(),
-                  previous.input().text(), previous.output().text(), java.time.LocalTime.now(), currentOptions()));
+                  previous.input().text(), previous.output().text(), java.time.LocalTime.now(),
+                  options.currentOptions()));
         }
         inputCombo.setSelectedItem(entry.inputFormat());
         outputCombo.setSelectedItem(entry.outputFormat());
-        applyOptions(entry.options());
+        options.applyOptions(entry.options());
         editors.apply(new ConverterEditorState.Snapshot(
               new ConverterEditorState.Document(entry.input(), entry.inputFormat()),
               new ConverterEditorState.Document(entry.output(), entry.outputFormat())));
@@ -891,7 +576,7 @@ public class ConverterPanel implements Disposable {
                   : com.intellij.icons.AllIcons.Actions.SplitVertically);
             installDividerUI();
             splitPane.setDividerLocation(0.5);
-            saveProp(PROP_SPLIT_VERTICAL, String.valueOf(wasHorizontal));
+            ConverterSettings.saveSplitVertical(wasHorizontal);
         });
         splitToggleBtn = btn;
         return btn;
@@ -948,82 +633,28 @@ public class ConverterPanel implements Disposable {
         updateConversionOptions();
     }
 
-    // ── Conversion-specific options visibility ────────────────────────────
+    /** Shows the option groups the selected formats make relevant. */
     private void updateConversionOptions() {
-        String outFmt = (String) outputCombo.getSelectedItem();
-        String inFmt  = (String) inputCombo.getSelectedItem();
-        boolean isCsvOut  = FMT_CSV.equals(outFmt);
-        boolean isCsvIn   = FMT_CSV.equals(inFmt);
-        boolean isCodeGen = FMT_JAVA.equals(outFmt) || FMT_KOTLIN.equals(outFmt);
-        // Lombok is a Java-only concept; offering it for Kotlin output would be
-        // a toggle that silently does nothing.
-        lombokCheck.setVisible(FMT_JAVA.equals(outFmt));
-        boolean untypedIn = isCsvIn || FMT_XML.equals(inFmt);
-        csvOptions.setVisible(isCsvOut);
-        csvInputOptions.setVisible(untypedIn);
-        csvDelimiterOptions.setVisible(isCsvIn || isCsvOut);
-        javaOptions.setVisible(isCodeGen);
-        // generalOptions (sort keys) applies to everything, so the bar is always shown.
-        optionsBar.setVisible(true);
-        optionsBar.revalidate();
-        optionsBar.repaint();
-    }
-
-    /** Snapshot of every option control. Must be called on the EDT. */
-    private ConversionOptions currentOptions() {
-        CsvDelimiter delimiter = (CsvDelimiter) csvDelimiterCombo.getSelectedItem();
-        CsvConverter.CsvMode mode = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
-        return new ConversionOptions(
-              mode == null ? CsvConverter.CsvMode.FLAT_FIRST : mode,
-              delimiter == null ? CsvConverter.CsvFormat.DEFAULT : delimiter.format,
-              lombokCheck.isSelected(),
-              detectDatesCheck.isSelected(),
-              inferTypesCheck.isSelected(),
-              sortKeysCheck.isSelected(),
-              filterField.getText());
-    }
-
-    private void applyOptions(ConversionOptions options) {
-        csvModeCombo.setSelectedItem(options.csvMode());
-        csvDelimiterCombo.setSelectedItem(CsvDelimiter.forChar(options.csvFormat().delimiter()));
-        lombokCheck.setSelected(options.useLombok());
-        detectDatesCheck.setSelected(options.detectDates());
-        inferTypesCheck.setSelected(options.inferTypes());
-        sortKeysCheck.setSelected(options.sortKeys());
-        filterField.setText(options.filterPath());
-        // setSelected does not fire ActionListeners; keep context-menu actions
-        // and the next IDE session consistent with the restored controls.
-        saveProp(PROP_LOMBOK, String.valueOf(options.useLombok()));
-        saveProp(PROP_DETECT_DATES, String.valueOf(options.detectDates()));
-        saveProp(PROP_INFER_TYPES, String.valueOf(options.inferTypes()));
-        saveProp(PROP_SORT_KEYS, String.valueOf(options.sortKeys()));
-    }
-
-    private static String csvModeHintFor(CsvConverter.CsvMode mode) {
-        return switch (mode) {
-            case FLAT_FIRST -> "expands only the first object-array into rows (safe default)";
-            case CROSS_JOIN -> "Cartesian product of all object-arrays \u2014 rows can explode";
-        };
+        options.showFor((String) inputCombo.getSelectedItem(), (String) outputCombo.getSelectedItem());
     }
 
     // ── Convert ───────────────────────────────────────────────────────────
     private void doConvert() {
-        if (!converting.compareAndSet(false, true)) return;
+        if (!run.tryStart()) return;
 
         final String rawInput  = inputArea.getText();
         if (rawInput.isBlank()) {
-            converting.set(false);
+            run.finished();
             setStatus("Input is empty", false);
             return;
         }
         final String inFmt     = (String) inputCombo.getSelectedItem();
         final String outFmt    = (String) outputCombo.getSelectedItem();
-        final CsvConverter.CsvMode csvMode = (CsvConverter.CsvMode) csvModeCombo.getSelectedItem();
-        final long rowWarningThreshold = ((Number) rowThresholdSpinner.getValue()).longValue();
         // Snapshot every option on the EDT: the worker must not read Swing state.
-        final ConversionOptions opts = currentOptions();
+        final ConversionOptions opts = options.currentOptions();
+        final CsvConverter.CsvMode csvMode = opts.csvMode();
+        final long rowWarningThreshold = options.rowWarningThreshold();
 
-        cancelRequested.set(false);
         convertBtn.setText("Cancel");
         convertBtn.setToolTipText("Cancel the running conversion");
         setStatus("Converting\u2026", true);
@@ -1032,14 +663,14 @@ public class ConverterPanel implements Disposable {
               (String result, Throwable error) -> {
             // Cancel may arrive after rendering, with completion
             // already queued on the EDT. It still owns the result.
-            if (cancelRequested.get()) {
+            if (run.cancelRequested()) {
                 setStatusWarn("Conversion cancelled");
             } else if (error != null) {
                 Throwable cause = error;
                 if (cause instanceof CancellationException) {
                     setStatusWarn("Conversion cancelled");
                 } else {
-                    showError(describe(cause));
+                    showError(ConverterNotifications.describe(cause));
                     jumpToErrorLocation(cause);
                 }
             } else {
@@ -1057,13 +688,13 @@ public class ConverterPanel implements Disposable {
         });
 
         tasks.submit(() -> {
-            synchronized (workerLock) { convertWorker = Thread.currentThread(); }
+            run.attachWorker();
             try {
                 // Cancel may have been pressed while this task was still queued,
                 // in which case there was no thread to interrupt.
-                checkCancelled();
+                run.checkCancelled();
                 String asJson = pipeline.normalizeToJson(rawInput, inFmt, opts);
-                checkCancelled();
+                run.checkCancelled();
 
                 String rendered;
                 if (FMT_CSV.equals(outFmt)) {
@@ -1075,23 +706,20 @@ public class ConverterPanel implements Disposable {
                                 csvMode, estimate))) {
                         throw new CancellationException("Conversion cancelled");
                     }
-                    checkCancelled();
+                    run.checkCancelled();
                     rendered = pipeline.renderCsv(pivot, csvMode, opts.csvFormat());
                 } else {
                     rendered = pipeline.renderFromJson(asJson, outFmt, opts);
                 }
-                checkCancelled();
+                run.checkCancelled();
                 return rendered;
             } catch (Exception ex) {
                 throw new java.util.concurrent.CompletionException(ex);
             } finally {
-                synchronized (workerLock) {
-                    convertWorker = null;
-                    Thread.interrupted();   // clear a late cancel; the thread is shared
-                }
+                run.detachWorker();
             }
         }, (result, error) -> {
-            converting.set(false);
+            run.finished();
             if (!disposed) {
                 convertBtn.setText("Convert");
                 convertBtn.setToolTipText("Convert (Ctrl+Enter)");
@@ -1100,34 +728,14 @@ public class ConverterPanel implements Disposable {
         });
     }
 
-    /** Throws if Cancel was pressed, whether or not the worker thread was interrupted. */
-    private void checkCancelled() {
-        if (cancelRequested.get() || Thread.currentThread().isInterrupted())
-            throw new CancellationException("Conversion cancelled");
-    }
-
-    /**
-     * Requests cancellation of the running conversion. The flag is what makes a
-     * cancel pressed before the pooled task starts running take effect; the
-     * interrupt is what unblocks a task already in a long loop.
-     */
+    /** Requests cancellation of the running conversion; see {@link ConversionRun}. */
     private void cancelConvert() {
-        if (!converting.get()) return;
-        cancelRequested.set(true);
-        // Interrupting under the same lock the worker clears itself under. The
-        // thread belongs to the shared application pool, so once the task has
-        // finished the interrupt would land on whatever unrelated work that
-        // thread picked up next.
-        synchronized (workerLock) {
-            if (convertWorker != null) convertWorker.interrupt();
-        }
-        setStatusWarn("Cancelling…");
+        if (run.cancel()) setStatusWarn("Cancelling…");
     }
 
-    /** Shared OK/Cancel warning dialog; returns true when the user confirms. */
+    /** Shared Continue/Cancel warning dialog; returns true when the user continues. */
     private boolean confirmWarning(String title, String message) {
-        return JOptionPane.showConfirmDialog(mainPanel, message, title,
-              JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) == JOptionPane.OK_OPTION;
+        return ConverterDialogs.confirm(project, mainPanel, title, message);
     }
 
     /**
@@ -1153,7 +761,7 @@ public class ConverterPanel implements Disposable {
         final String input = inputArea.getText();
         final String fmt   = (String) inputCombo.getSelectedItem();
         if (input.isBlank()) { setStatus("Input is empty", false); return; }
-        final ConversionOptions opts = currentOptions();
+        final ConversionOptions opts = options.currentOptions();
         // Where the user was: the whole document is replaced, which put the
         // caret at the top and scrolled a long file away from the line being
         // edited. The line survives the re-layout better than the offset does.
@@ -1182,7 +790,7 @@ public class ConverterPanel implements Disposable {
                 return;
             }
             if (failure != null) {
-                showError("Format failed: " + describe(failure));
+                showError("Format failed: " + ConverterNotifications.describe(failure));
                 jumpToErrorLocation(failure);
                 return;
             }
@@ -1251,9 +859,7 @@ public class ConverterPanel implements Disposable {
             // project closes mid-open, and it must reach the platform unchanged.
             throw cancelled;
         } catch (Throwable failure) {
-            String message = failure.getMessage() == null
-                  ? failure.getClass().getSimpleName() : failure.getMessage();
-            showError("Open in editor failed: " + message);
+            showError("Open in editor failed: " + ConverterNotifications.describe(failure));
         }
     }
 
@@ -1275,7 +881,7 @@ public class ConverterPanel implements Disposable {
             setStatusWarn(outFmt + " output cannot be parsed back for comparison");
             return;
         }
-        final ConversionOptions opts = currentOptions();
+        final ConversionOptions opts = options.currentOptions();
         setStatus("Comparing…", true);
         // Canonicalising is three parse/serialise passes per side — over a
         // second on a 10 MB document — so it must not run on the EDT.
@@ -1292,7 +898,7 @@ public class ConverterPanel implements Disposable {
             }
         }, currentCompletion(true, "Editors changed; comparison discarded", (sides, failure) -> {
             if (failure != null) {
-                showError("Compare failed: " + failure.getMessage());
+                showError("Compare failed: " + ConverterNotifications.describe(failure));
                 return;
             }
             if (sides[0].equals(sides[1])) setStatus("Input and output are equivalent", true);
@@ -1304,7 +910,7 @@ public class ConverterPanel implements Disposable {
                 throw cancelled;   // control flow: it must reach the platform
             } catch (Throwable noIde) {
                 // No running IDE (tests, standalone): the comparison itself still ran.
-                showError("Compare failed: " + describe(noIde));
+                showError("Compare failed: " + ConverterNotifications.describe(noIde));
             }
         }));
     }
@@ -1369,10 +975,7 @@ public class ConverterPanel implements Disposable {
         editors.clear();
         inputCombo.setSelectedItem(FMT_JSON);
         outputCombo.setSelectedItem(FMT_XML);
-        // The subtree filter belongs to the document that was just cleared, not
-        // to the preferences. Leaving it armed silently narrowed — or rejected —
-        // the next, unrelated document the user pasted in.
-        filterField.setText("");
+        options.clearFilter();
         setStatus("Cleared", true);
     }
 
@@ -1418,7 +1021,7 @@ public class ConverterPanel implements Disposable {
 
         JLabel titleLabel = new JLabel(title);
         titleLabel.setForeground(TEXT_DIM);
-        titleLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        titleLabel.setFont(JBFont.small());
         titleLabel.setBorder(JBUI.Borders.empty(0, 6));
 
         JPanel leftLabels = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 3));
@@ -1480,15 +1083,6 @@ public class ConverterPanel implements Disposable {
     }
 
     /**
-     * A failure's message, or its class name when it carries none. "null" and
-     * "Unknown error" told the user nothing about what had actually gone wrong.
-     */
-    private static String describe(Throwable failure) {
-        String message = failure.getMessage();
-        return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
-    }
-
-    /**
      * Shows an error in the status bar. Multi-line messages (e.g. Proto
      * validation errors with examples) don't render in a JLabel, so only the
      * first line goes to the status bar; the full text is delivered as an IDE
@@ -1500,25 +1094,9 @@ public class ConverterPanel implements Disposable {
         String first = lines.get(0);
         setStatus("Error: " + first + (lines.size() > 1 ? " …" : ""), false);
         if (lines.size() > 1) {
-            statusLabel.setToolTipText("<html>" + escapeHtml(message).replace("\n", "<br>") + "</html>");
-            notifyError(message);
+            statusLabel.setToolTipText("<html>" + ConverterNotifications.html(message) + "</html>");
+            ConverterNotifications.error(project, "Conversion failed", message);
         }
-    }
-
-    private void notifyError(String message) {
-        try {
-            com.intellij.notification.NotificationGroupManager.getInstance()
-                  .getNotificationGroup(NOTIFICATION_GROUP)
-                  .createNotification("Conversion failed", escapeHtml(message).replace("\n", "<br>"),
-                        com.intellij.notification.NotificationType.ERROR)
-                  .notify(project);
-        } catch (Throwable outsideIde) {
-            LOG.warn("Could not show error notification", outsideIde);
-        }
-    }
-
-    private static String escapeHtml(String s) {
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private void setStatus(String msg, boolean ok) {

@@ -27,7 +27,6 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileWrapper;
 
 import javax.swing.JComponent;
-import javax.swing.JOptionPane;
 import javax.swing.TransferHandler;
 import java.awt.datatransfer.DataFlavor;
 import java.io.File;
@@ -118,7 +117,7 @@ final class ConverterFileOps {
             }
         }, (ignored, cause) -> {
             if (cause != null) {
-                host.status("Failed to save: " + cause.getMessage(), false);
+                host.status("Failed to save: " + ConverterNotifications.describe(cause), false);
                 return;
             }
             host.status("Saved to " + file.getName(), true);
@@ -146,13 +145,10 @@ final class ConverterFileOps {
         // The context-menu path already prefers the editor for the same reason.
         String unsaved = unsavedEditorText(file);
         long size = unsaved != null ? unsaved.length() : file.length();
-        if (size > LARGE_FILE_WARNING_BYTES) {
-            int choice = JOptionPane.showConfirmDialog(parent,
-                  String.format("%s is %,d MB. Loading large files may be slow. Continue?",
-                        file.getName(), size / (1024 * 1024)),
-                  "Large file", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
-            if (choice != JOptionPane.OK_OPTION) return;
-        }
+        if (size > LARGE_FILE_WARNING_BYTES && !ConverterDialogs.confirm(project, parent, "Large File",
+              String.format("%s is %,d MB. Loading large files may be slow. Continue?",
+                    file.getName(), size / (1024 * 1024))))
+            return;
         // Only the newest accepted request may replace the input. The revision
         // also changes on edits and explicit Clear/Swap/History operations.
         long request = ++loadRequest;
@@ -186,7 +182,7 @@ final class ConverterFileOps {
                 return;
             }
             if (cause != null) {
-                host.status("Failed to open file: " + cause.getMessage(), false);
+                host.status("Failed to open file: " + ConverterNotifications.describe(cause), false);
                 return;
             }
             host.loaded(content.text(), Formats.inputForFileName(file.getName()), file.getName() + content.note());
@@ -244,7 +240,7 @@ final class ConverterFileOps {
                         if (!files.isEmpty()) loadFile(files.get(0));
                         return true;
                     } catch (Exception ex) {
-                        host.status("Drop failed: " + ex.getMessage(), false);
+                        host.status("Drop failed: " + ConverterNotifications.describe(ex), false);
                         return false;
                     }
                 }
