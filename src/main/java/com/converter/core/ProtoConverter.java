@@ -55,11 +55,15 @@ public class ProtoConverter {
      */
     private static final String FIELD_OPTIONS = "(?:\\s*\\[[^\\]]*\\])?";
 
+    /** An integer as protoc spells one: decimal, 0x hexadecimal, or 0-prefixed octal. */
+    private static final String FIELD_NUMBER = "0[xX][0-9a-fA-F]+|\\d+";
+
     private static final Pattern FIELD_PATTERN = Pattern.compile(
         "(repeated\\s+|optional\\s+)?" +
         "([\\w.]+(?:\\s*<[^>]+>)?)" +
-        "\\s+(\\w+)" +
-        "\\s*=\\s*(\\d+)" +
+        // A map type needs no space before the name: map<string,string>labels.
+        "(?:\\s+|(?<=>)\\s*)(\\w+)" +
+        "\\s*=\\s*(" + FIELD_NUMBER + ")" +
         FIELD_OPTIONS +
         "\\s*;");
 
@@ -68,8 +72,8 @@ public class ProtoConverter {
      * types (google.protobuf.Timestamp) and generic types (map&lt;k, v&gt;).
      */
     private static final Pattern STATEMENT_PATTERN = Pattern.compile(
-        "(?:repeated\\s+|optional\\s+|required\\s+)?[\\w.]+(?:\\s*<[^>]*>)?\\s+(\\w+)\\s*=\\s*(\\d+)"
-              + FIELD_OPTIONS,
+        "(?:repeated\\s+|optional\\s+|required\\s+)?[\\w.]+(?:\\s*<[^>]*>)?(?:\\s+|(?<=>)\\s*)(\\w+)"
+              + "\\s*=\\s*(" + FIELD_NUMBER + ")" + FIELD_OPTIONS,
         Pattern.DOTALL);
 
     /** Statements that are legal proto3 but irrelevant for structural conversion. */
@@ -78,7 +82,7 @@ public class ProtoConverter {
 
     /** A single enum value statement: {@code NAME = number}. */
     private static final Pattern ENUM_VALUE_PATTERN = Pattern.compile(
-        "(\\w+)\\s*=\\s*-?\\d+" + FIELD_OPTIONS, Pattern.DOTALL);
+        "(\\w+)\\s*=\\s*-?(?:" + FIELD_NUMBER + ")" + FIELD_OPTIONS, Pattern.DOTALL);
 
     private static final Pattern JSON_NAME_OPTION =
           Pattern.compile("(?:\\[|,)\\s*json_name\\s*=");
@@ -142,7 +146,7 @@ public class ProtoConverter {
             throw new IllegalArgumentException(
                 "Protobuf input is empty. Paste a proto3 schema containing at least one 'message' block.");
 
-        String clean = maskCommentsAndStrings(protoSchema);
+        String clean = flattenOptionGroups(maskCommentsAndStrings(protoSchema));
         validateBraces(clean);
 
         List<Block> topMessages = findNamedBlocks(clean, "message");
@@ -182,8 +186,9 @@ public class ProtoConverter {
         for (Block msg : topMessages) validateTree(msg);
 
         ObjectNode root = jsonMapper.createObjectNode();
+        long[] expanded = {0};
         for (Block msg : topMessages) {
-            root.set(msg.name, buildMessageNode(msg, new HashSet<>(), protoSchema));
+            root.set(msg.name, buildMessageNode(msg, new HashSet<>(), protoSchema, expanded));
         }
 
         return jsonMapper.writeValueAsString(root);
@@ -249,31 +254,48 @@ public class ProtoConverter {
      *                  name would conflate two same-named nested messages, and
      *                  a recursive type has to bottom out as an empty object.
      */
-    private ObjectNode buildMessageNode(Block msg, Set<Block> resolving, String source) {
+    private ObjectNode buildMessageNode(Block msg, Set<Block> resolving, String source, long[] expanded) {
         ObjectNode node = jsonMapper.createObjectNode();
         if (!resolving.add(msg)) return node;
 
         try {
-            String flatBody = stripBlocks(msg.body, "message", "oneof", "enum");
+            // An extend block declares fields of ANOTHER message; they were
+            // being listed as this message's own.
+            String flatBody = stripBlocks(msg.body, "message", "oneof", "enum", "extend");
             // Not validated here: validateTree already covered every message,
             // referenced or not, before any of this ran. Doing it again split
             // the same bodies on ';' and re-matched them for a second time, and
             // left two paths that could disagree about which error a user sees.
-            addFields(flatBody, node, msg.inner, resolving, source, msg.bodyOffset);
+            addFields(flatBody, node, msg.inner, resolving, source, msg.bodyOffset, expanded);
 
             // This message's own oneofs, not those of the messages nested in it.
             for (Block oneof : findNamedBlocks(stripBlocks(msg.body, "message"), "oneof", msg.bodyOffset))
-                addFields(oneof.body, node, msg.inner, resolving, source, oneof.bodyOffset);
+                addFields(oneof.body, node, msg.inner, resolving, source, oneof.bodyOffset, expanded);
         } finally {
             resolving.remove(msg);
         }
         return node;
     }
 
+    /**
+     * Values a schema may expand to before it is refused. Every singular
+     * message field is filled in with its own default, so two fields of the
+     * next message type at each level double the output per level: a
+     * 600-character schema twenty levels deep ran a 1 GB heap out of memory.
+     * The same ceiling YAML aliases get.
+     */
+    static final long MAX_EXPANDED_VALUES = 2_000_000;
+
     private void addFields(String body, ObjectNode node, Scope scope, Set<Block> resolving,
-          String source, int bodyOffset) {
+          String source, int bodyOffset, long[] expanded) {
         Matcher fm = FIELD_PATTERN.matcher(body);
         while (fm.find()) {
+            if (++expanded[0] > MAX_EXPANDED_VALUES)
+                throw new IllegalArgumentException(String.format(
+                      "This schema expands to more than %,d values when every message field is "
+                      + "filled in with its default: messages holding several fields of the same "
+                      + "message type multiply at each level of nesting. Convert the messages you "
+                      + "need on their own, or flatten the nesting.", MAX_EXPANDED_VALUES));
             boolean repeated  = fm.group(1) != null && fm.group(1).trim().equals("repeated");
             String  protoType = fm.group(2).trim();
             String  fieldName = fm.group(3);
@@ -297,7 +319,7 @@ public class ProtoConverter {
                 if (type instanceof String enumDefault) {
                     node.put(fieldName, enumDefault);
                 } else if (type instanceof Block message && !resolving.contains(message)) {
-                    node.set(fieldName, buildMessageNode(message, resolving, source));
+                    node.set(fieldName, buildMessageNode(message, resolving, source, expanded));
                 } else {
                     node.putObject(fieldName);
                 }
@@ -362,6 +384,33 @@ public class ProtoConverter {
         return new String(out);
     }
 
+    /**
+     * Blanks the brackets, braces and semicolons nested INSIDE a field's
+     * {@code [...]} option list, keeping its outer brackets and everything
+     * else in place, so offsets into the source still line up.
+     *
+     * <p>Options can hold whole messages and lists — protovalidate's
+     * {@code [(buf.validate.field).string = {in: ["a", "b"]}]} — and the field
+     * patterns took the first {@code ]} as the end of the list. The field was
+     * then silently skipped, and a duplicate number after it went unchecked.
+     */
+    static String flattenOptionGroups(String masked) {
+        char[] out = masked.toCharArray();
+        for (int i = 0; i < out.length; i++) {
+            if (out[i] != '[') continue;
+            int depth = 1, j = i + 1;
+            while (j < out.length && depth > 0) {
+                char c = out[j];
+                if (c == '[') depth++;
+                else if (c == ']') depth--;
+                if (depth > 0 && (c == '[' || c == ']' || c == '{' || c == '}' || c == ';')) out[j] = ' ';
+                j++;
+            }
+            i = j - 1;
+        }
+        return new String(out);
+    }
+
     // ── Block finding (brace-depth aware) ─────────────────────────────────
 
     /**
@@ -385,9 +434,12 @@ public class ProtoConverter {
             while (nameStart < input.length() && Character.isWhitespace(input.charAt(nameStart)))
                 nameStart++;
 
+            // Dots for "extend google.protobuf.FieldOptions {": the only block
+            // named by a type reference rather than a plain identifier.
             int nameEnd = nameStart;
             while (nameEnd < input.length() &&
-                   (Character.isLetterOrDigit(input.charAt(nameEnd)) || input.charAt(nameEnd) == '_'))
+                   (Character.isLetterOrDigit(input.charAt(nameEnd)) || input.charAt(nameEnd) == '_'
+                         || input.charAt(nameEnd) == '.'))
                 nameEnd++;
 
             if (nameEnd == nameStart) { searchFrom = afterKw; continue; }
@@ -476,13 +528,13 @@ public class ProtoConverter {
         // inside a nested message was validated against THIS message's numbers,
         // so an inner "int32 x = 1" was reported as a duplicate of the outer one.
         List<Block> oneofs = findNamedBlocks(stripBlocks(msg.body, "message"), "oneof");
-        Set<String> seenNumbers = new HashSet<>();
-        validateMessageBody(msg.name, stripBlocks(msg.body, "message", "oneof", "enum"), seenNumbers);
+        Set<Long> seenNumbers = new HashSet<>();
+        validateMessageBody(msg.name, stripBlocks(msg.body, "message", "oneof", "enum", "extend"), seenNumbers);
         for (Block oneof : oneofs) validateMessageBody(msg.name, oneof.body, seenNumbers);
         for (Block nested : findNamedBlocks(msg.body, "message")) validateTree(nested);
     }
 
-    private void validateMessageBody(String messageName, String body, Set<String> seenNumbers) {
+    private void validateMessageBody(String messageName, String body, Set<Long> seenNumbers) {
         // Text after the last ';' is a statement that never terminated. It
         // validated fine — STATEMENT_PATTERN does not require the semicolon —
         // while addFields uses FIELD_PATTERN, which does, so the field was
@@ -512,8 +564,9 @@ public class ProtoConverter {
                     "Expected the form: [repeated] <type> <name> = <number>;");
 
             String number = m.group(2);
-            rejectIllegalNumber(messageName, stmt, number);
-            if (!seenNumbers.add(number))
+            long value = fieldNumber(messageName, stmt, number);
+            rejectIllegalNumber(messageName, stmt, number, value);
+            if (!seenNumbers.add(value))
                 throw new IllegalArgumentException(
                     "Duplicate field number " + number + " in message '" + messageName +
                     "'. Each field must have a unique number.");
@@ -525,13 +578,7 @@ public class ProtoConverter {
      * reserved for the implementation. A schema breaking them is not a schema
      * protoc will compile, and reading it as one hid that.
      */
-    private static void rejectIllegalNumber(String messageName, String stmt, String number) {
-        long value;
-        try {
-            value = Long.parseLong(number);
-        } catch (NumberFormatException tooLong) {
-            value = Long.MAX_VALUE;
-        }
+    private static void rejectIllegalNumber(String messageName, String stmt, String number, long value) {
         String problem = value == 0 ? "field numbers start at 1"
               : value > 536_870_911L ? "field numbers cannot exceed 536,870,911"
               : value >= 19_000 && value <= 19_999
@@ -541,6 +588,25 @@ public class ProtoConverter {
             throw new IllegalArgumentException(
                   "Field number " + number + " in message '" + messageName + "' (\"" + stmt
                   + "\") is not allowed: " + problem + ".");
+    }
+
+    /**
+     * A field number's value as protoc reads it: {@code 0x10} is 16 and
+     * {@code 010} is octal 8, which the duplicate check has to compare as 8.
+     */
+    private static long fieldNumber(String messageName, String stmt, String number) {
+        try {
+            if (number.startsWith("0x") || number.startsWith("0X"))
+                return Long.parseLong(number.substring(2), 16);
+            if (number.length() > 1 && number.startsWith("0")) return Long.parseLong(number, 8);
+            return Long.parseLong(number);
+        } catch (NumberFormatException notANumber) {
+            if (number.length() > 1 && number.startsWith("0") && number.chars().allMatch(Character::isDigit))
+                throw new IllegalArgumentException(
+                      "Field number " + number + " in message '" + messageName + "' (\"" + stmt
+                      + "\") starts with 0, which makes it octal, and is not a valid octal number.");
+            return Long.MAX_VALUE;     // too long: rejected as above the maximum
+        }
     }
 
     // ── JSON -> proto ─────────────────────────────────────────────────────
@@ -589,9 +655,14 @@ public class ProtoConverter {
         // what stops "message Foo" landing beside a field also called Foo —
         // '"Foo" is already defined in "Root"'.
         Set<String> usedFieldNames     = new HashSet<>();
+        Set<String> usedJsonForms      = new HashSet<>();
         Map<String, String> fieldNames = new LinkedHashMap<>();
-        for (Map.Entry<String, JsonNode> e : node.properties())
-            fieldNames.put(e.getKey(), protoFieldName(e.getKey(), usedFieldNames));
+        for (Map.Entry<String, JsonNode> e : node.properties()) {
+            String name = protoFieldName(e.getKey(), usedJsonForms);
+            usedFieldNames.add(name);
+            fieldNames.put(e.getKey(), name);
+        }
+        Map<String, String> jsonNames = jsonNames(fieldNames);
 
         // Nested message names must be unique within this message: keys "user"
         // and "User" both want to be "User", which would emit two blocks of the
@@ -648,7 +719,7 @@ public class ProtoConverter {
             String   childName = childNames.get(e.getKey());
             String   fieldPad  = pad + "  ";
             if (fieldNumber == 19_000) fieldNumber = 20_000;
-            String   tail      = " = " + fieldNumber++ + jsonName(e.getKey(), fieldName) + ";\n";
+            String   tail      = " = " + fieldNumber++ + jsonNameOption(jsonNames.get(e.getKey())) + ";\n";
 
             if (val.isArray()) {
                 List<String> rows = rowNames.get(e.getKey());
@@ -669,15 +740,63 @@ public class ProtoConverter {
     }
 
     /**
-     * Carries a key the field name could not keep. protoc maps a field to JSON
-     * by its name (or its lowerCamelCase form), so {@code first-name} written
-     * as {@code first_name} would read a different key back, and two keys that
-     * sanitise to the same name lost one of them for good. {@code json_name}
-     * is the proto3 way to say which key a field is.
+     * The {@code json_name} each field needs, by key.
+     *
+     * <p>A key the field name cannot spell carries its key: protoc maps a field
+     * to JSON by its name (or its lowerCamelCase form), so {@code first-name}
+     * written as {@code first_name} would read a different key back.
+     *
+     * <p>So does a field whose JSON name would equal another field's. protoc
+     * refuses two fields with one JSON name, custom or derived: {@code user_id}
+     * derives {@code userId}, and a second field carrying the key
+     * {@code "userId"} was an error. Each field in such a clash is given its
+     * own key, and keys are unique, so the loop ends.
      */
-    private static String jsonName(String key, String fieldName) {
-        if (key.equals(fieldName)) return "";
-        return " [json_name = \"" + SourceConventions.javaStringLiteral(key) + "\"]";
+    private static Map<String, String> jsonNames(Map<String, String> fieldNames) {
+        Map<String, String> custom = new LinkedHashMap<>();
+        fieldNames.forEach((key, name) -> { if (!key.equals(name)) custom.put(key, key); });
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            Map<String, List<String>> byJsonName = new HashMap<>();
+            fieldNames.forEach((key, name) -> byJsonName.computeIfAbsent(
+                  custom.getOrDefault(key, toJsonName(name)), k -> new ArrayList<>()).add(key));
+            for (List<String> keys : byJsonName.values()) {
+                if (keys.size() < 2) continue;
+                for (String key : keys) changed |= custom.putIfAbsent(key, key) == null;
+            }
+        }
+        return custom;
+    }
+
+    private static String jsonNameOption(String jsonName) {
+        return jsonName == null ? ""
+              : " [json_name = \"" + SourceConventions.javaStringLiteral(jsonName) + "\"]";
+    }
+
+    /** protoc's default JSON name: underscores dropped, the letter after each capitalised. */
+    static String toJsonName(String fieldName) {
+        StringBuilder out = new StringBuilder(fieldName.length());
+        boolean capitalizeNext = false;
+        for (char c : fieldName.toCharArray()) {
+            if (c == '_') capitalizeNext = true;
+            else {
+                out.append(capitalizeNext ? Character.toUpperCase(c) : c);
+                capitalizeNext = false;
+            }
+        }
+        return out.toString();
+    }
+
+    /**
+     * A field name as protobuf 3.x compared them: lower-cased with the
+     * underscores dropped. Two names equal in this form, such as {@code user_id}
+     * and {@code userId}, or {@code name} and {@code Name}, were refused as
+     * clashing JSON names ("not allowed in proto3"), and those versions are
+     * still in wide use.
+     */
+    static String jsonForm(String fieldName) {
+        return fieldName.replace("_", "").toLowerCase(Locale.ROOT);
     }
 
     /**
@@ -703,9 +822,9 @@ public class ProtoConverter {
     /**
      * Maps an arbitrary JSON key to a valid proto field identifier
      * (snake_case-ish: invalid characters become underscores, a leading digit
-     * gets a prefix) and deduplicates within the message.
+     * gets a prefix) and deduplicates within the message, by {@link #jsonForm}.
      */
-    private String protoFieldName(String key, Set<String> used) {
+    private String protoFieldName(String key, Set<String> usedJsonForms) {
         StringBuilder sb = new StringBuilder(key.length());
         for (int i = 0; i < key.length(); i++) {
             char c = key.charAt(i);
@@ -715,7 +834,9 @@ public class ProtoConverter {
         }
         if (sb.isEmpty()) sb.append('_');
         if (Character.isDigit(sb.charAt(0))) sb.insert(0, '_');
-        return uniqueName(sb.toString(), "_", used);
+        String base = sb.toString(), name = base;
+        for (int n = 2; !usedJsonForms.add(jsonForm(name)); n++) name = base + "_" + n;
+        return name;
     }
 
     /** Sanitized, capitalized message name for a JSON key. */

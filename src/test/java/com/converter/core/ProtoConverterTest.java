@@ -253,19 +253,19 @@ class ProtoConverterTest {
             // named User, and protoc keeps nested types and fields in one symbol
             // table per message — so "message User" cannot be emitted here either.
             String result = converter.jsonToProto("{\"user\":{\"a\":1},\"User\":{\"b\":\"x\"}}");
-            assertThat(result).contains("message User2 {").contains("message User3 {");
-            assertThat(result.lines().filter(l -> l.trim().equals("message User {")).count())
-                  .isEqualTo(0);
-            // Field names carry the JSON mapping, so they are the ones that keep it.
-            assertThat(result).contains("User2 user = 1;").contains("User3 User = 2;");
+            assertThat(result).contains("message User {").contains("message User2 {");
+            // The fields may not be "user" and "User" either: protobuf 3.x refuses
+            // names equal once lower-cased. The second keeps its key through json_name.
+            assertThat(result).contains("User user = 1;")
+                  .contains("User2 User_2 = 2 [json_name = \"User\"];");
         }
 
         @Test @DisplayName("JSON->Proto: colliding array-of-object message names are deduplicated")
         void jsonToProtoDeduplicatesRepeatedMessageNames() throws Exception {
             String result = converter.jsonToProto("{\"item\":{\"a\":1},\"Item\":[{\"b\":2}]}");
-            assertThat(result).contains("message Item2 {").contains("message Item3 {")
-                  .contains("Item2 item = 1;")
-                  .contains("repeated Item3 Item = 2;");
+            assertThat(result).contains("message Item {").contains("message Item2 {")
+                  .contains("Item item = 1;")
+                  .contains("repeated Item2 Item_2 = 2 [json_name = \"Item\"];");
         }
 
         @Test @DisplayName("JSON->Proto: a message never takes the name of a sibling field")
@@ -1130,6 +1130,128 @@ class ProtoConverterTest {
             assertThat(pipeline.normalizeToJson(
                   "message A { repeated int32 xs = 1 [packed = true]; }",
                   Formats.FMT_PROTO, ConversionOptions.DEFAULTS)).contains("\"xs\"");
+        }
+    }
+
+    /** Valid proto3 that the parser used to misread, drop or refuse. */
+    @Nested @DisplayName("syntax the parser has to follow")
+    class Syntax {
+
+        private final ConversionPipeline pipeline = new ConversionPipeline();
+
+        private JsonNode parse(String proto) throws Exception {
+            return new ObjectMapper().readTree(
+                  pipeline.normalizeToJson(proto, Formats.FMT_PROTO, ConversionOptions.DEFAULTS));
+        }
+
+        @Test @DisplayName("an option holding a list or message keeps its field, and its json_name")
+        void optionsWithNestedBrackets() throws Exception {
+            assertThat(parse("message M { string status = 1 [(buf.validate.field).string = {in: [\"a\", \"b\"]}];"
+                  + " int32 code = 2; }").get("M"))
+                  .isEqualTo(new ObjectMapper().readTree("{\"status\":\"\",\"code\":0}"));
+            assertThat(parse("message M { string s = 1 [(v) = {in: [1, 2]; m: {x: [3]}}, json_name = \"st\"]; }")
+                  .get("M").has("st")).isTrue();
+            assertThatThrownBy(() -> parse("message M { string s = 1 [(v).string = {in: [\"a\"]}]; int32 c = 1; }"))
+                  .hasMessageContaining("Duplicate field number 1");
+        }
+
+        @Test @DisplayName("map types without a space, and hex or octal field numbers")
+        void numbersAndMaps() throws Exception {
+            assertThat(parse("message M { map<string,string>labels = 1; }").get("M").get("labels").isObject()).isTrue();
+            assertThat(parse("message M { string a = 0x10; string b = 017; }").get("M").size()).isEqualTo(2);
+            // 010 is octal 8, so it clashes with 8.
+            assertThatThrownBy(() -> parse("message M { string a = 010; string b = 8; }"))
+                  .hasMessageContaining("Duplicate field number");
+            assertThatThrownBy(() -> parse("message M { string a = 09; }")).hasMessageContaining("octal");
+            assertThatThrownBy(() -> parse("message M { string a = 0x4A38; }"))   // 19000
+                  .hasMessageContaining("reserved");
+        }
+
+        @Test @DisplayName("an enum's zero written in hex is still its default")
+        void hexEnumValues() throws Exception {
+            assertThat(parse("enum E { ZERO = 0x0; ONE = 0x1; }\nmessage M { E e = 1; }").get("M").get("e").asText())
+                  .isEqualTo("ZERO");
+        }
+
+        @Test @DisplayName("an extend block inside a message declares fields of another message")
+        void extendBlocksAreNotFields() throws Exception {
+            assertThat(parse("message M { extend google.protobuf.MessageOptions { string my_opt = 50001; }"
+                  + " string a = 1; }").get("M"))
+                  .isEqualTo(new ObjectMapper().readTree("{\"a\":\"\"}"));
+        }
+
+        @Test @DisplayName("json_name reads surrogate-pair escapes and \\? as protoc does")
+        void stringEscapes() throws Exception {
+            assertThat(parse("message M { string v = 1 [json_name = \"\\uD83D\\uDE00-\\?\"]; }").get("M").has(
+                  "\uD83D\uDE00-?")).isTrue();
+            assertThatThrownBy(() -> parse("message M { string v = 1 [json_name = \"\\uD83D\"]; }"))
+                  .hasMessageContaining("json_name");
+        }
+
+        @Test @DisplayName("a schema that multiplies at every level is refused before it exhausts memory")
+        void expansionIsBounded() throws Exception {
+            StringBuilder chain = new StringBuilder();
+            for (int i = 0; i < 24; i++)
+                chain.append("message L").append(i).append(" { L").append(i + 1).append(" a = 1; L")
+                      .append(i + 1).append(" b = 2; }\n");
+            chain.append("message L24 { string leaf = 1; }\n");
+            assertThatThrownBy(() -> parse(chain.toString())).hasMessageContaining("expands to more than");
+            // A few levels of the same shape are ordinary.
+            assertThat(parse("message A { B x = 1; B y = 2; }\nmessage B { C x = 1; C y = 2; }\nmessage C { int32 v = 1; }")
+                  .get("A").get("y").get("x").get("v").asInt()).isZero();
+        }
+    }
+
+    /** Generated schemas have to get past protoc, old and new. */
+    @Nested @DisplayName("field and JSON names protoc accepts")
+    class ProtocNames {
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {
+              "{\"user_id\":1,\"userId\":2}", "{\"name\":\"a\",\"Name\":\"b\"}", "{\"foo\":1,\"foo_\":2}",
+              "{\"a-b\":1,\"aB\":2}", "{\"user\":{\"a\":1},\"User\":{\"b\":\"x\"}}",
+              "{\"x_y\":1,\"xY\":2,\"x-y\":3,\"XY\":4,\"x y\":5}", "{\"id\":1,\"ID\":2,\"Id\":{\"iD\":[1]}}"})
+        void namesAreUniqueTheWayProtocChecksThem(String json) throws Exception {
+            String schema = converter.jsonToProto(json);
+            assertProtocAcceptsNames(schema);
+            // Every key still comes back as itself.
+            JsonNode original = new ObjectMapper().readTree(json);
+            JsonNode back = new ObjectMapper().readTree(converter.protoToJson(schema)).get("Root");
+            java.util.List<String> keys = new java.util.ArrayList<>();
+            original.fieldNames().forEachRemaining(keys::add);
+            java.util.List<String> backKeys = new java.util.ArrayList<>();
+            back.fieldNames().forEachRemaining(backKeys::add);
+            assertThat(backKeys).isEqualTo(keys);
+        }
+
+        /**
+         * protobuf 3.x: field names equal once lower-cased without underscores are
+         * refused. 22 and later: default JSON names must be unique, and so must the
+         * names in effect once custom json_names are applied.
+         */
+        private void assertProtocAcceptsNames(String schema) {
+            java.util.Deque<java.util.List<String[]>> scopes = new java.util.ArrayDeque<>();
+            java.util.regex.Pattern field = java.util.regex.Pattern.compile(
+                  "^\\s*(?:repeated\\s+)?\\S+\\s+(\\w+)\\s*=\\s*\\d+(?:\\s*\\[json_name = \"((?:[^\"\\\\]|\\\\.)*)\"])?;$");
+            for (String line : schema.split("\n")) {
+                if (line.trim().startsWith("message ")) { scopes.push(new java.util.ArrayList<>()); continue; }
+                if (line.trim().equals("}")) { check(scopes.pop(), schema); continue; }
+                java.util.regex.Matcher m = field.matcher(line);
+                if (m.matches()) scopes.peek().add(new String[]{m.group(1), m.group(2)});
+            }
+        }
+
+        private void check(java.util.List<String[]> fields, String schema) {
+            java.util.Set<String> legacy = new java.util.HashSet<>(), defaults = new java.util.HashSet<>(),
+                  effective = new java.util.HashSet<>();
+            for (String[] f : fields) {
+                String defaultName = ProtoConverter.toJsonName(f[0]);
+                assertThat(legacy.add(f[0].replace("_", "").toLowerCase(java.util.Locale.ROOT)))
+                      .as("3.x name clash on %s in%n%s", f[0], schema).isTrue();
+                assertThat(defaults.add(defaultName)).as("default JSON name of %s in%n%s", f[0], schema).isTrue();
+                assertThat(effective.add(f[1] != null ? f[1] : defaultName))
+                      .as("JSON name of %s in%n%s", f[0], schema).isTrue();
+            }
         }
     }
 }

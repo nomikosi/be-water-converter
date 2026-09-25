@@ -51,7 +51,8 @@ final class ProtoStringLiteral {
                     case 'r' -> bytes.write(13);
                     case 't' -> bytes.write(9);
                     case 'v' -> bytes.write(11);
-                    case '\\', '\'', '"' -> bytes.write(escape);
+                    // C's simple escapes; protoc accepts \? as well.
+                    case '\\', '\'', '"', '?' -> bytes.write(escape);
                     default -> {
                         int radix, min, max;
                         boolean unicode = escape == 'u' || escape == 'U';
@@ -70,6 +71,14 @@ final class ProtoStringLiteral {
                         }
                         if (digits < min) throw invalid();
                         if (unicode) {
+                            // A surrogate pair written as two escapes is one
+                            // character, as protoc reads it: \uD83D\uDE00.
+                            if (value >= 0xD800 && value <= 0xDBFF) {
+                                int low = lowSurrogateAt(source, i);
+                                if (low < 0) throw invalid();
+                                value = Character.toCodePoint((char) value, (char) low);
+                                i += 6;
+                            }
                             if (value > Character.MAX_CODE_POINT || value >= 0xD800 && value <= 0xDFFF)
                                 throw invalid();
                             bytes.writeBytes(new String(Character.toChars((int) value)).getBytes(StandardCharsets.UTF_8));
@@ -90,6 +99,18 @@ final class ProtoStringLiteral {
         } catch (java.nio.charset.CharacterCodingException invalidUtf8) {
             throw invalid();
         }
+    }
+
+    /** The low surrogate a "\\uXXXX" escape at {@code i} spells, or -1 when there is none. */
+    private static int lowSurrogateAt(String source, int i) {
+        if (i + 6 > source.length() || source.charAt(i) != '\\' || source.charAt(i + 1) != 'u') return -1;
+        int value = 0;
+        for (int k = i + 2; k < i + 6; k++) {
+            int digit = Character.digit(source.charAt(k), 16);
+            if (digit < 0) return -1;
+            value = value * 16 + digit;
+        }
+        return value >= 0xDC00 && value <= 0xDFFF ? value : -1;
     }
 
     private static int trivia(String source, int i) {
