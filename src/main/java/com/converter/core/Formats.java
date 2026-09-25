@@ -16,12 +16,13 @@
 
 package com.converter.core;
 
-import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
-
 import java.util.List;
 import java.util.Locale;
 
-/** Format metadata shared by the pipeline, menus, file dialogs and editors. */
+/**
+ * Format metadata shared by the pipeline, menus and file dialogs. How a format
+ * looks in an editor is the UI's business and lives there.
+ */
 public final class Formats {
     private Formats() {}
 
@@ -35,24 +36,28 @@ public final class Formats {
     public static final String FMT_KOTLIN = "Kotlin";
     public static final String FMT_SCHEMA = "JSON Schema";
 
+    /**
+     * @param rootType          the class name a generated source file declares, or null
+     * @param fileMustMatchRoot true when a file holding the output must be named after it
+     */
     public record Format(String name, List<String> extensions, boolean input,
-                         String syntax, String rootType, boolean fileMustMatchRoot) {
+                         String rootType, boolean fileMustMatchRoot) {
         public Format { extensions = List.copyOf(extensions); }
         public String extension() { return extensions.getFirst(); }
     }
 
     private static final List<Format> ALL = List.of(
-          new Format(FMT_JSON, List.of("json"), true, SyntaxConstants.SYNTAX_STYLE_JSON, null, false),
-          new Format(FMT_XML, List.of("xml"), true, SyntaxConstants.SYNTAX_STYLE_XML, null, false),
-          new Format(FMT_YAML, List.of("yaml", "yml"), true, SyntaxConstants.SYNTAX_STYLE_YAML, null, false),
-          new Format(FMT_CSV, List.of("csv"), true, SyntaxConstants.SYNTAX_STYLE_CSV, null, false),
-          new Format(FMT_TOML, List.of("toml"), true, SyntaxConstants.SYNTAX_STYLE_INI, null, false),
-          new Format(FMT_PROTO, List.of("proto"), true, SyntaxConstants.SYNTAX_STYLE_PROTO, null, false),
-          new Format(FMT_JAVA, List.of("java"), false, SyntaxConstants.SYNTAX_STYLE_JAVA,
+          new Format(FMT_JSON, List.of("json"), true, null, false),
+          new Format(FMT_XML, List.of("xml"), true, null, false),
+          new Format(FMT_YAML, List.of("yaml", "yml"), true, null, false),
+          new Format(FMT_CSV, List.of("csv"), true, null, false),
+          new Format(FMT_TOML, List.of("toml"), true, null, false),
+          new Format(FMT_PROTO, List.of("proto"), true, null, false),
+          new Format(FMT_JAVA, List.of("java"), false,
                 JavaPojoGenerator.ROOT_CLASS_NAME, true),
-          new Format(FMT_KOTLIN, List.of("kt"), false, SyntaxConstants.SYNTAX_STYLE_KOTLIN,
+          new Format(FMT_KOTLIN, List.of("kt"), false,
                 KotlinDataClassGenerator.ROOT_CLASS_NAME, false),
-          new Format(FMT_SCHEMA, List.of("json"), false, SyntaxConstants.SYNTAX_STYLE_JSON, null, false));
+          new Format(FMT_SCHEMA, List.of("json"), false, null, false));
 
     public static Format named(String name) {
         return ALL.stream().filter(f -> f.name().equals(name)).findFirst().orElse(null);

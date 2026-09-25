@@ -1459,42 +1459,17 @@ public class ConverterPanel implements Disposable {
     }
 
     /**
-     * Shows an error in the status bar. Multi-line messages (e.g. Proto
-     * validation errors with examples) don't render in a JLabel, so only the
-     * first line goes to the status bar; the full text is delivered as an IDE
-     * notification balloon and as the status label's tooltip.
-     */
-    /**
      * Moves the input caret to the position a parse failure points at, so the
      * user lands on the offending character instead of reading a line number out
      * of a message. Silently does nothing when the exception carries no location.
      */
     private void jumpToErrorLocation(Throwable failure) {
-        int line = -1, column = -1;           // 1-based; -1 when unknown
-        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-            if (cause instanceof com.fasterxml.jackson.core.JsonProcessingException jsonFailure) {
-                com.fasterxml.jackson.core.JsonLocation location = jsonFailure.getLocation();
-                if (location == null) return;
-                line = location.getLineNr();
-                column = location.getColumnNr();
-                break;
-            }
-            // YAML is parsed by SnakeYAML, whose errors are not Jackson's: they
-            // carry a zero-based mark instead, and the caret never moved for
-            // them while it did for every other format.
-            if (cause instanceof org.yaml.snakeyaml.error.MarkedYAMLException yamlFailure) {
-                org.yaml.snakeyaml.error.Mark mark = yamlFailure.getProblemMark();
-                if (mark == null) return;
-                line = mark.getLine() + 1;
-                column = mark.getColumn() + 1;
-                break;
-            }
-        }
-        if (line < 1) return;
+        SourcePosition position = SourcePosition.of(failure);
+        if (position == null) return;
         try {
             int lineStart = inputArea.getLineStartOffset(
-                  Math.min(line - 1, Math.max(0, inputArea.getLineCount() - 1)));
-            int offset = column > 0 ? lineStart + column - 1 : lineStart;
+                  Math.min(position.line() - 1, Math.max(0, inputArea.getLineCount() - 1)));
+            int offset = position.column() > 0 ? lineStart + position.column() - 1 : lineStart;
             inputArea.setCaretPosition(Math.min(Math.max(offset, 0),
                   inputArea.getDocument().getLength()));
             inputArea.requestFocusInWindow();
@@ -1513,6 +1488,12 @@ public class ConverterPanel implements Disposable {
         return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
     }
 
+    /**
+     * Shows an error in the status bar. Multi-line messages (e.g. Proto
+     * validation errors with examples) don't render in a JLabel, so only the
+     * first line goes to the status bar; the full text is delivered as an IDE
+     * notification balloon and as the status label's tooltip.
+     */
     private void showError(String message) {
         if (message == null || message.isBlank()) message = "Unknown error";
         List<String> lines = message.lines().toList();

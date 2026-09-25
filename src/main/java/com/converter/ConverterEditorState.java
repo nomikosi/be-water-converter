@@ -24,10 +24,30 @@ import javax.swing.JLabel;
 import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import java.util.Map;
 
 /** EDT-owned editor content, presentation, and revision tracking. */
 final class ConverterEditorState {
     static final int HIGHLIGHT_LIMIT_CHARS = 2_000_000;
+
+    /** How each format is highlighted. The core names the formats; how they look belongs here. */
+    private static final Map<String, String> SYNTAX_STYLES = Map.of(
+          Formats.FMT_JSON, SyntaxConstants.SYNTAX_STYLE_JSON,
+          Formats.FMT_XML, SyntaxConstants.SYNTAX_STYLE_XML,
+          Formats.FMT_YAML, SyntaxConstants.SYNTAX_STYLE_YAML,
+          Formats.FMT_CSV, SyntaxConstants.SYNTAX_STYLE_CSV,
+          // No TOML mode exists; INI shares its [table] headers and key = value lines.
+          Formats.FMT_TOML, SyntaxConstants.SYNTAX_STYLE_INI,
+          Formats.FMT_PROTO, SyntaxConstants.SYNTAX_STYLE_PROTO,
+          Formats.FMT_JAVA, SyntaxConstants.SYNTAX_STYLE_JAVA,
+          Formats.FMT_KOTLIN, SyntaxConstants.SYNTAX_STYLE_KOTLIN,
+          Formats.FMT_SCHEMA, SyntaxConstants.SYNTAX_STYLE_JSON);
+
+    /** The editor style for a format, or plain text for one this editor does not know. */
+    static String syntaxStyle(String format) {
+        return format == null ? SyntaxConstants.SYNTAX_STYLE_NONE
+              : SYNTAX_STYLES.getOrDefault(format, SyntaxConstants.SYNTAX_STYLE_NONE);
+    }
 
     record Document(String text, String format) {}
     record Snapshot(Document input, Document output) {
@@ -118,8 +138,7 @@ final class ConverterEditorState {
 
     private static boolean present(RSyntaxTextArea area, JLabel label, String format, int length) {
         boolean huge = length > HIGHLIGHT_LIMIT_CHARS;
-        Formats.Format metadata = Formats.named(format);
-        area.setSyntaxEditingStyle(huge || metadata == null ? SyntaxConstants.SYNTAX_STYLE_NONE : metadata.syntax());
+        area.setSyntaxEditingStyle(huge ? SyntaxConstants.SYNTAX_STYLE_NONE : syntaxStyle(format));
         area.setCodeFoldingEnabled(!huge && !area.getLineWrap());
         label.setText(format);
         label.repaint();

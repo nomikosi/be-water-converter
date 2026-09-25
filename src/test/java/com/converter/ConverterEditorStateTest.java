@@ -24,6 +24,14 @@ import static com.converter.TestTasks.onEdt;
 import static org.assertj.core.api.Assertions.*;
 
 class ConverterEditorStateTest {
+    @Test void everyFormatHasAnEditorStyle() {
+        for (String format : com.converter.core.Formats.outputNames())
+            assertThat(ConverterEditorState.syntaxStyle(format)).as(format)
+                  .isNotEqualTo(SyntaxConstants.SYNTAX_STYLE_NONE);
+        assertThat(ConverterEditorState.syntaxStyle("no such format"))
+              .isEqualTo(SyntaxConstants.SYNTAX_STYLE_NONE);
+    }
+
     @Test void snapshotsSwapAndRestoreBothEditorsWithTheirFormats() throws Exception {
         onEdt(() -> {
             var input = new RSyntaxTextArea();
