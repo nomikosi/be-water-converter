@@ -1,3 +1,4 @@
+import org.jetbrains.changelog.Changelog
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.models.ProductRelease
 import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
@@ -6,10 +7,11 @@ plugins {
     id 'java'
     id 'jacoco'
     id 'org.jetbrains.intellij.platform' version '2.19.0'
+    id 'org.jetbrains.changelog' version '2.5.0'
 }
 
 group = 'com.converter'
-version = '1.5.2'
+version = '1.5.3'
 
 // Declared before anything else in the script: the IntelliJ Platform plugin
 // reads the toolchain while it configures tasks, and a value once read can
@@ -83,10 +85,25 @@ test {
     jacoco { enabled = false }
 }
 
+changelog {
+    // A release lists its changes directly, without Added and Fixed subheadings.
+    groups.empty()
+}
+
 intellijPlatform {
     pluginConfiguration {
         version = project.version
         name = 'Be Water Converter'
+        // Every release's notes from CHANGELOG.md, newest first. get() fails the
+        // build while this version has no section there, so a release cannot go
+        // out with the previous release's notes.
+        changeNotes = provider {
+            def changelog = project.changelog
+            changelog.get(project.version.toString())
+            changelog.instance.get().releasedItems.collect { release ->
+                "<h3>${release.version}</h3>\n" + changelog.renderItem(release.withHeader(false), Changelog.OutputType.HTML)
+            }.join('\n')
+        }
         ideaVersion {
             // 251 (2025.1) is the first build with the non-deprecated
             // FileSaverDescriptor(title, description, extension) constructor.
