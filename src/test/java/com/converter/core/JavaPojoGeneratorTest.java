@@ -598,4 +598,42 @@ class JavaPojoGeneratorTest {
             assertThat(result).contains("@Data").contains("public class Root");
         }
     }
+
+    /** Names that compile but bind to the wrong JSON, or to nothing. */
+    @Nested @DisplayName("names Jackson and the file system agree on")
+    class BindingNames {
+
+        @Test @DisplayName("a $ key becomes a plain identifier mapped back by @JsonProperty")
+        void dollarKeys() throws Exception {
+            String java = new JavaPojoGenerator().fromJson("{\"schema\":{\"$ref\":\"#/x\"}}", true);
+            assertThat(java).contains("@JsonProperty(\"$ref\")\n    private String _ref;")
+                  .doesNotContain("String $ref");
+        }
+
+        @Test @DisplayName("Lombok classes whose getters Jackson would rename bind through their fields")
+        void accessorNamesThatDiffer() throws Exception {
+            String lombok = new JavaPojoGenerator().fromJson("{\"xAxis\":1,\"nested\":{\"name\":\"n\"}}", true);
+            assertThat(lombok).contains("import com.fasterxml.jackson.annotation.JsonAutoDetect;")
+                  .contains("@JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY,");
+            // Only the class that needs it; ordinary names and plain Java stay as they were.
+            assertThat(lombok.split("@JsonAutoDetect\\(").length - 1).isEqualTo(1);
+            assertThat(new JavaPojoGenerator().fromJson("{\"xAxis\":1}", false)).doesNotContain("JsonAutoDetect");
+            assertThat(new JavaPojoGenerator().fromJson("{\"name\":\"n\",\"url\":\"u\"}", true))
+                  .doesNotContain("JsonAutoDetect");
+            assertThat(new KotlinDataClassGenerator().fromJson("{\"id\":1,\"ID\":2}"))
+                  .contains("import com.fasterxml.jackson.annotation.JsonAutoDetect")
+                  .contains("@JsonAutoDetect(");
+            assertThat(new KotlinDataClassGenerator().fromJson("{\"id\":1,\"name\":\"n\"}"))
+                  .doesNotContain("JsonAutoDetect");
+        }
+
+        @Test @DisplayName("class names differ by more than case")
+        void classNamesIgnoreCase() throws Exception {
+            String java = new JavaPojoGenerator().fromJson("{\"url\":{\"host\":\"a\"},\"URL\":{\"port\":1},\"ROOT\":{\"x\":1}}");
+            assertThat(java).contains("\nclass Url ").contains("\nclass URL2 ").contains("\nclass ROOT2 ")
+                  .doesNotContain("\nclass URL {");
+            String kotlin = new KotlinDataClassGenerator().fromJson("{\"url\":{\"host\":\"a\"},\"URL\":{\"port\":1}}");
+            assertThat(kotlin).contains("data class Url(").contains("data class URL2(");
+        }
+    }
 }

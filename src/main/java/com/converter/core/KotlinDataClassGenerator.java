@@ -73,7 +73,7 @@ public class KotlinDataClassGenerator {
      * {@code List<…>} in the same file then fails to resolve.
      */
     static final Set<String> RESERVED_TYPE_NAMES = Set.of(
-          "JsonProperty",
+          "JsonAutoDetect", "JsonProperty",
           "BigDecimal", "BigInteger",
           "LocalDate", "LocalDateTime", "OffsetDateTime",
           "Any", "Boolean", "Double", "Float", "Int", "List", "Long", "String");
@@ -112,6 +112,8 @@ public class KotlinDataClassGenerator {
         }
 
         StringBuilder out = new StringBuilder();
+        if (usedTypes.contains("JsonAutoDetect"))
+            out.append("import com.fasterxml.jackson.annotation.JsonAutoDetect\n");
         if (usedTypes.contains("JsonProperty"))
             out.append("import com.fasterxml.jackson.annotation.JsonProperty\n");
         if (usedTypes.contains("BigDecimal"))     out.append("import java.math.BigDecimal\n");
@@ -139,12 +141,24 @@ public class KotlinDataClassGenerator {
             propertyTypes.add(type);
         }
         validateJvmSlots(className, propertyTypes);
-        sb.append("data class ").append(className).append("(\n");
         Set<String> usedNames = new LinkedHashSet<>();
+        List<String> propertyNames = new ArrayList<>();
+        for (String key : (Iterable<String>) node::fieldNames)
+            propertyNames.add(uniqueName(toCamelCase(key), "", usedNames));
+        // The getter of xAxis is getXAxis, which Jackson reads as "xaxis", and
+        // those of id and iD are getId and getID, both read as "id": the class
+        // wrote keys it was not read from, or could not be used at all.
+        // Binding through the backing fields keeps the property names.
+        if (propertyNames.stream().anyMatch(SourceConventions::accessorNameDiffers)) {
+            usedTypes.add("JsonAutoDetect");
+            sb.append("@JsonAutoDetect(").append(SourceConventions.FIELD_BINDING).append(")\n");
+        }
+        sb.append("data class ").append(className).append("(\n");
         int remaining = node.size();
+        int index = 0;
         for (Map.Entry<String, JsonNode> e : node.properties()) {
             String originalKey = e.getKey();
-            String propertyName = uniqueName(toCamelCase(originalKey), "", usedNames);
+            String propertyName = propertyNames.get(index++);
             String type = propertyTypes.get(node.size() - remaining);
 
             if (!propertyName.equals(originalKey)) {

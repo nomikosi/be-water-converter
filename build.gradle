@@ -22,6 +22,7 @@ repositories {
 configurations {
     kotlinCompiler
     lombokProcessor
+    kotlinJackson
 }
 
 dependencies {
@@ -39,6 +40,9 @@ dependencies {
     // this compiler in a separate JVM and load the resulting classes.
     kotlinCompiler 'org.jetbrains.kotlin:kotlin-compiler-embeddable:2.1.20'
     lombokProcessor 'org.projectlombok:lombok:1.18.48'
+    // Binds the compiled Kotlin data classes the way their users will, in an
+    // isolated class loader: a class that compiles can still fail to read its JSON.
+    kotlinJackson 'com.fasterxml.jackson.module:jackson-module-kotlin:2.21.1'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     // Parameterised tests: routing tables are covered per-format rather than by
     // one test per arm, which is what let several arms go untested.
@@ -165,6 +169,7 @@ tasks.named('instrumentTestCode') {
 tasks.withType(Test).configureEach {
     systemProperty 'bewater.kotlin.compiler.classpath', configurations.kotlinCompiler.asPath
     systemProperty 'bewater.lombok.classpath', configurations.lombokProcessor.asPath
+    systemProperty 'bewater.kotlin.jackson.classpath', configurations.kotlinJackson.asPath
     systemProperty 'bewater.test.classpath', sourceSets.test.runtimeClasspath.asPath
     systemProperty 'bewater.javac', javaToolchains.compilerFor {
         languageVersion = JavaLanguageVersion.of(21)

@@ -19,8 +19,10 @@ package com.converter.core;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.UnaryOperator;
@@ -100,6 +102,7 @@ public final class StructureModel {
     private void collect(JsonNode node, String desiredName) {
         if (!node.isObject() || names.containsKey(node)) return;
         String name = unique(desiredName);
+        takenIgnoringCase.add(name.toLowerCase(Locale.ROOT));
         names.put(node, name);
         types.put(name, node);
         for (Map.Entry<String, JsonNode> entry : node.properties()) {
@@ -124,11 +127,16 @@ public final class StructureModel {
         // the generated file, when what it actually collides with is the import.
         // This is the suffix the identifier rules already use for keywords.
         if (reservedNames.contains(base)) base = base + "Value";
-        if (!types.containsKey(base)) return base;
-        int n = 2;
-        while (types.containsKey(base + n)) n++;
-        return base + n;
+        // Ignoring case: each class compiles to a file named after it, and on
+        // Windows and macOS Url.class and URL.class are one file. Keys "url"
+        // and "URL" left only one of the two classes in the output folder.
+        String name = base;
+        for (int n = 2; takenIgnoringCase.contains(name.toLowerCase(Locale.ROOT)); n++) name = base + n;
+        return name;
     }
+
+    /** Every class name assigned so far, lower-cased. */
+    private final Set<String> takenIgnoringCase = new HashSet<>();
 
     /** Every discovered type, in discovery order; the first is the root. */
     public Map<String, JsonNode> types() {

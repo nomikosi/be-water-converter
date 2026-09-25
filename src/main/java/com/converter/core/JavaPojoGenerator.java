@@ -66,7 +66,7 @@ public class JavaPojoGenerator {
      * little costs a file that does not compile.
      */
     private static final Set<String> RESERVED_TYPE_NAMES = Set.of(
-          "JsonProperty",
+          "JsonAutoDetect", "JsonProperty",
           "BigDecimal", "BigInteger",
           "LocalDate", "LocalDateTime", "OffsetDateTime",
           "List",
@@ -88,8 +88,14 @@ public class JavaPojoGenerator {
         return all;
     }
 
-    /** Java identifiers admit {@code $}, which is the only way they differ from Kotlin's. */
-    private static final Pattern ILLEGAL_IN_IDENTIFIER = Pattern.compile("[^a-zA-Z0-9_$]");
+    /**
+     * Java identifiers admit {@code $}, but generated ones do not use it:
+     * Lombok skips a field whose name starts with {@code $}, so a class whose
+     * only key was {@code $ref} got a second no-argument constructor from
+     * {@code @AllArgsConstructor} and did not compile. {@code $ref} becomes
+     * {@code _ref}, mapped back by {@code @JsonProperty}.
+     */
+    private static final Pattern ILLEGAL_IN_IDENTIFIER = Pattern.compile("[^a-zA-Z0-9_]");
 
     public String fromJson(String json) throws Exception {
         return fromJson(json, false);
@@ -130,6 +136,8 @@ public class JavaPojoGenerator {
         }
 
         StringBuilder sb = new StringBuilder();
+        if (usedTypes.contains("JsonAutoDetect"))
+            sb.append("import com.fasterxml.jackson.annotation.JsonAutoDetect;\n");
         if (usedTypes.contains("JsonProperty"))
             sb.append("import com.fasterxml.jackson.annotation.JsonProperty;\n");
         if (usedTypes.contains("BigDecimal"))     sb.append("import java.math.BigDecimal;\n");
@@ -160,7 +168,18 @@ public class JavaPojoGenerator {
     private void generateClass(String className, JsonNode node, StringBuilder sb,
           boolean useLombok, boolean detectDates, Set<String> usedTypes,
           StructureModel model, boolean isPublic) {
+        Set<String> usedNames = new HashSet<>();
+        List<String> fieldNames = new ArrayList<>();
+        for (String key : (Iterable<String>) node::fieldNames)
+            fieldNames.add(uniqueName(toCamelCase(key), "", usedNames));
         if (useLombok) {
+            // Lombok's getter for xAxis is getXAxis, which Jackson reads as the
+            // property "xaxis": the class could not read the JSON it was
+            // generated from. Binding through the fields keeps their names.
+            if (fieldNames.stream().anyMatch(SourceConventions::accessorNameDiffers)) {
+                usedTypes.add("JsonAutoDetect");
+                sb.append("@JsonAutoDetect(").append(SourceConventions.FIELD_BINDING).append(")\n");
+            }
             sb.append("@Data\n");
             sb.append("@NoArgsConstructor\n");
             // On a class with no fields the all-args constructor IS the no-args
@@ -173,10 +192,10 @@ public class JavaPojoGenerator {
         }
         sb.append(isPublic ? "public class " : "class ").append(className).append(" {\n\n");
 
-        Set<String> usedNames = new HashSet<>();
+        int index = 0;
         for (Map.Entry<String, JsonNode> e : node.properties()) {
             String originalKey = e.getKey();
-            String camelName = uniqueName(toCamelCase(originalKey), "", usedNames);
+            String camelName = fieldNames.get(index++);
             String javaType = resolveJavaType(e.getValue(), originalKey, detectDates,
                   usedTypes, model);
             if (!camelName.equals(originalKey)) {

@@ -86,4 +86,45 @@ class GeneratedJavaCompilesTest {
             }
         }
     }
+
+    /**
+     * Compiling is not the whole job: with Lombok the classes have to read the
+     * JSON they came from and write it back. xAxis gets the getter getXAxis,
+     * which Jackson reads as "xaxis"; an object whose only key is $ref lost its
+     * field to Lombok; url and URL are two classes whose files are one on
+     * Windows and macOS.
+     */
+    @org.junit.jupiter.api.Test
+    void lombokClassesReadAndWriteTheirOwnJson() throws Exception {
+        String[] samples = {
+              "{\"xAxis\":1,\"eTag\":\"a\",\"name\":\"n\"}",
+              "{\"schema\":{\"$ref\":\"#/components/schemas/Pet\"}}",
+              "{\"url\":{\"host\":\"a\"},\"URL\":{\"port\":1}}",
+              "{\"id\":1,\"ID\":2,\"iPhone\":{\"aB\":[1,2]}}",
+              "{\"first-name\":\"Ada\",\"X-Axis\":2}"};
+        String lombokCp = TestProcesses.configured("bewater.lombok.classpath");
+        String classpath = TestProcesses.configured("bewater.jackson.annotations.classpath")
+              + File.pathSeparator + lombokCp;
+        Path output = Files.createDirectory(temp.resolve("bound"));
+        List<String> command = new ArrayList<>(List.of("-encoding", "UTF-8", "-classpath", classpath,
+              "-d", output.toString(), "-processorpath", lombokCp, "-proc:full"));
+        for (int i = 0; i < samples.length; i++) {
+            Path source = Files.createDirectories(temp.resolve("bound-src").resolve("bound" + i)).resolve("Root.java");
+            Files.writeString(source, "package bound" + i + ";\n\n" + new JavaPojoGenerator().fromJson(samples[i], true));
+            command.add(source.toString());
+        }
+        TestProcesses.run(temp, TestProcesses.configured("bewater.javac"), command);
+        // The test's own loader as parent, so the generated annotations are the
+        // ones this ObjectMapper reads.
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        try (URLClassLoader loader = new URLClassLoader(new URL[]{output.toUri().toURL()},
+              GeneratedJavaCompilesTest.class.getClassLoader())) {
+            for (int i = 0; i < samples.length; i++) {
+                Class<?> root = Class.forName("bound" + i + ".Root", true, loader);
+                Object value = mapper.readValue(samples[i], root);
+                assertThat(mapper.readTree(mapper.writeValueAsString(value))).as(samples[i])
+                      .isEqualTo(mapper.readTree(samples[i]));
+            }
+        }
+    }
 }

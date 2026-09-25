@@ -151,6 +151,30 @@ public final class SourceConventions {
      * it was generated from. Empty keys arrive mostly from XML, where the mapper
      * files element text content under "".
      */
+    /**
+     * True when Jackson would give the property behind this name's accessors a
+     * different name. An accessor is {@code get} plus the name with its first
+     * letter capitalised, and Jackson reads a property name back by
+     * lower-casing the capitals it starts with: {@code xAxis} becomes
+     * {@code getXAxis}, which Jackson reads as {@code xaxis}, and {@code iD}
+     * becomes {@code getID}, read as {@code id} — the same name as an
+     * {@code id} beside it. Classes holding such a name bind through their
+     * fields instead; see {@link #FIELD_BINDING}.
+     */
+    public static boolean accessorNameDiffers(String name) {
+        return name.length() > 1 && Character.isLetter(name.charAt(0)) && Character.isUpperCase(name.charAt(1));
+    }
+
+    /**
+     * The annotation arguments that make Jackson bind a class through its
+     * fields, by the fields' own names, and ignore its accessors. Valid Java
+     * and Kotlin alike.
+     */
+    public static final String FIELD_BINDING = "fieldVisibility = JsonAutoDetect.Visibility.ANY,\n"
+          + "        getterVisibility = JsonAutoDetect.Visibility.NONE,\n"
+          + "        isGetterVisibility = JsonAutoDetect.Visibility.NONE,\n"
+          + "        setterVisibility = JsonAutoDetect.Visibility.NONE";
+
     public static boolean isMappableKey(String key) {
         return key != null && !key.isEmpty();
     }
