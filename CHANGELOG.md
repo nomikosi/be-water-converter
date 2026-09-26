@@ -106,47 +106,6 @@ fails until the version in `build.gradle` has a section here.
   is left untouched rather than replaced with itself. Save proposes the same file name the
   scratch files use (`Root.java` for Java), and _Open in Be Water Converter_ asks before
   loading a very large file.
-
-## [1.5.0]
-
-- **Open in editor** — a toolbar button sends the output to a scratch file, so you get the
-  IDE's own highlighting, folding and keymap on a result.
-- **TOML is syntax-highlighted** in the panel; it was the one supported format being shown as
-  plain text.
-- **Kotlin data class output** — `data class` declarations with `val` properties,
-  `@JsonProperty` where the key differs, and the same nested-class and name-collision handling
-  as the Java generator.
-- **Fixed several ways input could be silently mangled** — JSONL and any content after the
-  first JSON value were truncated without warning; YAML anchors resolved to the anchor _name_
-  and `<<:` merge keys were discarded; a UTF-8 BOM (what Excel writes on "CSV UTF-8" export)
-  became part of the first column name; repeated CSV headers overwrote one another; and very
-  large or very precise numbers lost their value. Format, which rewrites your editor in place,
-  was the most damaging path for several of these.
-- **Format no longer retypes CSV cells** — it is a layout action, so `1.50` stays `1.50` and a
-  literal `null` cell stays text. Convert still infers types.
-- **Protobuf field options parse** — `[deprecated = true]` and friends no longer fail the whole
-  message, and an option on an enum's zero value no longer silently promotes the next constant
-  to be the default.
-- **JSON Schema output** — generate a draft 2020-12 schema from any supported input. Mixed-type
-  arrays produce `anyOf` rather than guessing from the first element.
-- **CSV delimiter selection** — read and write comma, semicolon or tab separated files.
-  Semicolon CSV (the norm across much of Europe) previously parsed as a single column.
-- **Sort keys** — sort object keys alphabetically so output is stable and diffable; array order
-  is preserved. Applies to every target format.
-- **Automatic format detection on paste** — pasting or dropping content sets the input format
-  for you; it never overrides a format you picked yourself.
-- **Works from the editor and Project view** — right-click a file or a selection for _Open in
-  Be Water Converter_, or _Convert with Be Water_ to convert straight to any format. No more
-  pasting into the tool window to get started.
-- **Results open as scratch files** — conversions started from a context menu open in a real
-  IDE editor, with full highlighting, folding and your own keymap.
-- **Subtree filter** — convert only part of a document with a JSON Pointer (`/users/0/name`) or
-  dotted path (`users[0].name`).
-- **Compare** — diff the two editors in the IDE's diff viewer. Both sides are normalised and
-  key-sorted first, so the same data in YAML and JSON compares as equal and only real
-  differences are shown.
-- **Parse errors move the caret** to the reported line and column instead of only describing
-  where the problem is.
 - **Numbers keep their written form in YAML and TOML too** — `1.10` no longer becomes `1.1`,
   `1e400` no longer becomes the text "Infinity", and long decimals keep every digit. Format
   used to write the rewritten values back over the document.
@@ -194,6 +153,47 @@ fails until the version in `build.gradle` has a section here.
   linear now.
 - **Convert with Be Water asks before a large CSV** — the row-count confirmation the tool
   window gives applies to context-menu conversions too.
+
+## [1.5.0]
+
+- **Open in editor** — a toolbar button sends the output to a scratch file, so you get the
+  IDE's own highlighting, folding and keymap on a result.
+- **TOML is syntax-highlighted** in the panel; it was the one supported format being shown as
+  plain text.
+- **Kotlin data class output** — `data class` declarations with `val` properties,
+  `@JsonProperty` where the key differs, and the same nested-class and name-collision handling
+  as the Java generator.
+- **Fixed several ways input could be silently mangled** — JSONL and any content after the
+  first JSON value were truncated without warning; YAML anchors resolved to the anchor _name_
+  and `<<:` merge keys were discarded; a UTF-8 BOM (what Excel writes on "CSV UTF-8" export)
+  became part of the first column name; repeated CSV headers overwrote one another; and very
+  large or very precise numbers lost their value. Format, which rewrites your editor in place,
+  was the most damaging path for several of these.
+- **Format no longer retypes CSV cells** — it is a layout action, so `1.50` stays `1.50` and a
+  literal `null` cell stays text. Convert still infers types.
+- **Protobuf field options parse** — `[deprecated = true]` and friends no longer fail the whole
+  message, and an option on an enum's zero value no longer silently promotes the next constant
+  to be the default.
+- **JSON Schema output** — generate a draft 2020-12 schema from any supported input. Mixed-type
+  arrays produce `anyOf` rather than guessing from the first element.
+- **CSV delimiter selection** — read and write comma, semicolon or tab separated files.
+  Semicolon CSV (the norm across much of Europe) previously parsed as a single column.
+- **Sort keys** — sort object keys alphabetically so output is stable and diffable; array order
+  is preserved. Applies to every target format.
+- **Automatic format detection on paste** — pasting or dropping content sets the input format
+  for you; it never overrides a format you picked yourself.
+- **Works from the editor and Project view** — right-click a file or a selection for _Open in
+  Be Water Converter_, or _Convert with Be Water_ to convert straight to any format. No more
+  pasting into the tool window to get started.
+- **Results open as scratch files** — conversions started from a context menu open in a real
+  IDE editor, with full highlighting, folding and your own keymap.
+- **Subtree filter** — convert only part of a document with a JSON Pointer (`/users/0/name`) or
+  dotted path (`users[0].name`).
+- **Compare** — diff the two editors in the IDE's diff viewer. Both sides are normalised and
+  key-sorted first, so the same data in YAML and JSON compares as equal and only real
+  differences are shown.
+- **Parse errors move the caret** to the reported line and column instead of only describing
+  where the problem is.
 
 ## [1.4.1]
 
