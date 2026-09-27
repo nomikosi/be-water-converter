@@ -514,9 +514,9 @@ class JsonYamlConverterTest {
             assertThat(converter.yamlToJson("a: 010\n")).isEqualTo("{\"a\":\"010\"}");
             assertThat(converter.yamlToJson("a: 12:30:00\n")).isEqualTo("{\"a\":\"12:30:00\"}");
             assertThat(converter.yamlToJson("a: 2024-01-01\n")).isEqualTo("{\"a\":\"2024-01-01\"}");
-            // 0o777 is YAML 1.2 octal that SnakeYAML's constructor cannot build, so
-            // it stays text rather than throwing NumberFormatException.
-            assertThat(converter.yamlToJson("a: 0o777\n")).isEqualTo("{\"a\":\"0o777\"}");
+            // 0o777 is YAML 1.2 octal, which SnakeYAML's own constructor cannot
+            // build; this converter reads it as 1.2 says.
+            assertThat(converter.yamlToJson("a: 0o777\n")).isEqualTo("{\"a\":511}");
             // Still numbers, per YAML 1.2 — carried as the exact decimals they were
             // written as, so exponent forms print the way BigDecimal prints them.
             assertThat(converter.yamlToJson("a: 1e3\n")).isEqualTo("{\"a\":1E+3}");
@@ -671,6 +671,56 @@ class JsonYamlConverterTest {
         void stillRejectsStreamsContainingOnlyEmptyDocuments(String yaml) {
             assertThatThrownBy(() -> converter.yamlToJson(yaml))
                   .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("no documents");
+        }
+    }
+
+    @Nested @DisplayName("YAML 1.1 readers and 1.2 octal")
+    class Yaml11AndOctal {
+        private final ConversionPipeline pipeline = new ConversionPipeline();
+        private final ConversionOptions opts = ConversionOptions.DEFAULTS;
+
+        @Test @DisplayName("0o17 is YAML 1.2 octal, and Format will not rewrite it")
+        void octal() throws Exception {
+            assertThat(pipeline.normalizeToJson("a: 0o17\nb: -0o10\nc: 0o7777777777777777777777\n",
+                  Formats.FMT_YAML, opts))
+                  .isEqualTo("{\"a\":15,\"b\":-8,\"c\":73786976294838206463}");
+            assertThatThrownBy(() -> pipeline.formatInput("a: 0o17\n", Formats.FMT_YAML, opts))
+                  .hasMessageContaining("Format would rewrite the number 0o17 as 15");
+            assertThat(pipeline.renderFromJson("{\"a\":\"0o17\"}", Formats.FMT_YAML, opts)).isEqualTo("a: \"0o17\"\n");
+        }
+
+        @Test @DisplayName("times and dates a YAML 1.1 reader would retype are quoted")
+        void yaml11Retyping() throws Exception {
+            String yaml = pipeline.renderFromJson("{\"ports\":[\"22:22\",\"8080:80\"],\"time\":\"12:30\","
+                  + "\"release\":\"2024-01-01\",\"version\":\"1.2.3\"}", Formats.FMT_YAML, opts);
+            assertThat(yaml).isEqualTo("ports:\n- \"22:22\"\n- 8080:80\ntime: \"12:30\"\n"
+                  + "release: \"2024-01-01\"\nversion: 1.2.3\n");
+            // Format keeps the quotes a docker-compose file puts around its ports.
+            assertThat(pipeline.formatInput("ports:\n- \"22:22\"\n", Formats.FMT_YAML, opts))
+                  .isEqualTo("ports:\n- \"22:22\"\n");
+        }
+
+        @Test @DisplayName("YAML nests 500 deep on a 1 MB stack, including YAML this converter wrote")
+        void deepNesting() throws Exception {
+            // SnakeYAML's default refused 51 levels, even of YAML written here.
+            String json = "{\"k\":".repeat(500) + "1" + "}".repeat(500);
+            java.util.concurrent.atomic.AtomicReference<Object> read = new java.util.concurrent.atomic.AtomicReference<>();
+            Thread reader = new Thread(null, () -> {
+                try {
+                    read.set(pipeline.normalizeToJson(pipeline.renderFromJson(json, Formats.FMT_YAML, opts),
+                          Formats.FMT_YAML, opts));
+                } catch (Throwable failure) {
+                    read.set(failure);
+                }
+            }, "yaml-reader", 1L << 20);
+            reader.start();
+            reader.join();
+            assertThat(read.get()).isEqualTo(json);
+            // Deeper is refused by name, not by a stack overflow.
+            String deeper = "{\"k\":".repeat(501) + "1" + "}".repeat(501);
+            assertThatThrownBy(() -> pipeline.normalizeToJson(pipeline.renderFromJson(deeper, Formats.FMT_YAML, opts),
+                  Formats.FMT_YAML, opts))
+                  .hasMessageContaining("Nesting Depth exceeded max 500");
         }
     }
 }

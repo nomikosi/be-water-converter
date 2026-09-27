@@ -48,10 +48,18 @@ public class JsonYamlConverter {
     /**
      * SnakeYAML's default code-point limit is ~3 MB, which rejected YAML files
      * well under the plugin's own 10 MB open warning. Raised to match, leaving
-     * the alias and nesting limits at their defaults so billion-laughs input is
-     * still refused.
+     * the alias limit at its default so billion-laughs input is still refused.
      */
     static final int CODE_POINT_LIMIT = 64 * 1024 * 1024;
+
+    /**
+     * How deep a YAML document may nest. SnakeYAML's default of 50 refused a
+     * document 51 levels deep, including YAML this converter had just written.
+     * It builds a document recursively, at about a kilobyte of stack per level,
+     * so this stays well inside the 1 MB a pooled thread has: at 1,000 the
+     * coverage-instrumented tests already overflowed.
+     */
+    static final int NESTING_DEPTH_LIMIT = 500;
 
     // ── Scalar resolution, shared by the reader and the writer ────────────
     //
@@ -77,12 +85,12 @@ public class JsonYamlConverter {
 
     // Neither the sexagesimal "[-+]?[1-9][0-9_]*(:[0-5]?[0-9])+" nor bare
     // octal "0[0-7_]+", so 12:30:00 and 0777 stay the text they were written
-    // as. YAML 1.2's explicit 0o777 is deliberately absent too: SafeConstructor
-    // reads a leading 0 as octal and then calls parseInt("o777", 8), so tagging
-    // it INT throws rather than converts. Unresolved, it is simply the string
-    // it looks like.
+    // as. YAML 1.2's octal is 0o777, read as 511 as YAML 1.2 says;
+    // SafeConstructor cannot parse that spelling, so ExactFloatConstructor
+    // builds it. Beyond the 1.2 core schema, the binary and underscore forms
+    // most YAML 1.1 tools also read are kept: 0b101 is 5 and 1_000 is 1000.
     private static final Pattern CORE_INT = Pattern.compile(
-          "^(?:[-+]?0b[0-1_]+|[-+]?(?:0|[1-9][0-9_]*)|[-+]?0x[0-9a-fA-F_]+)$");
+          "^(?:[-+]?0b[0-1_]+|[-+]?0o[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)|[-+]?0x[0-9a-fA-F_]+)$");
 
     // A dot or an exponent is required, so 0777 cannot land here either once
     // INT has declined it, and a digit is required on at least one side of the
@@ -156,17 +164,33 @@ public class JsonYamlConverter {
     }
 
     /**
-     * Quotes what Jackson's default checker quotes, plus every string that
-     * {@link CoreScalarResolver} would read back as a non-string.
+     * Quotes what Jackson's default checker quotes, every string that
+     * {@link CoreScalarResolver} would read back as a non-string, and every
+     * string a YAML 1.1 reader would.
      */
     private static final class ResolverAwareQuoting extends StringQuotingChecker.Default {
         @Override public boolean needToQuoteName(String name) {
-            return super.needToQuoteName(name) || resolvesToNonString(name);
+            return super.needToQuoteName(name) || resolvesToNonString(name) || retypedByYaml11(name);
         }
 
         @Override public boolean needToQuoteValue(String value) {
-            return super.needToQuoteValue(value) || resolvesToNonString(value);
+            return super.needToQuoteValue(value) || resolvesToNonString(value) || retypedByYaml11(value);
         }
+    }
+
+    // YAML 1.1's base-60 numbers and timestamps. This converter reads them as
+    // the text they are, but PyYAML, SnakeYAML's defaults and docker-compose
+    // read "22:22" as 1342, "12:30" as 750 and "2024-01-01" as a date, so bare
+    // they changed type on the way to every such reader, and Format stripped
+    // the quotes a docker-compose file had put around its ports.
+    private static final Pattern YAML11_SEXAGESIMAL = Pattern.compile(
+          "^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+(?:\\.[0-9_]*)?$");
+    private static final Pattern YAML11_TIMESTAMP = Pattern.compile(
+          "^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}(?:(?:[Tt]|[ \\t]+)[0-9]{1,2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]*)?"
+          + "(?:[ \\t]*(?:Z|[-+][0-9]{1,2}(?::[0-9]{2})?))?)?$");
+
+    static boolean retypedByYaml11(String text) {
+        return YAML11_SEXAGESIMAL.matcher(text).matches() || YAML11_TIMESTAMP.matcher(text).matches();
     }
 
     public String jsonToYaml(String json) throws Exception {
@@ -304,9 +328,15 @@ public class JsonYamlConverter {
 
     private static Yaml composer() { return composer(false); }
 
-    private static Yaml composer(boolean formatting) {
+    private static LoaderOptions loaderOptions() {
         LoaderOptions options = new LoaderOptions();
         options.setCodePointLimit(CODE_POINT_LIMIT);
+        options.setNestingDepthLimit(NESTING_DEPTH_LIMIT);
+        return options;
+    }
+
+    private static Yaml composer(boolean formatting) {
+        LoaderOptions options = loaderOptions();
         // A repeated key silently kept only the last value. YAML says duplicate
         // keys are an error; SnakeYAML merely defaults to allowing them.
         options.setAllowDuplicateKeys(false);
@@ -342,16 +372,33 @@ public class JsonYamlConverter {
             yamlConstructors.put(Tag.FLOAT, new ConstructExactFloat());
             // Format writes an integer back in decimal: 0x1F came back as 31,
             // 0b101 as 5 and 1_000 as 1000. Conversions may; Format may not.
-            if (formatting) {
-                org.yaml.snakeyaml.constructor.Construct integers = yamlConstructors.get(Tag.INT);
-                yamlConstructors.put(Tag.INT, new AbstractConstruct() {
-                    @Override public Object construct(Node node) {
-                        Object value = integers.construct(node);
-                        DocumentFormatter.rejectRewrittenNumber(((ScalarNode) node).getValue(), value);
-                        return value;
-                    }
-                });
-            }
+            org.yaml.snakeyaml.constructor.Construct integers = yamlConstructors.get(Tag.INT);
+            yamlConstructors.put(Tag.INT, new AbstractConstruct() {
+                @Override public Object construct(Node node) {
+                    String written = ((ScalarNode) node).getValue();
+                    Object value = octal(written);
+                    if (value == null) value = integers.construct(node);
+                    if (formatting) DocumentFormatter.rejectRewrittenNumber(written, value);
+                    return value;
+                }
+            });
+        }
+
+        private static final Pattern OCTAL = Pattern.compile("^([-+]?)0o([0-7_]+)$");
+
+        /**
+         * YAML 1.2's 0o777, which SafeConstructor turns into parseInt("o777", 8)
+         * and an exception. Null for every other spelling. Sized the way
+         * SafeConstructor sizes its integers: Integer, Long, then BigInteger.
+         */
+        private static Object octal(String written) {
+            java.util.regex.Matcher m = OCTAL.matcher(written);
+            if (!m.matches()) return null;
+            java.math.BigInteger value = new java.math.BigInteger(m.group(2).replace("_", ""), 8);
+            if ("-".equals(m.group(1))) value = value.negate();
+            if (value.bitLength() < Integer.SIZE) return value.intValue();
+            if (value.bitLength() < Long.SIZE) return value.longValue();
+            return value;
         }
 
         @Override protected Object constructObject(Node node) {
@@ -393,8 +440,8 @@ public class JsonYamlConverter {
      * text, and JSON has no date type to receive the third.
      *
      * <p>This drops exactly those, plus the yes/no/on/off booleans: null, plain
-     * integers, floats, merge keys and {@code 0x}/{@code 0b} forms all still
-     * resolve, and true/false are still booleans. Tag.TIMESTAMP is deliberately
+     * integers, floats, merge keys and {@code 0x}/{@code 0o}/{@code 0b} forms
+     * all resolve, and true/false are still booleans. Tag.TIMESTAMP is deliberately
      * absent: it produced a java.util.Date that JSON then had to render as a
      * string anyway, in a format the document never used.
      */
@@ -455,8 +502,7 @@ public class JsonYamlConverter {
      * reports the real error.
      */
     public FormatLosses countFormatLosses(String yaml) {
-        LoaderOptions options = new LoaderOptions();
-        options.setCodePointLimit(CODE_POINT_LIMIT);
+        LoaderOptions options = loaderOptions();
         options.setProcessComments(true);
         Yaml parser = new Yaml(new SafeConstructor(options),
               UNUSED_REPRESENTER, UNUSED_DUMPER_OPTIONS, options);
