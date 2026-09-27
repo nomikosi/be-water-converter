@@ -10,45 +10,121 @@ fails until the version in `build.gradle` has a section here.
   `1.0e2`, `-0.0` and `1e400` stay as they are, with sorted keys too. YAML and TOML Format
   refuse a number they would write back differently, such as `1.5e1` as `15` (a float turned
   into an integer) or YAML's `0x1F` as `31`, and say what it would become.
+- **XML Format writes the document as it was written** — it re-indents only elements that hold
+  nothing but other elements. Mixed content such as `<p>Hello <b>world</b></p>`,
+  `xml:space="preserve"` elements, CDATA sections and elements holding only a comment are
+  written as they are, instead of being refused or re-indented into a different value, and
+  entity references an external DTD declares, such as XHTML's `&nbsp;` and `&copy;`, are no
+  longer deleted. The declaration keeps its `standalone`, a document without one gets none,
+  each comment or processing instruction before the root keeps its own line, and a document
+  nested more than 1,000 levels deep is refused, as conversion refuses it. Under an XHTML
+  DOCTYPE only HTML's void elements, such as `<br />`, are minimized: an empty
+  `<script src="a.js"></script>` was written as `<script src="a.js" />`, which an HTML parser
+  reads as an opening tag.
 - **XML keeps text, names, nulls and whitespace** — a document that declares a non-UTF-8
   encoding is no longer decoded twice (`José` read as `JosÃ©`, and UTF-16 failed). JSON `null`
-  is written as `xsi:nil="true"` and reads back as `null` rather than `""`. Element names follow
-  XML's naming rules, so a key such as `latency_µs` no longer produces XML the plugin then
-  refused to read, and letters beyond the Basic Multilingual Plane are kept. Format keeps
-  whitespace that is an element's whole value, and refuses to re-indent an
-  `xml:space="preserve"` element that has children.
-- **CSV keeps cells as written** — the first cell of each row keeps its leading spaces, as the
-  other cells always did: Format no longer strips them, and type inference no longer reads a
-  space-padded first cell as a number. A row whose only cell is empty is written quoted and
-  survives the round trip. Delimiter detection picks the delimiter that splits the header and
-  the first rows into the most columns, so a tab-separated file whose values contain commas is
-  read as tab-separated.
+  is written as `xsi:nil="true"` and reads back as `null` rather than `""`. Element names
+  follow XML's naming rules, so a key such as `latency_µs` no longer produces XML the plugin
+  then refused to read, and letters beyond the Basic Multilingual Plane are kept. A key that is
+  already a valid name keeps it and only renamed keys are numbered, so `first_name` is no
+  longer written as `first_name_2` because `first name` came first. Format keeps whitespace
+  that is an element's whole value.
+- **CSV keeps cells and rows as written** — the first cell of each row keeps its leading
+  spaces, as the other cells always did: Format no longer strips them, and type inference no
+  longer reads a space-padded first cell as a number. A row whose only cell is empty is written
+  quoted and survives the round trip, and a row of empty cells (`,,`) is kept instead of being
+  dropped as blank. Delimiter detection picks the delimiter that splits the header and the
+  first rows into the most columns, reading a quoted cell that spans lines as one cell, so a
+  tab-separated file whose values contain commas is read as tab-separated. `.tsv` files open as
+  tab-separated CSV.
+- **Format detection reads real documents** — CSV whose rows hold `Re:` or `Fwd:` is CSV, not
+  YAML; YAML carrying a `.proto`, as a Kubernetes ConfigMap does, is YAML; a Protobuf editions
+  file (`edition = "2023";`) is Protobuf while Cargo.toml's `edition = "2021"` stays TOML; and
+  a TOML table header may be followed by a comment.
+- **Files open in the encoding the IDE has for them** — Open and the context-menu actions read
+  a file by its byte-order mark, then by its encoding in the IDE (File Encodings,
+  `.editorconfig`), then as UTF-8, then as Windows-1252. A UTF-16 file no longer opens as
+  NUL-interleaved text, and a Windows-1252 file keeps its `€` and curly quotes. The status bar
+  names the encoding when it was not UTF-8.
+- **YAML reads `0o` octal and deep documents, and writes for YAML 1.1 readers** — `0o17` is the
+  number 15, as YAML 1.2 writes octal; it was read as text. Documents may nest 500 levels deep,
+  where anything past 50 was refused, including YAML the plugin had just written. Strings that
+  YAML 1.1 readers such as PyYAML and docker-compose take for numbers or dates, like `22:22`
+  and `2024-01-01`, are written quoted, so Format no longer strips the quotes a docker-compose
+  file put around its ports.
 - **Type inference leaves hash-like text alone** — a digit run with an `e` in it, such as the
   short git hash `1234e56`, stays text; `1e3` and `1.5e3` are still numbers.
 - **The subtree filter reads `$` as the root only before `.`, `[` or the end** — keys such as
   `$id`, and paths such as `$defs.Address` in the plugin's own JSON Schema output, select what
   they name.
-- **Protobuf reads options, numbers and extensions as `protoc` does** — a field whose options
-  hold a list or a message, as protovalidate writes them, is no longer dropped; an `extend`
-  block inside a message no longer adds fields to it; `map<string,string>labels`, hex field
-  numbers and octal numbers such as `010` read as `protoc` reads them. A schema that would
-  expand to more than two million values is refused instead of exhausting memory.
+- **Protobuf reads options, numbers, extensions and proto2 as `protoc` does** — a field whose
+  options hold a list or a message, as protovalidate writes them, is no longer dropped; an
+  `extend` block inside a message no longer adds fields to it; `map<string,string>labels`, hex
+  field numbers and octal numbers such as `010` read as `protoc` reads them. proto2 schemas
+  read too: a group is a nested message and a field named after it, `[default = …]` values are
+  the values the fields start with, `extensions` ranges and an `edition` line are declarations
+  rather than errors, and an aggregate option may separate its fields with `;`. An escape such
+  as `\303\251` reads as the UTF-8 bytes it spells, `é`. A schema that would expand to more
+  than two million values is refused instead of exhausting memory, and Format no longer stalls
+  on a line with a long run of spaces.
 - **Generated Protobuf is accepted by `protoc`** — keys such as `user_id` and `userId`, or
   `name` and `Name`, become distinct field names, and a field whose JSON name would clash
-  carries its key as `json_name`, so every key still reads back as itself.
+  carries its key as `json_name`, so every key still reads back as itself. Values of mixed
+  kinds, and lists holding `null`, are `google.protobuf.Value`, with its import, instead of
+  `repeated string`, which proto3's JSON mapping cannot read them back into; a key such as
+  `[id]`, a form `protoc` reserves for extensions, is refused with a message instead of being
+  emitted.
 - **Generated Java and Kotlin compile and read their own JSON** — Lombok classes with a `$ref`
   key compile; classes with keys such as `xAxis`, `eTag`, or both `id` and `ID`, bind through
   their fields with `@JsonAutoDetect`; and class names are unique ignoring case, so objects
-  under `url` and `URL` no longer compile to the same class file on Windows and macOS.
+  under `url` and `URL` no longer compile to the same class file on Windows and macOS. An empty
+  object is a `Map<String, Object>` (`Map<String, Any?>` in Kotlin) instead of an empty class
+  that failed on whatever the real data held there. A Lombok class with more than 1,000 fields
+  uses `@Getter` and `@Setter`, since `@Data`'s `equals` is too large for javac, and one with
+  more than 500 leaves its fields out of `toString`, which javac cannot compile.
 - **Compare shows plain numbers** — whole numbers are written out (`30`, `12000`) instead of
   `3E+1` and `1.2E+4`, and equal values still compare equal however they are spelled.
-- **Save keeps file permissions and symbolic links** — on Linux and macOS a saved file keeps
-  its permissions instead of becoming readable by its owner only, and saving through a
-  symbolic link updates the file it points to instead of replacing the link.
-- **The tool window follows the IDE** — fonts follow the IDE's font size and Zoom IDE,
-  confirmations use the IDE's own dialogs, context-menu error balloons keep XML tag names and
-  line breaks, *Convert with Be Water* greys out the file's own format, and an XML Format error
-  moves the caret to the problem like other parse errors do.
+- **Output uses LF line breaks on every system, and Format keeps CRLF** — on Windows, JSON, XML
+  and JSON Schema output took the system's CRLF. Every output now uses LF, and Format keeps the
+  line breaks of the document it formats.
+- **Save keeps a file's permissions, symbolic links, line breaks and encoding** — on Linux and
+  macOS a saved file keeps its permissions instead of becoming readable by its owner only, and
+  saving through a symbolic link updates the file it points to instead of replacing the link. A
+  file keeps its CRLF or LF line breaks, and a new one gets the project's line separator. A
+  CSV, Java or Kotlin file keeps its encoding and byte-order mark, so Excel still reads a
+  Windows-1252 or "CSV UTF-8" file correctly after a save; JSON, XML, YAML, TOML and Protobuf
+  are written as UTF-8, the encoding their tools read. On Windows, a save retries for a moment
+  when another program, such as a virus scanner, holds the file.
+- **Context-menu actions appear where they can work** — *Open in Be Water Converter* and
+  *Convert with Be Water* are offered on JSON, XML, YAML, TOML, CSV, TSV and Protobuf files, on
+  plain-text files whose start reads as one of them, and on any selection that does. They no
+  longer appear on Java classes, scripts, READMEs or `gradle.properties` because a line looked
+  like `key = value`. The menu reads only the start of a large selection, so it opens at once,
+  and Cancel stops a conversion under way, not only the read before it.
+- **Options follow across projects** — each open project has its own panel, and a choice made
+  in one (CSV mode and delimiter, row warning, Lombok, dates, type inference, sort keys) now
+  shows in the others. A panel saves only the option that changed, so it no longer writes its
+  stale choices over one just made in another project.
+- **Keys the IDE owns are left to it** — Ctrl+D (Cmd+D on macOS) no longer deletes the line in
+  the panel's editors, where the IDE's Duplicate Line does not reach. The panel no longer binds
+  Alt+Shift+L, Alt+Shift+C and Ctrl+Shift+O, which never reached it past the IDE's Load
+  Context, Recent Changes and Load Gradle Changes: Format Input, Copy Output and Open File take
+  any shortcut you give them in Settings | Keymap.
+- **Find's Previous reaches a match at the end of the document** — when the document ended with
+  a match, Shift+Enter and the Previous button skipped it and selected the first match again,
+  every time.
+- **The tool window follows the IDE** — fonts follow the IDE's font size and Zoom IDE, and a
+  new theme, editor color scheme or font size restyles the panel at once. Confirmations use the
+  IDE's own dialogs, context-menu error balloons keep XML tag names and line breaks, *Convert
+  with Be Water* greys out the file's own format, and an XML Format error moves the caret to
+  the problem like other parse errors do. The editors are RSyntaxTextArea 4.0.1.
+- **Keyboard and screen-reader use** — opening the tool window puts the caret in the input
+  editor, toolbar buttons show a focus ring when Tab reaches them, and screen readers name the
+  editors, format selectors, option controls and the find field.
+- **Large documents stay responsive** — soft wrap is never applied to a document too large to
+  highlight, where each resize took seconds, and a wrap turned on meanwhile applies once a
+  smaller document replaces it. Pressing Format while it runs says so instead of starting a
+  second pass.
 
 ## [1.5.2]
 
@@ -197,6 +273,8 @@ fails until the version in `build.gradle` has a section here.
 
 ## [1.4.1]
 
+_Not published on the JetBrains Marketplace: these changes first reached it in 1.5.0._
+
 - **Fixed: generated Java POJOs now compile** — the output declared every class `public`, which
   is illegal for more than one top-level type in a single file. Only the root class is public
   now.
@@ -273,6 +351,8 @@ fails until the version in `build.gradle` has a section here.
 - **Added UI regression coverage** for output-only swap behavior.
 
 ## [1.3.0]
+
+_The first release on the JetBrains Marketplace; 1.0.0 and 1.1.0 were not published there._
 
 - **Fixed dependency bundling** — all Jackson dataformat modules and RSyntaxTextArea are now
   correctly included in the plugin distribution, resolving "Package not found" errors across
