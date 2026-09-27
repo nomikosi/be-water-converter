@@ -194,6 +194,49 @@ tasks.named('unitTest') { finalizedBy tasks.named('jacocoUnitTestReport') }
 // Make 'build' produce the installable plugin ZIP as well as the Java artifacts.
 tasks.named('build') { dependsOn tasks.named('buildPlugin') }
 
+// ── Files that go with a ZIP uploaded by hand ─────────────────────────────
+// Its SHA-256, and this version's notes as the IDE will show them: taken from
+// the plugin.xml inside the ZIP, not from CHANGELOG.md, so they are the notes
+// that were built.
+tasks.register('releaseFiles') {
+    description = "Writes the plugin ZIP's SHA-256 and this version's release notes (HTML) beside it."
+    group = 'distribution'
+    def zipFile = tasks.named('buildPlugin').flatMap { it.archiveFile }
+    def version = project.version.toString()
+    def pluginName = project.name
+    // Named from the build directory: the ZIP's own path cannot be queried
+    // until buildPlugin has run, and the configuration cache would ask sooner.
+    def distributions = layout.buildDirectory.dir('distributions')
+    def shaFile = distributions.map { it.file("${pluginName}-${version}.zip.sha256") }
+    def notesFile = distributions.map { it.file("${pluginName}-${version}-release-notes.html") }
+    inputs.file(zipFile)
+    outputs.files(shaFile, notesFile)
+    doLast {
+        File zip = zipFile.get().asFile
+        byte[] data = zip.bytes
+        String sha = java.security.MessageDigest.getInstance('SHA-256').digest(data).encodeHex().toString()
+        shaFile.get().asFile.setText("${sha}  ${zip.name}\n", 'UTF-8')
+
+        String pluginXml = null
+        new java.util.zip.ZipInputStream(new ByteArrayInputStream(data)).withCloseable { outer ->
+            for (def entry = outer.nextEntry; entry != null; entry = outer.nextEntry) {
+                if (entry.name != "${pluginName}/lib/${pluginName}-${version}.jar") continue
+                def jar = new java.util.zip.ZipInputStream(new ByteArrayInputStream(outer.readAllBytes()))
+                for (def inner = jar.nextEntry; inner != null; inner = jar.nextEntry)
+                    if (inner.name == 'META-INF/plugin.xml') pluginXml = new String(jar.readAllBytes(), 'UTF-8')
+            }
+        }
+        if (pluginXml == null) throw new GradleException("${zip.name} holds no plugin.xml")
+        def notes = pluginXml =~ /(?s)<h3>${java.util.regex.Pattern.quote(version)}<\/h3>.*?(?=<h3>|\]\]>)/
+        if (!notes.find()) throw new GradleException("${zip.name}'s plugin.xml has no notes for ${version}")
+        notesFile.get().asFile.setText(
+              '<!doctype html>\n<html lang="en"><meta charset="utf-8">'
+                    + "<title>Be Water Converter ${version}</title><body>\n${notes.group().trim()}\n</body></html>\n",
+              'UTF-8')
+        logger.lifecycle("${zip.name}: ${String.format(Locale.ROOT, '%,d', data.length)} bytes, SHA-256 ${sha}")
+    }
+}
+
 // ── Suppress missing emojipicker.jar (Windows bug MP-6708) ────────────────
 tasks.withType(PrepareSandboxTask).configureEach {
     disabledPlugins.add("org.jetbrains.plugins.emojipicker")
