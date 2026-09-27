@@ -25,6 +25,20 @@ final class ProtoStringLiteral {
     private ProtoStringLiteral() {}
 
     static String read(String source, int start) {
+        return utf8(readBytes(source, start));
+    }
+
+    /** The literal's text, which has to be UTF-8. */
+    static String utf8(byte[] bytes) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (java.nio.charset.CharacterCodingException invalidUtf8) {
+            throw invalid();
+        }
+    }
+
+    /** The bytes a string literal spells, for a bytes field's default as much as a name. */
+    static byte[] readBytes(String source, int start) {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         int i = trivia(source, start);
         boolean found = false;
@@ -94,11 +108,7 @@ final class ProtoStringLiteral {
         }
         if (!found || i == source.length() || source.charAt(i) != ',' && source.charAt(i) != ']')
             throw invalid();
-        try {
-            return StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes.toByteArray())).toString();
-        } catch (java.nio.charset.CharacterCodingException invalidUtf8) {
-            throw invalid();
-        }
+        return bytes.toByteArray();
     }
 
     /** The low surrogate a "\\uXXXX" escape at {@code i} spells, or -1 when there is none. */
@@ -129,6 +139,6 @@ final class ProtoStringLiteral {
     }
 
     private static IllegalArgumentException invalid() {
-        return new IllegalArgumentException("Invalid json_name string literal");
+        return new IllegalArgumentException("Invalid string literal in a json_name or default option");
     }
 }

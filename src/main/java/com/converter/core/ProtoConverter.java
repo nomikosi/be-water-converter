@@ -76,9 +76,33 @@ public class ProtoConverter {
               + "\\s*=\\s*(" + FIELD_NUMBER + ")" + FIELD_OPTIONS,
         Pattern.DOTALL);
 
-    /** Statements that are legal proto3 but irrelevant for structural conversion. */
+    /**
+     * Statements that are legal but irrelevant for structural conversion.
+     * {@code extensions 1000 to max;} is proto2's and editions', and failed
+     * whole files — descriptor.proto among them — as an invalid field.
+     */
     private static final Pattern IGNORED_STATEMENT = Pattern.compile(
-        "^(option|reserved|package|import|syntax)\\b.*", Pattern.DOTALL);
+        "^(option|reserved|package|import|syntax|edition|extensions)\\b.*", Pattern.DOTALL);
+
+    /** A field's {@code default} option, proto2's. */
+    private static final Pattern DEFAULT_OPTION = Pattern.compile("(?:\\[|,)\\s*default\\s*=");
+
+    /** A default written as a token rather than a string: a number, an enum value, true, inf. */
+    private static final Pattern DEFAULT_TOKEN = Pattern.compile("[-+]?[\\w.]+");
+
+    /**
+     * proto2's {@code [label] group Name = N [options] { ... }}: a message and
+     * the field holding it, declared in one statement.
+     */
+    private static final Pattern GROUP_HEADER = Pattern.compile(
+        "\\b(?:(optional|required|repeated)\\s+)?group\\s+(\\w+)\\s*=\\s*(" + FIELD_NUMBER + ")"
+              + FIELD_OPTIONS + "\\s*\\{");
+
+    /** The start of an option whose value is a text-format aggregate. */
+    private static final Pattern OPTION_AGGREGATE = Pattern.compile("\\boption\\b[^;{}]*=\\s*\\{");
+
+    /** What proto3's JSON mapping reads any JSON value into. */
+    private static final String STRUCT_VALUE = "google.protobuf.Value";
 
     /** A single enum value statement: {@code NAME = number}. */
     private static final Pattern ENUM_VALUE_PATTERN = Pattern.compile(
@@ -103,6 +127,8 @@ public class ProtoConverter {
         final int bodyOffset;
         /** For a message: the types declared directly inside it. Set at registration. */
         Scope inner;
+        /** For a message: the proto2 groups declared directly in its body. Set at registration. */
+        List<Group> groups = List.of();
         Block(String name, String body, int start, int end, int bodyOffset) {
             this.name = name;
             this.body = body;
@@ -122,6 +148,13 @@ public class ProtoConverter {
      * A's {@code Inner i = 1} resolved to message B's {@code Inner} — and let a
      * nested type shadow a top-level one for every other message in the file.
      */
+    /**
+     * A proto2 group: its message, and the field that holds it, named after the
+     * group in lower case as protoc names it. Positions are within the
+     * enclosing message's body.
+     */
+    private record Group(Block block, boolean repeated, String fieldName, String number, int start, int end) {}
+
     private static final class Scope {
         final Scope parent;
         final Map<String, Scope> packages = new LinkedHashMap<>();
@@ -146,7 +179,7 @@ public class ProtoConverter {
             throw new IllegalArgumentException(
                 "Protobuf input is empty. Paste a proto3 schema containing at least one 'message' block.");
 
-        String clean = flattenOptionGroups(maskCommentsAndStrings(protoSchema));
+        String clean = flattenOptionAggregates(flattenOptionGroups(maskCommentsAndStrings(protoSchema)));
         validateBraces(clean);
 
         List<Block> topMessages = findNamedBlocks(clean, "message");
@@ -207,6 +240,47 @@ public class ProtoConverter {
         for (Block en : findNamedBlocks(stripBlocks(msg.body, "message"), "enum"))
             own.enumDefaults.put(en.name, firstEnumValue(en));
         for (Block nested : findNamedBlocks(msg.body, "message", msg.bodyOffset)) register(nested, own);
+        // A group is a nested message too, named as written: its fields are
+        // its own, and they were read as fields of the message around it.
+        msg.groups = groups(ownBody(msg), msg.bodyOffset);
+        for (Group group : msg.groups) register(group.block(), own);
+    }
+
+    /** A message's body without the blocks of what it declares, offsets kept. */
+    private String ownBody(Block msg) {
+        return stripBlocks(msg.body, "message", "oneof", "enum", "extend");
+    }
+
+    /** The groups written directly in {@code body}, in order. */
+    private List<Group> groups(String body, int offset) {
+        List<Group> groups = new ArrayList<>();
+        Matcher m = GROUP_HEADER.matcher(body);
+        int from = 0;
+        while (m.find(from)) {
+            int bodyStart = m.end();
+            int depth = 1, pos = bodyStart;
+            while (pos < body.length() && depth > 0) {
+                char c = body.charAt(pos);
+                if (c == '{') depth++;
+                else if (c == '}') depth--;
+                pos++;
+            }
+            if (depth != 0) break;       // unbalanced: validateBraces reports it
+            Block block = new Block(m.group(2), body.substring(bodyStart, pos - 1), m.start(), pos,
+                  offset + bodyStart);
+            groups.add(new Group(block, "repeated".equals(m.group(1)),
+                  m.group(2).toLowerCase(Locale.ROOT), m.group(3), m.start(), pos));
+            from = pos;
+        }
+        return groups;
+    }
+
+    /** {@code body} with its group statements blanked, offsets kept. */
+    private static String withoutGroups(String body, List<Group> groups) {
+        if (groups.isEmpty()) return body;
+        char[] out = body.toCharArray();
+        for (Group group : groups) Arrays.fill(out, group.start(), group.end(), ' ');
+        return new String(out);
     }
 
     /** An enum's first declared value — the proto3 default — or "" when it declares none. */
@@ -261,16 +335,16 @@ public class ProtoConverter {
         try {
             // An extend block declares fields of ANOTHER message; they were
             // being listed as this message's own.
-            String flatBody = stripBlocks(msg.body, "message", "oneof", "enum", "extend");
+            String flatBody = withoutGroups(ownBody(msg), msg.groups);
             // Not validated here: validateTree already covered every message,
             // referenced or not, before any of this ran. Doing it again split
             // the same bodies on ';' and re-matched them for a second time, and
             // left two paths that could disagree about which error a user sees.
-            addFields(flatBody, node, msg.inner, resolving, source, msg.bodyOffset, expanded);
+            addFields(flatBody, msg.groups, node, msg.inner, resolving, source, msg.bodyOffset, expanded);
 
             // This message's own oneofs, not those of the messages nested in it.
             for (Block oneof : findNamedBlocks(stripBlocks(msg.body, "message"), "oneof", msg.bodyOffset))
-                addFields(oneof.body, node, msg.inner, resolving, source, oneof.bodyOffset, expanded);
+                addFields(oneof.body, List.of(), node, msg.inner, resolving, source, oneof.bodyOffset, expanded);
         } finally {
             resolving.remove(msg);
         }
@@ -286,16 +360,15 @@ public class ProtoConverter {
      */
     static final long MAX_EXPANDED_VALUES = 2_000_000;
 
-    private void addFields(String body, ObjectNode node, Scope scope, Set<Block> resolving,
-          String source, int bodyOffset, long[] expanded) {
+    private void addFields(String body, List<Group> groups, ObjectNode node, Scope scope,
+          Set<Block> resolving, String source, int bodyOffset, long[] expanded) {
         Matcher fm = FIELD_PATTERN.matcher(body);
+        int nextGroup = 0;
         while (fm.find()) {
-            if (++expanded[0] > MAX_EXPANDED_VALUES)
-                throw new IllegalArgumentException(String.format(
-                      "This schema expands to more than %,d values when every message field is "
-                      + "filled in with its default: messages holding several fields of the same "
-                      + "message type multiply at each level of nesting. Convert the messages you "
-                      + "need on their own, or flatten the nesting.", MAX_EXPANDED_VALUES));
+            // Groups in declaration order among the fields around them.
+            while (nextGroup < groups.size() && groups.get(nextGroup).start() < fm.start())
+                addGroup(groups.get(nextGroup++), node, resolving, source, expanded);
+            countExpanded(expanded);
             boolean repeated  = fm.group(1) != null && fm.group(1).trim().equals("repeated");
             String  protoType = fm.group(2).trim();
             String  fieldName = fm.group(3);
@@ -308,16 +381,22 @@ public class ProtoConverter {
             if (node.has(fieldName))
                 throw new IllegalArgumentException("Duplicate JSON field name: " + fieldName);
 
+            // proto2 fields may say what their default is: [default = 10].
+            Matcher explicitDefault = DEFAULT_OPTION.matcher(fm.group());
+            int defaultAt = explicitDefault.find() ? bodyOffset + fm.start() + explicitDefault.end() : -1;
+
             if (repeated) {
                 node.putArray(fieldName);
             } else if (protoType.startsWith("map<") || protoType.startsWith("map <")) {
                 node.putObject(fieldName);
             } else if (SCALAR_TYPES.contains(protoType)) {
-                addScalarDefault(node, fieldName, protoType);
+                if (defaultAt < 0 || !putExplicitDefault(node, fieldName, protoType, source, defaultAt))
+                    addScalarDefault(node, fieldName, protoType);
             } else {
                 Object type = resolveType(scope, protoType);
                 if (type instanceof String enumDefault) {
-                    node.put(fieldName, enumDefault);
+                    String written = defaultAt < 0 ? null : defaultToken(source, defaultAt);
+                    node.put(fieldName, written != null && written.matches("[A-Za-z_]\\w*") ? written : enumDefault);
                 } else if (type instanceof Block message && !resolving.contains(message)) {
                     node.set(fieldName, buildMessageNode(message, resolving, source, expanded));
                 } else {
@@ -325,6 +404,89 @@ public class ProtoConverter {
                 }
             }
         }
+        while (nextGroup < groups.size()) addGroup(groups.get(nextGroup++), node, resolving, source, expanded);
+    }
+
+    private static void countExpanded(long[] expanded) {
+        if (++expanded[0] > MAX_EXPANDED_VALUES)
+            throw new IllegalArgumentException(String.format(
+                  "This schema expands to more than %,d values when every message field is "
+                  + "filled in with its default: messages holding several fields of the same "
+                  + "message type multiply at each level of nesting. Convert the messages you "
+                  + "need on their own, or flatten the nesting.", MAX_EXPANDED_VALUES));
+    }
+
+    /** A group's field: a list when repeated, otherwise its message with defaults. */
+    private void addGroup(Group group, ObjectNode node, Set<Block> resolving, String source, long[] expanded) {
+        countExpanded(expanded);
+        if (node.has(group.fieldName()))
+            throw new IllegalArgumentException("Duplicate JSON field name: " + group.fieldName());
+        if (group.repeated()) node.putArray(group.fieldName());
+        else if (!resolving.contains(group.block()))
+            node.set(group.fieldName(), buildMessageNode(group.block(), resolving, source, expanded));
+        else node.putObject(group.fieldName());
+    }
+
+    /** The token a {@code default} option is written as, or null when it is a string or missing. */
+    private static String defaultToken(String source, int at) {
+        Matcher token = DEFAULT_TOKEN.matcher(source);
+        token.region(skipSpace(source, at), source.length());
+        return token.lookingAt() ? token.group() : null;
+    }
+
+    private static int skipSpace(String source, int i) {
+        while (i < source.length() && Character.isWhitespace(source.charAt(i))) i++;
+        return i;
+    }
+
+    /**
+     * Writes a scalar field's explicit default, as proto3's JSON mapping would:
+     * bytes in base64, and an infinite or NaN float as "Infinity" or "NaN".
+     * False when the default cannot be read, and the type's own default is used.
+     */
+    private static boolean putExplicitDefault(ObjectNode node, String fieldName, String type,
+          String source, int at) {
+        int start = skipSpace(source, at);
+        if (start < source.length() && (source.charAt(start) == '"' || source.charAt(start) == '\'')) {
+            byte[] bytes = ProtoStringLiteral.readBytes(source, start);
+            if (type.equals("bytes")) node.put(fieldName, java.util.Base64.getEncoder().encodeToString(bytes));
+            else if (type.equals("string")) node.put(fieldName, ProtoStringLiteral.utf8(bytes));
+            else return false;
+            return true;
+        }
+        String token = defaultToken(source, at);
+        if (token == null) return false;
+        try {
+            switch (type) {
+                case "bool" -> {
+                    if (!token.equals("true") && !token.equals("false")) return false;
+                    node.put(fieldName, token.equals("true"));
+                }
+                case "float", "double" -> {
+                    String lower = token.toLowerCase(Locale.ROOT);
+                    if (lower.equals("inf") || lower.equals("+inf")) node.put(fieldName, "Infinity");
+                    else if (lower.equals("-inf")) node.put(fieldName, "-Infinity");
+                    else if (lower.equals("nan") || lower.equals("-nan")) node.put(fieldName, "NaN");
+                    else node.put(fieldName, new java.math.BigDecimal(token));
+                }
+                case "string", "bytes" -> { return false; }
+                default -> node.put(fieldName, integerLiteral(token));
+            }
+        } catch (NumberFormatException unreadable) {
+            return false;
+        }
+        return true;
+    }
+
+    /** An integer as protoc writes one: decimal, 0x hexadecimal or 0-prefixed octal, signed. */
+    private static java.math.BigInteger integerLiteral(String token) {
+        boolean negative = token.startsWith("-");
+        String digits = token.startsWith("-") || token.startsWith("+") ? token.substring(1) : token;
+        java.math.BigInteger value = digits.startsWith("0x") || digits.startsWith("0X")
+              ? new java.math.BigInteger(digits.substring(2), 16)
+              : digits.length() > 1 && digits.startsWith("0") ? new java.math.BigInteger(digits, 8)
+              : new java.math.BigInteger(digits);
+        return negative ? value.negate() : value;
     }
 
     private void addScalarDefault(ObjectNode node, String fieldName, String type) {
@@ -394,6 +556,24 @@ public class ProtoConverter {
      * patterns took the first {@code ]} as the end of the list. The field was
      * then silently skipped, and a duplicate number after it went unchecked.
      */
+    static String flattenOptionAggregates(String masked) {
+        char[] out = masked.toCharArray();
+        Matcher m = OPTION_AGGREGATE.matcher(masked);
+        int from = 0;
+        while (from < masked.length() && m.find(from)) {
+            int depth = 1, j = m.end();
+            while (j < out.length && depth > 0) {
+                char c = masked.charAt(j);
+                if (c == '{') depth++;
+                else if (c == '}') depth--;
+                if (depth > 0 && c != '\n' && c != '\r') out[j] = ' ';
+                j++;
+            }
+            from = j;
+        }
+        return new String(out);
+    }
+
     static String flattenOptionGroups(String masked) {
         char[] out = masked.toCharArray();
         for (int i = 0; i < out.length; i++) {
@@ -529,9 +709,21 @@ public class ProtoConverter {
         // so an inner "int32 x = 1" was reported as a duplicate of the outer one.
         List<Block> oneofs = findNamedBlocks(stripBlocks(msg.body, "message"), "oneof");
         Set<Long> seenNumbers = new HashSet<>();
-        validateMessageBody(msg.name, stripBlocks(msg.body, "message", "oneof", "enum", "extend"), seenNumbers);
+        validateMessageBody(msg.name, withoutGroups(ownBody(msg), msg.groups), seenNumbers);
+        // A group's number is this message's; the fields inside it are the
+        // group's own, and were checked against this message's numbers.
+        for (Group group : msg.groups) {
+            String stmt = "group " + group.block().name + " = " + group.number();
+            long value = fieldNumber(msg.name, stmt, group.number());
+            rejectIllegalNumber(msg.name, stmt, group.number(), value);
+            if (!seenNumbers.add(value))
+                throw new IllegalArgumentException(
+                      "Duplicate field number " + group.number() + " in message '" + msg.name
+                      + "'. Each field must have a unique number.");
+        }
         for (Block oneof : oneofs) validateMessageBody(msg.name, oneof.body, seenNumbers);
-        for (Block nested : findNamedBlocks(msg.body, "message")) validateTree(nested);
+        // The registered messages, groups among them, which carry their own groups.
+        for (Block nested : msg.inner.messages.values()) validateTree(nested);
     }
 
     private void validateMessageBody(String messageName, String body, Set<Long> seenNumbers) {
@@ -634,13 +826,17 @@ public class ProtoConverter {
                 // Naming the leaf type after unwrapping would report "number" for
                 // [[1,2]], a type the user never wrote at the root.
                 + (unwrapped == 0
-                      ? "but got: " + root.getNodeType().name().toLowerCase()
+                      ? "but got: " + root.getNodeType().name().toLowerCase(Locale.ROOT)
                       : "but its innermost element is: "
-                            + root.getNodeType().name().toLowerCase()));
+                            + root.getNodeType().name().toLowerCase(Locale.ROOT)));
 
         StringBuilder sb = new StringBuilder();
         sb.append("syntax = \"proto3\";\n\n");
         generateMessage("Root", root, sb, 0, shapes);
+        // Field and message names are identifiers, so only a Value type can
+        // spell the qualified name.
+        if (sb.indexOf(STRUCT_VALUE) >= 0)
+            sb.insert("syntax = \"proto3\";\n\n".length(), "import \"google/protobuf/struct.proto\";\n\n");
         return sb.toString();
     }
 
@@ -663,6 +859,13 @@ public class ProtoConverter {
             fieldNames.put(e.getKey(), name);
         }
         Map<String, String> jsonNames = jsonNames(fieldNames);
+        // protoc refuses a JSON name in square brackets: that is how the JSON
+        // mapping names an extension.
+        for (String jsonName : jsonNames.values())
+            if (jsonName.startsWith("[") && jsonName.endsWith("]"))
+                throw new IllegalArgumentException("The key \"" + jsonName + "\" cannot be kept as a "
+                      + "Protobuf JSON name: protoc reserves names in square brackets for extensions. "
+                      + "Rename the key, or convert to another format.");
 
         // Nested message names must be unique within this message: keys "user"
         // and "User" both want to be "User", which would emit two blocks of the
@@ -705,7 +908,7 @@ public class ProtoConverter {
 
             List<String> rows = rowNames.get(e.getKey());
             if (rows == null) continue;
-            String elemType = (childName != null) ? childName : jsonTypeToProto(shapes.unwrap(val));
+            String elemType = elementType(val, childName, shapes);
             for (String row : rows) {            // innermost level first
                 generateArrayWrapper(row, elemType, sb, indent + 1);
                 elemType = row;                  // the level above repeats this one
@@ -726,7 +929,7 @@ public class ProtoConverter {
                 // The outermost wrapper is what this field repeats; the inner
                 // ones are already chained to each other above.
                 String elemType = rows != null ? rows.get(rows.size() - 1)
-                      : (childName != null ? childName : jsonTypeToProto(shapes.unwrap(val)));
+                      : elementType(val, childName, shapes);
                 sb.append(fieldPad).append("repeated ").append(elemType).append(" ")
                   .append(fieldName).append(tail);
             } else if (val.isObject()) {
@@ -845,7 +1048,25 @@ public class ProtoConverter {
         return capitalize(base);
     }
 
+    /**
+     * The type of an array's innermost elements. Objects keep their message.
+     * Values of mixed kinds, and scalars beside a null, are
+     * {@code google.protobuf.Value}: as {@code repeated string} a list holding
+     * 1, "two" and true could not be read back by proto3's JSON mapping, which
+     * wants a string for a string field and refuses a null in a list.
+     */
+    private String elementType(JsonNode array, String childName, ArrayShapes shapes) {
+        if (childName != null) return childName;
+        JsonNode innermost = array;
+        while (shapes.elementOf(innermost) != null && shapes.elementOf(innermost).isArray())
+            innermost = shapes.elementOf(innermost);
+        if (shapes.hasNullElement(innermost)) return STRUCT_VALUE;
+        return jsonTypeToProto(shapes.elementOf(innermost));
+    }
+
     private String jsonTypeToProto(JsonNode val) {
+        // Values of different kinds: {"v":1} beside {"v":"x"}.
+        if (val != null && val.isMissingNode()) return STRUCT_VALUE;
         if (val == null || val.isNull())   return "string";
         if (val.isBoolean())               return "bool";
         if (val.isInt() || val.isShort())  return "int32";

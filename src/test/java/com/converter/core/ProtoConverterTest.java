@@ -595,11 +595,8 @@ class ProtoConverterTest {
         @Test @DisplayName("Proto->JSON: duplicate field numbers throws or handled safely (not silently accepted)")
         void duplicateFieldNumbers() {
             String proto = "message Bad { string name = 1; int32 age = 1; }";
-            assertThatCode(() -> converter.protoToJson(proto))
-                  .satisfiesAnyOf(
-                        t -> { /* converter detected duplicate and threw */ assertThat(t).isInstanceOf(Exception.class); },
-                        t -> { /* converter produced output but did not silently drop data */ }
-                  );
+            assertThatThrownBy(() -> converter.protoToJson(proto))
+                  .hasMessageContaining("Duplicate field number 1 in message 'Bad'");
         }
 
     // ── Well-known types ──────────────────────────────────────────────────
@@ -1252,6 +1249,84 @@ class ProtoConverterTest {
                 assertThat(effective.add(f[1] != null ? f[1] : defaultName))
                       .as("JSON name of %s in%n%s", f[0], schema).isTrue();
             }
+        }
+    }
+
+    @Nested @DisplayName("proto2 and editions constructs")
+    class Proto2Constructs {
+        private final ProtoConverter converter = new ProtoConverter();
+
+        @Test @DisplayName("extensions ranges are declarations, not fields")
+        void extensionRanges() throws Exception {
+            assertThat(converter.protoToJson("syntax = \"proto2\";\nmessage FeedMessage {\n"
+                  + "  optional int32 header = 1;\n  extensions 1000 to 1999;\n  extensions 5000 to max;\n}\n"))
+                  .isEqualTo("{\"FeedMessage\":{\"header\":0}}");
+            assertThat(converter.protoToJson("edition = \"2023\";\nmessage M {\n  int32 a = 1;\n"
+                  + "  extensions 100 to 199 [verification = UNVERIFIED];\n}\n"))
+                  .isEqualTo("{\"M\":{\"a\":0}}");
+        }
+
+        @Test @DisplayName("an aggregate option may separate its fields with semicolons")
+        void aggregateOptions() throws Exception {
+            assertThat(converter.protoToJson("syntax = \"proto3\";\nmessage Book {\n"
+                  + "  option (google.api.resource) = {\n    type: \"library.googleapis.com/Book\";\n"
+                  + "    pattern: \"shelves/{shelf}/books/{book}\";\n  };\n  string name = 1;\n"
+                  + "  oneof kind {\n    option (my.opt) = { a: 1; b: [2, 3] };\n    string isbn = 2;\n  }\n}\n"))
+                  .isEqualTo("{\"Book\":{\"name\":\"\",\"isbn\":\"\"}}");
+        }
+
+        @Test @DisplayName("a group is a message and a field named after it, numbered in its parent")
+        void groups() throws Exception {
+            assertThat(converter.protoToJson("syntax = \"proto2\";\nmessage SearchResponse {\n"
+                  + "  repeated group Result = 1 {\n    required string url = 2;\n    optional string title = 3;\n  }\n"
+                  + "  optional int32 total = 4;\n}\n"))
+                  .isEqualTo("{\"SearchResponse\":{\"result\":[],\"total\":0}}");
+            // The group's fields are numbered apart from its parent's.
+            assertThat(converter.protoToJson("syntax = \"proto2\";\nmessage M {\n  optional int32 x = 2;\n"
+                  + "  optional group G = 1 {\n    optional int32 a = 1;\n    optional int32 b = 2;\n  }\n}\n"))
+                  .isEqualTo("{\"M\":{\"x\":0,\"g\":{\"a\":0,\"b\":0}}}");
+            // Its own number still counts in its parent.
+            assertThatThrownBy(() -> converter.protoToJson("syntax = \"proto2\";\nmessage M {\n  optional int32 x = 1;\n"
+                  + "  optional group G = 1 {\n    optional int32 a = 1;\n  }\n}\n"))
+                  .hasMessageContaining("Duplicate field number 1");
+        }
+
+        @Test @DisplayName("proto2 defaults are the values the fields start with")
+        void explicitDefaults() throws Exception {
+            assertThat(converter.protoToJson("syntax = \"proto2\";\nmessage SearchRequest {\n"
+                  + "  enum Corpus { UNIVERSAL = 0; WEB = 1; }\n"
+                  + "  optional int32 result_per_page = 3 [default = 10];\n"
+                  + "  optional Corpus corpus = 4 [default = WEB];\n"
+                  + "  optional string lang = 5 [default = \"en\"];\n"
+                  + "  optional bool safe = 6 [default = true];\n"
+                  + "  optional double ratio = 7 [default = -inf];\n"
+                  + "  optional sint64 offset = 8 [default = -0x10];\n"
+                  + "  optional bytes magic = 9 [default = \"\\x01\\x02\"];\n}\n"))
+                  .isEqualTo("{\"SearchRequest\":{\"result_per_page\":10,\"corpus\":\"WEB\",\"lang\":\"en\","
+                        + "\"safe\":true,\"ratio\":\"-Infinity\",\"offset\":-16,\"magic\":\"AQI=\"}}");
+        }
+    }
+
+    @Nested @DisplayName("Schemas that read their own JSON")
+    class SelfReadingSchemas {
+        private final ProtoConverter converter = new ProtoConverter();
+
+        @Test @DisplayName("values of mixed kinds, and nulls in a list, are google.protobuf.Value")
+        void structValues() throws Exception {
+            String proto = converter.jsonToProto("{\"values\":[1,\"two\",true],\"a\":[1,null,3],"
+                  + "\"rows\":[{\"v\":1},{\"v\":\"x\"}],\"n\":[1,2]}");
+            assertThat(proto).startsWith("syntax = \"proto3\";\n\nimport \"google/protobuf/struct.proto\";\n\n")
+                  .contains("repeated google.protobuf.Value values = 1;")
+                  .contains("repeated google.protobuf.Value a = 2;")
+                  .contains("google.protobuf.Value v = 1;")
+                  .contains("repeated int32 n = 4;");
+            assertThat(converter.jsonToProto("{\"a\":1}")).doesNotContain("import");
+        }
+
+        @Test @DisplayName("a key protoc cannot take as a JSON name is refused, not emitted")
+        void bracketedKeys() {
+            assertThatThrownBy(() -> converter.jsonToProto("{\"[id]\":1}"))
+                  .hasMessageContaining("[id]").hasMessageContaining("square brackets");
         }
     }
 }
