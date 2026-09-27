@@ -315,11 +315,9 @@ class JsonXmlConverterTest {
             String xxe = "<?xml version=\"1.0\"?>" +
                 "<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>" +
                 "<root><data>&xxe;</data></root>";
-            assertThatCode(() -> converter.xmlToJson(xxe))
-                .satisfiesAnyOf(
-                    t -> { /* parsed safely, entity unexpanded */ },
-                    t -> assertThat(t).isInstanceOf(Exception.class)
-                );
+            // Refused: the entity is never declared to the parser, let alone read.
+            assertThatThrownBy(() -> converter.xmlToJson(xxe))
+                .hasMessageContaining("Undeclared general entity \"xxe\"");
             try {
                 String result = converter.xmlToJson(xxe);
                 assertThat(result).doesNotContain("root:x:0:0");
@@ -421,22 +419,14 @@ class JsonXmlConverterTest {
 
     // ── Invalid XML tag names from JSON keys ──────────────────────────────
 
-        @Test @DisplayName("JSON->XML: key starting with digit is sanitised or throws descriptively")
-        void jsonToXmlKeyStartingWithDigit() {
-            assertThatCode(() -> converter.jsonToXml("{\"1abc\":\"val\"}"))
-                  .satisfiesAnyOf(
-                        t -> { /* produced valid output with sanitised tag */ },
-                        t -> assertThat(t).isInstanceOf(Exception.class)
-                  );
+        @Test @DisplayName("JSON->XML: a key starting with a digit is prefixed with an underscore")
+        void jsonToXmlKeyStartingWithDigit() throws Exception {
+            assertThat(converter.jsonToXml("{\"1abc\":\"val\"}")).contains("<_1abc>val</_1abc>");
         }
 
-        @Test @DisplayName("JSON->XML: key containing space is sanitised or throws descriptively")
-        void jsonToXmlKeyWithSpace() {
-            assertThatCode(() -> converter.jsonToXml("{\"my field\":\"val\"}"))
-                  .satisfiesAnyOf(
-                        t -> { /* produced valid output */ },
-                        t -> assertThat(t).isInstanceOf(Exception.class)
-                  );
+        @Test @DisplayName("JSON->XML: a space in a key becomes an underscore")
+        void jsonToXmlKeyWithSpace() throws Exception {
+            assertThat(converter.jsonToXml("{\"my field\":\"val\"}")).contains("<my_field>val</my_field>");
         }
 
     // ── Self-closing tags ─────────────────────────────────────────────────
@@ -589,6 +579,19 @@ class JsonXmlConverterTest {
             assertThat(xml).contains("xsi:nil=\"true\"");
             assertThat(json.readTree(converter.xmlToJson(xml, true)))
                   .isEqualTo(json.readTree("{\"middleName\":null,\"xs\":[1,null,2],\"o\":{\"n\":null}}"));
+        }
+    }
+
+    @Nested @DisplayName("Element names from keys")
+    class ElementNamesFromKeys {
+        private final JsonXmlConverter converter = new JsonXmlConverter();
+
+        @Test @DisplayName("a key that is already an element name keeps it; only changed keys take a counter")
+        void validNamesAreKept() throws Exception {
+            // In document order "first name" took first_name, and the real
+            // first_name became first_name_2: <first_name> held the wrong value.
+            assertThat(converter.jsonToXml("{\"first name\":\"Ann\",\"first_name\":\"Bob\"}"))
+                  .contains("<first_name>Bob</first_name>").contains("<first_name_2>Ann</first_name_2>");
         }
     }
 }

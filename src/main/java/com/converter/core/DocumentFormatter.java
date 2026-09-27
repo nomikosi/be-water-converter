@@ -33,7 +33,6 @@ import com.fasterxml.jackson.databind.util.RawValue;
 
 import java.io.IOException;
 import java.io.StringReader;
-import java.io.StringWriter;
 import java.math.BigDecimal;
 import java.util.regex.Pattern;
 
@@ -73,7 +72,7 @@ final class DocumentFormatter {
             // Line endings are matched as "\r?\n" and the file's own kind is
             // kept: anchored on "\n" alone, a CRLF file opened from disk was
             // returned untouched, trailing blanks and all.
-            case FMT_PROTO -> input.replaceAll("[ \t]+(?=\r?\n)", "")
+            case FMT_PROTO -> withoutTrailingBlanks(input)
                                    .replaceAll("(\r?\n)(?:\r?\n){2,}", "$1$1").trim();
             default        -> input;
         };
@@ -81,6 +80,27 @@ final class DocumentFormatter {
         // all three pass through the JSON tree there and the sort has to happen
         // while the tree exists.
         return formatted;
+    }
+
+    /**
+     * Every line without the spaces and tabs it ends with, line breaks kept.
+     * Linear: the regex this replaces tried every start position of a run of
+     * blanks that no line break followed, and a line with 40,000 spaces in it
+     * took 25 seconds.
+     */
+    static String withoutTrailingBlanks(String text) {
+        StringBuilder out = new StringBuilder(text.length());
+        int lineStart = 0;
+        for (int i = 0; i <= text.length(); i++) {
+            if (i < text.length() && text.charAt(i) != '\n') continue;
+            int end = i > lineStart && text.charAt(i - 1) == '\r' ? i - 1 : i;
+            int kept = end;
+            while (kept > lineStart && (text.charAt(kept - 1) == ' ' || text.charAt(kept - 1) == '\t')) kept--;
+            out.append(text, lineStart, kept).append(text, end, i);
+            if (i < text.length()) out.append('\n');
+            lineStart = i + 1;
+        }
+        return out.toString();
     }
 
     /**
@@ -214,17 +234,30 @@ final class DocumentFormatter {
     }
 
     /**
-     * Pretty-prints XML via DOM + Transformer so the original root element,
-     * attributes and structure are preserved (Jackson's tree model drops the
-     * root element name).
+     * Re-indents XML, writing it back ourselves from a DOM so nothing but the
+     * indentation changes.
+     *
+     * <p>The JDK serializer used before this could not be held to that. It
+     * wrote an entity reference it had no definition for as nothing, so every
+     * {@code &nbsp;} and {@code &copy;} of an XHTML or DocBook file vanished; it
+     * indented a comment inside an otherwise empty element, which changed that
+     * element's value; it glued the declaration, a licence comment and the root
+     * onto one line and dropped {@code standalone="yes"}; and it recursed until
+     * the stack overflowed on deep documents. It also indented text, so a
+     * paragraph with a {@code <b>} in it, or anything under
+     * {@code xml:space="preserve"}, had to be refused.
+     *
+     * <p>Only element-only content is re-indented: an element whose children
+     * are elements, comments and processing instructions, with nothing but
+     * whitespace between them. Everything else — text, a mix of text and
+     * elements, CDATA, entity references, a comment alone, and whatever
+     * {@code xml:space="preserve"} covers — is written exactly as it was.
      *
      * <p>A DOCTYPE is kept, not fetched: external DTDs and entities are never
-     * loaded. The declaration used to be disallowed outright, which refused a
-     * plist, an XHTML page or an SVG with the parser's own sentence about a
-     * feature flag — while Convert read the same file without complaint. What
-     * is still refused is an internal subset, because the DOM path drops the
-     * entity references it declares, and a serialised {@code <!DOCTYPE>} cannot
-     * carry the subset back.
+     * loaded, and a reference to an entity the DTD declares is written back as
+     * the reference. What is still refused is an internal subset, which the DOM
+     * cannot hand back as written. Attributes come back in alphabetical order,
+     * the order the DOM holds them in.
      */
     static String prettyXml(String xml) throws Exception {
         javax.xml.parsers.DocumentBuilderFactory dbf =
@@ -247,45 +280,25 @@ final class DocumentFormatter {
                   "Format cannot keep the declarations inside this document's <!DOCTYPE "
                   + doctype.getName() + " [...]>, and the entities they define would be lost "
                   + "with them. The document is left as it is.");
-        // Without this the serializer appends standalone="no" to a declaration
-        // the document wrote without it.
-        doc.setXmlStandalone(true);
+        rejectDeepNesting(doc.getDocumentElement());
         doc.getDocumentElement().normalize();
-        rejectMixedContent(doc.getDocumentElement());
-        stripIndentation(doc.getDocumentElement(), false);
 
-        javax.xml.transform.TransformerFactory tf =
-              javax.xml.transform.TransformerFactory.newInstance();
-        tf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
-        tf.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "");
-        javax.xml.transform.Transformer t = tf.newTransformer();
-        // Said explicitly: for a root element named html the identity
-        // transformer switches to its HTML output method on its own, which
-        // dropped the XML declaration, renamed the DOCTYPE and wrote <br/> as
-        // <br> — an XHTML page came back as something no XML parser accepts.
-        t.setOutputProperty(javax.xml.transform.OutputKeys.METHOD, "xml");
-        t.setOutputProperty(javax.xml.transform.OutputKeys.INDENT, "yes");
-        t.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "2");
-        boolean declared = xml.stripLeading().startsWith("<?xml");
-        t.setOutputProperty(javax.xml.transform.OutputKeys.OMIT_XML_DECLARATION, declared ? "no" : "yes");
-        if (doctype != null && doctype.getPublicId() != null)
-            t.setOutputProperty(javax.xml.transform.OutputKeys.DOCTYPE_PUBLIC, doctype.getPublicId());
-        if (doctype != null && doctype.getSystemId() != null)
-            t.setOutputProperty(javax.xml.transform.OutputKeys.DOCTYPE_SYSTEM, doctype.getSystemId());
-
-        StringWriter out = new StringWriter();
-        t.transform(new javax.xml.transform.dom.DOMSource(doc),
-              new javax.xml.transform.stream.StreamResult(out));
-        String result = out.toString();
-        // The serializer writes a DOCTYPE only when it has an identifier to
-        // put in it; a bare <!DOCTYPE html> would otherwise vanish.
-        if (doctype != null && doctype.getPublicId() == null && doctype.getSystemId() == null) {
-            int afterDeclaration = declared && result.startsWith("<?xml") ? result.indexOf("?>") + 2 : 0;
-            String head = result.substring(0, afterDeclaration);
-            String tail = result.substring(afterDeclaration).stripLeading();
-            result = head + (head.isEmpty() ? "" : "\n") + "<!DOCTYPE " + doctype.getName() + ">\n" + tail;
+        StringBuilder out = new StringBuilder(xml.length() + xml.length() / 4 + 64);
+        String declaration = declaration(xml);
+        if (declaration != null) out.append(declaration).append('\n');
+        XmlWriter writer = new XmlWriter(out, doctype != null && doctype.getPublicId() != null
+              && doctype.getPublicId().contains("XHTML"));
+        for (org.w3c.dom.Node child = doc.getFirstChild(); child != null; child = child.getNextSibling()) {
+            switch (child.getNodeType()) {
+                case org.w3c.dom.Node.DOCUMENT_TYPE_NODE -> writer.doctype((org.w3c.dom.DocumentType) child);
+                case org.w3c.dom.Node.ELEMENT_NODE -> writer.element((org.w3c.dom.Element) child, 0, false);
+                case org.w3c.dom.Node.COMMENT_NODE, org.w3c.dom.Node.PROCESSING_INSTRUCTION_NODE ->
+                      writer.verbatim(child);
+                default -> { continue; }
+            }
+            out.append('\n');
         }
-        return result;
+        return out.toString();
     }
 
     /** Reports parse problems through the exception alone, never on stderr. */
@@ -295,75 +308,177 @@ final class DocumentFormatter {
         @Override public void fatalError(org.xml.sax.SAXParseException e) throws org.xml.sax.SAXException { throw e; }
     };
 
+    /** The declaration's version and standalone, as written; the encoding is what the plugin saves in. */
+    private static final Pattern XML_DECLARATION = Pattern.compile(
+          "<\\?xml\\s+version\\s*=\\s*([\"'])([^\"']*)\\1"
+          + "(?:\\s+encoding\\s*=\\s*([\"'])[^\"']*\\3)?"
+          + "(?:\\s+standalone\\s*=\\s*([\"'])(yes|no)\\4)?\\s*\\?>");
+
     /**
-     * Refuses an element that holds text alongside child elements.
-     *
-     * <p>The JDK serializer indents every child, text included, so
-     * {@code <p>Hello <b>big</b> world</p>} came back with line breaks and
-     * indentation inside its own text — a change to the content, not the
-     * layout — and it cannot be told to indent element-only content alone.
-     * Comments and processing instructions count as children here because
-     * they are indented the same way.
+     * The declaration to write, or null when the document had none. Only
+     * {@code <?xml} followed by its version counts: {@code <?xml-stylesheet?>}
+     * is a processing instruction, and a document that began with one gained a
+     * declaration it never had.
      */
-    private static void rejectMixedContent(org.w3c.dom.Element element) {
-        org.w3c.dom.NodeList children = element.getChildNodes();
-        boolean text = false, markup = false;
-        for (int i = 0; i < children.getLength(); i++) {
-            org.w3c.dom.Node child = children.item(i);
-            switch (child.getNodeType()) {
-                case org.w3c.dom.Node.TEXT_NODE, org.w3c.dom.Node.CDATA_SECTION_NODE ->
-                      text |= !child.getTextContent().isBlank();
-                case org.w3c.dom.Node.ELEMENT_NODE, org.w3c.dom.Node.COMMENT_NODE,
-                     org.w3c.dom.Node.PROCESSING_INSTRUCTION_NODE -> markup = true;
+    static String declaration(String xml) {
+        java.util.regex.Matcher m = XML_DECLARATION.matcher(xml);
+        if (!m.lookingAt()) return null;
+        return "<?xml version=\"" + m.group(2) + "\" encoding=\"UTF-8\""
+              + (m.group(5) == null ? "" : " standalone=\"" + m.group(5) + "\"") + "?>";
+    }
+
+    /** The nesting Format writes, which is the nesting conversion reads. */
+    static final int MAX_XML_DEPTH = 1_000;
+
+    private static void rejectDeepNesting(org.w3c.dom.Element root) {
+        java.util.ArrayDeque<org.w3c.dom.Node> pending = new java.util.ArrayDeque<>();
+        java.util.ArrayDeque<Integer> depths = new java.util.ArrayDeque<>();
+        pending.push(root);
+        depths.push(1);
+        while (!pending.isEmpty()) {
+            org.w3c.dom.Node node = pending.pop();
+            int depth = depths.pop();
+            if (depth > MAX_XML_DEPTH)
+                throw new IllegalArgumentException(
+                      "Format stops at " + String.format(java.util.Locale.ROOT, "%,d", MAX_XML_DEPTH) + " levels of nesting, "
+                      + "as conversion does, and this document goes deeper. The document is left as it is.");
+            for (org.w3c.dom.Node child = node.getFirstChild(); child != null; child = child.getNextSibling())
+                if (child.getNodeType() == org.w3c.dom.Node.ELEMENT_NODE) {
+                    pending.push(child);
+                    depths.push(depth + 1);
+                }
+        }
+    }
+
+    /** Writes DOM nodes back as XML text, indenting element-only content by two spaces. */
+    private static final class XmlWriter {
+        /**
+         * HTML's void elements. Under an XHTML DOCTYPE only these are written
+         * minimized, with the space XHTML 1.0's HTML compatibility guidelines
+         * ask for: an HTML parser reads {@code <script src="a.js" />} or
+         * {@code <div />} as an opening tag, so the rest of the page became
+         * script, or went inside the div. The serializer this replaces
+         * minimized every empty element.
+         */
+        private static final java.util.Set<String> HTML_VOID_ELEMENTS = java.util.Set.of(
+              "area", "base", "basefont", "br", "col", "embed", "frame", "hr", "img", "input",
+              "isindex", "link", "meta", "param", "source", "track", "wbr");
+
+        private final StringBuilder out;
+        private final boolean xhtml;
+
+        XmlWriter(StringBuilder out, boolean xhtml) {
+            this.out = out;
+            this.xhtml = xhtml;
+        }
+
+        void element(org.w3c.dom.Element element, int depth, boolean verbatim) {
+            out.append('<').append(element.getTagName());
+            org.w3c.dom.NamedNodeMap attributes = element.getAttributes();
+            for (int i = 0; i < attributes.getLength(); i++) {
+                org.w3c.dom.Node attribute = attributes.item(i);
+                out.append(' ').append(attribute.getNodeName()).append("=\"");
+                escape(attribute.getNodeValue(), true);
+                out.append('"');
+            }
+            if (!element.hasChildNodes()) {
+                String name = element.getTagName();
+                if (!xhtml) out.append("/>");
+                else if (HTML_VOID_ELEMENTS.contains(name.substring(name.indexOf(':') + 1))) out.append(" />");
+                else out.append("></").append(name).append('>');
+                return;
+            }
+            out.append('>');
+            if (!verbatim && indents(element)) {
+                for (org.w3c.dom.Node child = element.getFirstChild(); child != null; child = child.getNextSibling()) {
+                    if (child.getNodeType() == org.w3c.dom.Node.TEXT_NODE) continue;   // whitespace only
+                    out.append('\n').append("  ".repeat(depth + 1));
+                    if (child instanceof org.w3c.dom.Element nested) element(nested, depth + 1, false);
+                    else verbatim(child);
+                }
+                out.append('\n').append("  ".repeat(depth));
+            } else {
+                for (org.w3c.dom.Node child = element.getFirstChild(); child != null; child = child.getNextSibling())
+                    verbatim(child);
+            }
+            out.append("</").append(element.getTagName()).append('>');
+        }
+
+        /**
+         * Whether an element's children may be put on lines of their own: it
+         * holds at least one element, its other children are comments,
+         * processing instructions and whitespace, and it did not ask for its
+         * whitespace to be kept. Whitespace between elements is not part of any
+         * value; anywhere else it is.
+         */
+        private static boolean indents(org.w3c.dom.Element element) {
+            if ("preserve".equals(element.getAttribute("xml:space"))) return false;
+            boolean elements = false;
+            for (org.w3c.dom.Node child = element.getFirstChild(); child != null; child = child.getNextSibling()) {
+                switch (child.getNodeType()) {
+                    case org.w3c.dom.Node.ELEMENT_NODE -> elements = true;
+                    case org.w3c.dom.Node.COMMENT_NODE, org.w3c.dom.Node.PROCESSING_INSTRUCTION_NODE -> { }
+                    case org.w3c.dom.Node.TEXT_NODE -> {
+                        if (!child.getNodeValue().isBlank()) return false;
+                    }
+                    default -> { return false; }   // CDATA and entity references are content
+                }
+            }
+            return elements;
+        }
+
+        /** A node exactly as it was, and everything inside it. */
+        void verbatim(org.w3c.dom.Node node) {
+            switch (node.getNodeType()) {
+                case org.w3c.dom.Node.ELEMENT_NODE -> element((org.w3c.dom.Element) node, 0, true);
+                case org.w3c.dom.Node.TEXT_NODE -> escape(node.getNodeValue(), false);
+                case org.w3c.dom.Node.CDATA_SECTION_NODE ->
+                      out.append("<![CDATA[").append(node.getNodeValue()).append("]]>");
+                case org.w3c.dom.Node.COMMENT_NODE -> out.append("<!--").append(node.getNodeValue()).append("-->");
+                case org.w3c.dom.Node.PROCESSING_INSTRUCTION_NODE -> {
+                    String data = node.getNodeValue();
+                    out.append("<?").append(node.getNodeName())
+                          .append(data == null || data.isEmpty() ? "" : " " + data).append("?>");
+                }
+                case org.w3c.dom.Node.ENTITY_REFERENCE_NODE -> out.append('&').append(node.getNodeName()).append(';');
                 default -> { }
             }
         }
-        if (text && markup)
-            throw new IllegalArgumentException(
-                  "Format would insert line breaks into the text of <" + element.getTagName()
-                  + ">, which mixes text with child elements. Indenting that changes the "
-                  + "content rather than the layout, so the document is left as it is.");
-        for (int i = 0; i < children.getLength(); i++)
-            if (children.item(i) instanceof org.w3c.dom.Element child) rejectMixedContent(child);
-    }
 
-    /**
-     * Removes the whitespace between child elements, so re-indenting doesn't
-     * stack blank lines.
-     *
-     * <p>Only BETWEEN elements: whitespace that is an element's whole content
-     * is its value. {@code <sep> </sep>} came back as {@code <sep/>}, and
-     * converting that read {@code ""} where the document said {@code " "}.
-     *
-     * <p>{@code xml:space="preserve"} makes the whitespace between children
-     * content too. The indenter cannot be told to leave one subtree alone, so an
-     * element that asks for it and has children to indent is refused.
-     *
-     * @param preserve whether an enclosing element asked for preservation
-     */
-    private static void stripIndentation(org.w3c.dom.Element element, boolean preserve) {
-        String space = element.getAttribute("xml:space");
-        if ("preserve".equals(space)) preserve = true;
-        else if ("default".equals(space)) preserve = false;
-
-        org.w3c.dom.NodeList children = element.getChildNodes();
-        boolean indented = false;
-        for (int i = 0; i < children.getLength(); i++) {
-            short type = children.item(i).getNodeType();
-            indented |= type == org.w3c.dom.Node.ELEMENT_NODE || type == org.w3c.dom.Node.COMMENT_NODE
-                  || type == org.w3c.dom.Node.PROCESSING_INSTRUCTION_NODE;
+        void doctype(org.w3c.dom.DocumentType doctype) {
+            out.append("<!DOCTYPE ").append(doctype.getName());
+            if (doctype.getPublicId() != null)
+                out.append(" PUBLIC ").append(quoted(doctype.getPublicId())).append(' ')
+                      .append(quoted(doctype.getSystemId()));
+            else if (doctype.getSystemId() != null)
+                out.append(" SYSTEM ").append(quoted(doctype.getSystemId()));
+            out.append('>');
         }
-        if (!indented) return;   // a leaf: its text is its value, whitespace included
-        if (preserve)
-            throw new IllegalArgumentException(
-                  "Format would re-indent <" + element.getTagName() + ">, whose whitespace is "
-                  + "declared significant with xml:space=\"preserve\". The document is left as it is.");
-        for (int i = children.getLength() - 1; i >= 0; i--) {
-            org.w3c.dom.Node child = children.item(i);
-            if (child.getNodeType() == org.w3c.dom.Node.TEXT_NODE && child.getTextContent().isBlank())
-                element.removeChild(child);
-            else if (child instanceof org.w3c.dom.Element nested)
-                stripIndentation(nested, preserve);
+
+        private static String quoted(String literal) {
+            return literal.contains("\"") ? "'" + literal + "'" : "\"" + literal + "\"";
+        }
+
+        /**
+         * Escapes what a parser would otherwise read as markup. In an attribute
+         * a tab, newline or carriage return is written as a character
+         * reference, because a parser turns a literal one into a space; in text
+         * a carriage return is, because it turns a literal one into a newline.
+         */
+        private void escape(String text, boolean attribute) {
+            for (int i = 0; i < text.length(); i++) {
+                char c = text.charAt(i);
+                switch (c) {
+                    case '&' -> out.append("&amp;");
+                    case '<' -> out.append("&lt;");
+                    case '>' -> out.append("&gt;");
+                    case '"' -> out.append(attribute ? "&quot;" : "\"");
+                    case '\r' -> out.append("&#13;");
+                    case '\n' -> out.append(attribute ? "&#10;" : "\n");
+                    case '\t' -> out.append(attribute ? "&#9;" : "\t");
+                    default -> out.append(c);
+                }
+            }
         }
     }
 }

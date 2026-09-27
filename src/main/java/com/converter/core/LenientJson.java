@@ -57,8 +57,8 @@ final class LenientJson {
     }
 
     /** Indenting mapper — for JSON the user actually sees. */
-    static final ObjectMapper PRETTY =
-          lenientReader().enable(SerializationFeature.INDENT_OUTPUT).build();
+    static final ObjectMapper PRETTY = lenientReader().enable(SerializationFeature.INDENT_OUTPUT)
+          .defaultPrettyPrinter(PivotJson.prettyPrinter()).build();
 
     /**
      * Compact mapper for the internal JSON pivot. The pivot is re-parsed by the

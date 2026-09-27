@@ -306,18 +306,14 @@ class DocumentFormatterTest {
     @Nested @DisplayName("XML")
     class Xml {
 
-        @Test @DisplayName("Format refuses XML mixed content and keeps the declaration as written")
+        @Test @DisplayName("Format writes mixed content as it was and keeps the declaration as written")
         void xmlFormatMixedContentAndDeclaration() throws Exception {
-            // The serializer indents text nodes too, so the text of a paragraph
-            // gained line breaks and indentation — a content change, not layout.
-            assertThatThrownBy(() -> pipeline.formatInput("<p>Hello <b>big</b> world</p>",
-                  Formats.FMT_XML, opts))
-                  .isInstanceOf(IllegalArgumentException.class)
-                  .hasMessageContaining("<p>");
-            assertThatThrownBy(() -> pipeline.formatInput("<r><d>text <e>in</e> mixed</d></r>",
-                  Formats.FMT_XML, opts))
-                  .isInstanceOf(IllegalArgumentException.class)
-                  .hasMessageContaining("<d>");
+            // The JDK serializer indented text too, so a paragraph with a <b> in
+            // it had to be refused. Only element-only content is indented now.
+            assertThat(pipeline.formatInput("<p>Hello <b>big</b> world</p>", Formats.FMT_XML, opts))
+                  .isEqualTo("<p>Hello <b>big</b> world</p>\n");
+            assertThat(pipeline.formatInput("<r><d>text <e>in</e> mixed</d></r>", Formats.FMT_XML, opts))
+                  .isEqualTo("<r>\n  <d>text <e>in</e> mixed</d>\n</r>\n");
             // standalone="no" was appended to a declaration that never had it.
             String out = pipeline.formatInput("<?xml version=\"1.0\"?><a><b>x</b></a>",
                   Formats.FMT_XML, opts);
@@ -402,11 +398,13 @@ class DocumentFormatterTest {
                   .isEqualTo(pipeline.normalizeToJson(input, Formats.FMT_XML, opts));
         }
 
-        @Test @DisplayName("Format refuses to re-indent content declared xml:space=\"preserve\"")
+        @Test @DisplayName("Format leaves content declared xml:space=\"preserve\" exactly as written")
         void preservedSpaceIsNotReindented() throws Exception {
-            assertThatThrownBy(() -> pipeline.formatInput(
-                  "<r xml:space=\"preserve\"><a>1</a> <b>2</b></r>", Formats.FMT_XML, opts))
-                  .hasMessageContaining("xml:space");
+            assertThat(pipeline.formatInput("<r xml:space=\"preserve\"><a>1</a> <b>2</b></r>", Formats.FMT_XML, opts))
+                  .isEqualTo("<r xml:space=\"preserve\"><a>1</a> <b>2</b></r>\n");
+            assertThat(pipeline.formatInput("<r><pre xml:space=\"preserve\">\n <x>1</x>\n</pre><b>1</b></r>",
+                  Formats.FMT_XML, opts))
+                  .isEqualTo("<r>\n  <pre xml:space=\"preserve\">\n <x>1</x>\n</pre>\n  <b>1</b>\n</r>\n");
             // A preserved leaf has nothing to indent inside it, so it formats as written.
             String leaf = pipeline.formatInput("<r><pre xml:space=\"preserve\">  two  spaces  </pre><b>1</b></r>",
                   Formats.FMT_XML, opts);
@@ -431,9 +429,10 @@ class DocumentFormatterTest {
             // A row with more cells than headers is kept as well: nothing is discarded.
             assertThat(pipeline.formatInput("a,b\n1,2,3\n", Formats.FMT_CSV, opts))
                   .isEqualTo("a,b\n1,2,3\n");
-            // Blank lines and CRLF are layout, and are tidied.
+            // Blank lines are layout, and are tidied; the file keeps its own
+            // line breaks, and CRLF is the one RFC 4180 names.
             assertThat(pipeline.formatInput("a,b\r\n1,2\r\n\r\n3,4\r\n", Formats.FMT_CSV, opts))
-                  .isEqualTo("a,b\n1,2\n3,4\n");
+                  .isEqualTo("a,b\r\n1,2\r\n3,4\r\n");
             // Content that needs quotes keeps them.
             assertThat(pipeline.formatInput("a,b\n\"x,y\",\"q\"\"q\"\n", Formats.FMT_CSV, opts))
                   .isEqualTo("a,b\n\"x,y\",\"q\"\"q\"\n");
@@ -460,6 +459,91 @@ class DocumentFormatterTest {
             String result = pipeline.formatInput(
                   "message A {\n  string x = 1;   \n\n\n\n}", Formats.FMT_PROTO, ConversionOptions.DEFAULTS.withInferTypes(true));
             assertThat(result).doesNotContain("\n\n\n");
+        }
+    }
+
+    @Nested @DisplayName("XML as written")
+    class XmlAsWritten {
+
+        @Test @DisplayName("entity references an external DTD declares are written back as references")
+        void externalEntitiesSurvive() throws Exception {
+            // The JDK serializer wrote a reference it had no definition for as
+            // nothing: every &nbsp; and &copy; of an XHTML page vanished.
+            String xhtml = "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" "
+                  + "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\n"
+                  + "<html><body><p>Copyright &copy; 2024 ACME&nbsp;Corp</p><td>&nbsp;</td></body></html>";
+            assertThat(pipeline.formatInput(xhtml, Formats.FMT_XML, opts))
+                  .contains("<p>Copyright &copy; 2024 ACME&nbsp;Corp</p>").contains("<td>&nbsp;</td>");
+        }
+
+        @Test @DisplayName("under XHTML only HTML's void elements are minimized; elsewhere every empty element is")
+        void xhtmlEmptyElements() throws Exception {
+            // <script src="a.js" /> is an opening tag to an HTML parser: the
+            // rest of the page became script.
+            String xhtml = "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" "
+                  + "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\n"
+                  + "<html><head><script src=\"a.js\"></script><meta charset=\"utf-8\"/></head>"
+                  + "<body><p>a<br/>b</p><div/></body></html>";
+            assertThat(pipeline.formatInput(xhtml, Formats.FMT_XML, opts))
+                  .contains("<script src=\"a.js\"></script>").contains("<meta charset=\"utf-8\" />")
+                  .contains("<p>a<br />b</p>").contains("<div></div>");
+            assertThat(pipeline.formatInput("<r><a></a><b/></r>", Formats.FMT_XML, opts))
+                  .isEqualTo("<r>\n  <a/>\n  <b/>\n</r>\n");
+        }
+
+        @Test @DisplayName("the prolog keeps standalone, a line per node, and no invented declaration")
+        void prologAsWritten() throws Exception {
+            assertThat(pipeline.formatInput(
+                  "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<r><a>1</a></r>", Formats.FMT_XML, opts))
+                  .isEqualTo("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<r>\n  <a>1</a>\n</r>\n");
+            assertThat(pipeline.formatInput(
+                  "<?xml version=\"1.0\"?>\n<!-- licence -->\n<project><a>1</a></project>", Formats.FMT_XML, opts))
+                  .isEqualTo("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- licence -->\n<project>\n  <a>1</a>\n</project>\n");
+            // <?xml-stylesheet?> is a processing instruction, not a declaration.
+            assertThat(pipeline.formatInput(
+                  "<?xml-stylesheet type=\"text/xsl\" href=\"s.xsl\"?>\n<r><a>1</a></r>", Formats.FMT_XML, opts))
+                  .isEqualTo("<?xml-stylesheet type=\"text/xsl\" href=\"s.xsl\"?>\n<r>\n  <a>1</a>\n</r>\n");
+        }
+
+        @Test @DisplayName("an element holding only a comment converts to the same value after Format")
+        void commentOnlyElementsKeepTheirValue() throws Exception {
+            String input = "<r><a><!-- todo --></a><b>1</b></r>";
+            String formatted = pipeline.formatInput(input, Formats.FMT_XML, opts);
+            assertThat(formatted).contains("<a><!-- todo --></a>");
+            assertThat(pipeline.normalizeToJson(formatted, Formats.FMT_XML, opts))
+                  .isEqualTo(pipeline.normalizeToJson(input, Formats.FMT_XML, opts));
+        }
+
+        @Test @DisplayName("escaped text, CDATA and attribute line breaks read back the same")
+        void escapingRoundTrips() throws Exception {
+            String input = "<r a=\"x &amp; &quot;y&quot; &#10;z\"><t>1 &lt; 2 &amp;&amp; 3 &gt; 2</t>"
+                  + "<c><![CDATA[<raw> & ]]></c></r>";
+            String formatted = pipeline.formatInput(input, Formats.FMT_XML, opts);
+            assertThat(formatted).contains("<![CDATA[<raw> & ]]>").contains("&#10;");
+            assertThat(pipeline.normalizeToJson(formatted, Formats.FMT_XML, opts))
+                  .isEqualTo(pipeline.normalizeToJson(input, Formats.FMT_XML, opts));
+        }
+
+        @Test @DisplayName("a document deeper than conversion reads is refused, not a stack overflow")
+        void deepDocumentsAreRefused() {
+            String deep = "<a>".repeat(5_000) + "</a>".repeat(5_000);
+            assertThatThrownBy(() -> pipeline.formatInput(deep, Formats.FMT_XML, opts))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("1,000 levels");
+        }
+    }
+
+    @Nested @DisplayName("Protobuf layout")
+    class ProtobufLayout {
+
+        @Test @DisplayName("trailing blanks go in linear time, line breaks kept")
+        void trailingBlanks() throws Exception {
+            assertThat(pipeline.formatInput("message A {   \r\n  int32 a = 1;\t\r\n}\r\n", Formats.FMT_PROTO, opts))
+                  .isEqualTo("message A {\r\n  int32 a = 1;\r\n}");
+            // Quadratic before: 40,000 blanks in mid-line took 25 seconds.
+            String wide = "message A {" + " ".repeat(200_000) + "int32 a = 1; }\n";
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(5),
+                  () -> pipeline.formatInput(wide, Formats.FMT_PROTO, opts));
         }
     }
 }

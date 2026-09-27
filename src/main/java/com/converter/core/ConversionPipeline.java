@@ -117,9 +117,17 @@ public class ConversionPipeline {
         };
     }
 
-    /** Pretty-prints or canonicalizes input in its own format (the Format action). */
+    /**
+     * Pretty-prints or canonicalizes input in its own format (the Format
+     * action), keeping the document's line breaks: CRLF when its first line
+     * ends in one, as a file from Windows does, else LF.
+     */
     public String formatInput(String input, String fmt, ConversionOptions opts) throws Exception {
-        return formatter.format(input, fmt, opts);
+        return withLineBreaksOf(input, formatter.format(input, fmt, opts));
+    }
+
+    static String withLineBreaksOf(String original, String text) {
+        return LineBreaks.convert(text, "\r\n".equals(LineBreaks.of(original)) ? "\r\n" : "\n");
     }
 
     /**

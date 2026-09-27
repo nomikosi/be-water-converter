@@ -41,6 +41,9 @@ public class JsonXmlConverter {
         jsonMapper = PivotJson.mapper();
         xmlMapper  = new XmlMapper();
         xmlMapper.enable(SerializationFeature.INDENT_OUTPUT);
+        // "\n" rather than the system separator: see PivotJson.prettyPrinter.
+        xmlMapper.setDefaultPrettyPrinter(
+              new com.fasterxml.jackson.dataformat.xml.util.DefaultXmlPrettyPrinter().withCustomNewLine("\n"));
         // XML has no null, and an empty element reads back as "": the JSON
         // {"middleName": null} came back as {"middleName": ""}. xsi:nil is the
         // standard spelling, and the reader already turns it back into null.
@@ -210,10 +213,17 @@ public class JsonXmlConverter {
             ObjectNode out = jsonMapper.createObjectNode();
             // Distinct keys can sanitize to the same element name ("a b" and
             // "a+b" both become "a_b"); without a counter the second silently
-            // overwrites the first and that value is lost.
+            // overwrites the first and that value is lost. Keys that are already
+            // element names keep them, and only the changed ones take a counter:
+            // in document order "first name" took first_name, and the key really
+            // spelled first_name became first_name_2, so <first_name> held the
+            // other key's value.
             Set<String> used = new HashSet<>();
+            for (String key : (Iterable<String>) node::fieldNames)
+                if (xmlElementName(key).equals(key)) used.add(key);
             for (Map.Entry<String, JsonNode> e : node.properties()) {
-                out.set(uniqueElementName(xmlElementName(e.getKey()), used),
+                String name = xmlElementName(e.getKey());
+                out.set(name.equals(e.getKey()) ? name : uniqueElementName(name, used),
                       sanitizeKeysForXml(e.getValue()));
             }
             return out;

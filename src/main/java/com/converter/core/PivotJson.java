@@ -16,6 +16,8 @@
 
 package com.converter.core;
 
+import com.fasterxml.jackson.core.util.DefaultIndenter;
+import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -52,5 +54,15 @@ public final class PivotJson {
               // The constructor, not withExactBigDecimals(true): Jackson 2.21
               // deprecates the static factory and keeps this form.
               .nodeFactory(new JsonNodeFactory(true));
+    }
+
+    /**
+     * Indentation with "\n" line breaks on every platform. Jackson's default
+     * uses the system separator, so JSON and XML came out with CRLF on Windows
+     * while YAML, TOML and CSV had LF; Format turned an LF file into CRLF and
+     * could then never report it already formatted.
+     */
+    static DefaultPrettyPrinter prettyPrinter() {
+        return new DefaultPrettyPrinter().withObjectIndenter(new DefaultIndenter("  ", "\n"));
     }
 }

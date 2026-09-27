@@ -23,6 +23,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import static org.assertj.core.api.Assertions.*;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * The UI-independent pipeline: lenient JSON input, the compact pivot it
@@ -205,6 +206,33 @@ class ConversionPipelineTest {
             String out = pipeline.formatInput("a;b\n1;2\n", Formats.FMT_CSV,
                   ConversionOptions.DEFAULTS.withCsvFormat(CsvConverter.CsvFormat.SEMICOLON));
             assertThat(out).contains("a;b").doesNotContain("a;b,");
+        }
+    }
+
+    @Nested @DisplayName("Line breaks")
+    class LineBreaks {
+        private final ConversionPipeline pipeline = new ConversionPipeline();
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"JSON", "XML", "YAML", "CSV", "TOML", "Protobuf", "Java POJO", "Kotlin", "JSON Schema"})
+        @DisplayName("every output writes LF, whatever the platform's separator")
+        void outputUsesLf(String format) throws Exception {
+            // JSON, XML and JSON Schema came out with CRLF on Windows and the
+            // rest with LF, so saved files mixed the two by format.
+            String json = "{\"a\":{\"b\":[1,2]},\"c\":\"x\",\"d\":[{\"e\":1}]}";
+            assertThat(pipeline.renderFromJson(json, format, opts)).doesNotContain("\r").contains("\n");
+        }
+
+        @Test @DisplayName("Format keeps the document's own line breaks, so formatted text stays equal")
+        void formatKeepsLineBreaks() throws Exception {
+            String lf = "{\n  \"a\" : 1\n}";
+            assertThat(pipeline.formatInput(lf, Formats.FMT_JSON, opts)).isEqualTo(lf);
+            String crlf = "{\r\n  \"a\" : 1\r\n}";
+            assertThat(pipeline.formatInput(crlf, Formats.FMT_JSON, opts)).isEqualTo(crlf);
+            assertThat(pipeline.formatInput("<r>\r\n<a>1</a></r>", Formats.FMT_XML, opts))
+                  .isEqualTo("<r>\r\n  <a>1</a>\r\n</r>\r\n");
+            assertThat(pipeline.formatInput("a: 1\r\nb: 2\r\n", Formats.FMT_YAML, opts)).isEqualTo("a: 1\r\nb: 2\r\n");
+            assertThat(pipeline.formatInput("a = 1\r\nb = 2\r\n", Formats.FMT_TOML, opts)).isEqualTo("a = 1\r\nb = 2\r\n");
         }
     }
 }
