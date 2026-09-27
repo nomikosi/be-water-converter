@@ -441,6 +441,17 @@ class TomlConverterTest {
         private static final String LARGE = "1723600000000000000";
         private final TomlConverter converter = new TomlConverter();
 
+        /**
+         * The upstream defect the guard exists for, read with jackson-dataformat-toml
+         * directly. When a Jackson upgrade fixes it this fails: the guard, and the
+         * README's limitation that names the versions, can then go.
+         */
+        @Test @DisplayName("jackson-dataformat-toml still misreads 19-digit integers")
+        void upstreamStillMisreads() throws Exception {
+            JsonNode read = new com.fasterxml.jackson.dataformat.toml.TomlMapper().readTree("id = " + LARGE + "\n");
+            assertThat(read.get("id").asText()).isNotEqualTo(LARGE);
+        }
+
         @ParameterizedTest @ValueSource(strings = {"\\\"\"\"", "\"\\\"\"", "\"\"\\\"", "\\\\\\\"\"\""})
         void escapedQuotesDoNotHideFollowingValues(String quotes) {
             String input = "text = \"\"\"before " + quotes + " after\"\"\"\nid = " + LARGE;

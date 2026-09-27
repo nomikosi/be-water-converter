@@ -237,22 +237,11 @@ class CrossFormatPipelineTest {
         assertThat(protoResult).contains("syntax = \"proto3\"").contains("message Root");
     }
 
-    // ── inline autoClose (mirrors ConverterPanel) ─────────────────────────
+    // The product's repair, not a copy of it: the copy these tests ran against
+    // had drifted ("{\"a\": \"hel" gained only a brace), so they passed
+    // whatever JsonRepair did.
     private String autoClose(String s) {
-        java.util.Deque<Character> stack = new java.util.ArrayDeque<>();
-        boolean inString = false, escape = false;
-        for (char c : s.toCharArray()) {
-            if (escape)        { escape = false; continue; }
-            if (c == '\\')   { if (inString) escape = true; continue; }
-            if (c == '"')      { inString = !inString; continue; }
-            if (inString)      continue;
-            if (c == '{')      stack.push('}');
-            else if (c == '[') stack.push(']');
-            else if (c == '}' || c == ']') { if (!stack.isEmpty()) stack.pop(); }
-        }
-        StringBuilder sb = new StringBuilder(s);
-        while (!stack.isEmpty()) sb.append(stack.pop());
-        return sb.toString();
+        return JsonRepair.autoClose(s);
     }
 
     /**
@@ -305,13 +294,11 @@ class CrossFormatPipelineTest {
                   .isInstanceOf(Exception.class);
         }
 
-        @Test @DisplayName("Pipeline: whitespace-only YAML throws or is empty")
+        @Test @DisplayName("Pipeline: whitespace-only YAML is refused as empty")
         void whitespaceOnlyYaml() {
-            assertThatCode(() -> jsonYaml.yamlToJson("   \n   "))
-                  .satisfiesAnyOf(
-                        t -> { /* returned null/empty without throw */ },
-                        t -> assertThat(t).isInstanceOf(Exception.class)
-                  );
+            assertThatThrownBy(() -> jsonYaml.yamlToJson("   \n   "))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessage("Input YAML must not be empty");
         }
 
         @Test @DisplayName("Pipeline: empty CSV header-only does not throw")
@@ -498,20 +485,7 @@ class CrossFormatPipelineTest {
                   .doesNotThrowAnyException();
         }
         private String autoClose(String s) {
-            Deque<Character> stack = new ArrayDeque<>();
-            boolean inString = false, escape = false;
-            for (char c : s.toCharArray()) {
-                if (escape)              { escape = false; continue; }
-                if (c == '\\')         { if (inString) escape = true; continue; }
-                if (c == '"')            { inString = !inString; continue; }
-                if (inString)            continue;
-                if (c == '{')            stack.push('}');
-                else if (c == '[')       stack.push(']');
-                else if (c == '}' || c == ']') { if (!stack.isEmpty()) stack.pop(); }
-            }
-            StringBuilder sb = new StringBuilder(s);
-            while (!stack.isEmpty()) sb.append(stack.pop());
-            return sb.toString();
+            return JsonRepair.autoClose(s);
         }
     }
 }
