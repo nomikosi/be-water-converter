@@ -79,4 +79,27 @@ class TextDecoderTest {
         System.arraycopy(b, 0, out, a.length, b.length);
         return out;
     }
+
+    @Test @DisplayName("Windows-1252 is tried before Latin-1, so the euro sign and curly quotes survive")
+    void windows1252BeforeLatin1() {
+        String text = "4,50 \u20ac \u201cquoted\u201d \u2013 \u2026";
+        TextDecoder.Decoded decoded = TextDecoder.decode(text.getBytes(Charset.forName("windows-1252")));
+        assertThat(decoded.text()).isEqualTo(text);
+        assertThat(decoded.charset()).isEqualTo(Charset.forName("windows-1252"));
+        assertThat(decoded.fallback()).isTrue();
+        // Bytes Windows-1252 leaves undefined are not it; Latin-1 still opens them.
+        assertThat(TextDecoder.decode(new byte[]{'a', (byte) 0x81}).charset()).isEqualTo(StandardCharsets.ISO_8859_1);
+    }
+
+    @Test @DisplayName("the charset the IDE has for a file wins when the bytes are valid in it")
+    void preferredCharset() {
+        Charset latin9 = Charset.forName("ISO-8859-15");
+        TextDecoder.Decoded decoded = TextDecoder.decode(new byte[]{(byte) 0xA4}, latin9);
+        assertThat(decoded.text()).isEqualTo("\u20ac");
+        assertThat(decoded.charset()).isEqualTo(latin9);
+        assertThat(decoded.fallback()).isFalse();
+        // A byte-order mark still decides first.
+        byte[] marked = {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF, 'a'};
+        assertThat(TextDecoder.decode(marked, latin9).charset()).isEqualTo(StandardCharsets.UTF_8);
+    }
 }

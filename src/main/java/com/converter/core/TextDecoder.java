@@ -42,34 +42,57 @@ public final class TextDecoder {
     /**
      * @param text     the decoded text, without its byte-order mark
      * @param charset  the charset used
-     * @param fallback true when nothing identified the encoding and the bytes
-     *                 were mapped one-to-one as ISO-8859-1 so the file at least
+     * @param fallback true when nothing identified the encoding and the charset
+     *                 was guessed — Windows-1252 when the bytes fit it, else
+     *                 ISO-8859-1, which maps every byte so the file at least
      *                 opens; the caller should say so
      */
     public record Decoded(String text, Charset charset, boolean fallback) {}
 
     public static Decoded decode(byte[] bytes) {
+        return decode(bytes, null);
+    }
+
+    /**
+     * Decodes by the byte-order mark when there is one, then by
+     * {@code preferred} — the charset the IDE has for the file — when the bytes
+     * are valid in it, then as UTF-8.
+     */
+    public static Decoded decode(byte[] bytes, Charset preferred) {
+        Mark mark = markOf(bytes);
+        Decoded decoded = mark != null ? strict(bytes, mark.length(), mark.charset())
+              : preferred == null ? null : strict(bytes, 0, preferred);
+        if (decoded == null) decoded = strict(bytes, 0, StandardCharsets.UTF_8);
+        if (decoded != null) return decoded;
+        // A mark that lies, or no mark and not UTF-8. Windows-1252 first: it is
+        // what Excel and Notepad write on Western Windows, and read as
+        // ISO-8859-1 its euro sign, curly quotes, dashes and ellipsis became
+        // invisible C1 control characters — U+0085 is even a line break to
+        // YAML. It leaves five bytes undefined, and a file using them is not
+        // Windows-1252; Latin-1 maps every byte, so that file still opens. The
+        // status line says which encoding was used.
+        Decoded windows = strict(bytes, 0, WINDOWS_1252);
+        if (windows != null) return new Decoded(windows.text(), WINDOWS_1252, true);
+        return new Decoded(new String(bytes, StandardCharsets.ISO_8859_1),
+              StandardCharsets.ISO_8859_1, true);
+    }
+
+    private static final Charset WINDOWS_1252 = Charset.forName("windows-1252");
+
+    /** A byte-order mark: the charset it names, and how many bytes it takes. */
+    public record Mark(Charset charset, int length) {}
+
+    /** The byte-order mark {@code bytes} start with, or null. */
+    public static Mark markOf(byte[] bytes) {
         int n = bytes.length;
         // The 4-byte marks before the 2-byte ones: UTF-32LE starts with the
         // UTF-16LE mark.
-        Decoded decoded;
-        if (n >= 4 && at(bytes, 0xFF, 0xFE, 0x00, 0x00))
-            decoded = strict(bytes, 4, Charset.forName("UTF-32LE"));
-        else if (n >= 4 && at(bytes, 0x00, 0x00, 0xFE, 0xFF))
-            decoded = strict(bytes, 4, Charset.forName("UTF-32BE"));
-        else if (n >= 3 && at(bytes, 0xEF, 0xBB, 0xBF))
-            decoded = strict(bytes, 3, StandardCharsets.UTF_8);
-        else if (n >= 2 && at(bytes, 0xFF, 0xFE))
-            decoded = strict(bytes, 2, StandardCharsets.UTF_16LE);
-        else if (n >= 2 && at(bytes, 0xFE, 0xFF))
-            decoded = strict(bytes, 2, StandardCharsets.UTF_16BE);
-        else
-            decoded = strict(bytes, 0, StandardCharsets.UTF_8);
-        if (decoded != null) return decoded;
-        // A mark that lies, or no mark and not UTF-8: Latin-1 maps every byte,
-        // so the file opens, and the status line says which encoding was used.
-        return new Decoded(new String(bytes, StandardCharsets.ISO_8859_1),
-              StandardCharsets.ISO_8859_1, true);
+        if (n >= 4 && at(bytes, 0xFF, 0xFE, 0x00, 0x00)) return new Mark(Charset.forName("UTF-32LE"), 4);
+        if (n >= 4 && at(bytes, 0x00, 0x00, 0xFE, 0xFF)) return new Mark(Charset.forName("UTF-32BE"), 4);
+        if (n >= 3 && at(bytes, 0xEF, 0xBB, 0xBF)) return new Mark(StandardCharsets.UTF_8, 3);
+        if (n >= 2 && at(bytes, 0xFF, 0xFE)) return new Mark(StandardCharsets.UTF_16LE, 2);
+        if (n >= 2 && at(bytes, 0xFE, 0xFF)) return new Mark(StandardCharsets.UTF_16BE, 2);
+        return null;
     }
 
     private static boolean at(byte[] bytes, int... expected) {

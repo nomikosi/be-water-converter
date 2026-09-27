@@ -18,6 +18,7 @@ package com.converter;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -35,13 +36,17 @@ final class AtomicFileWriter {
     private AtomicFileWriter() {}
 
     static void write(Path target, String text) throws IOException {
+        write(target, text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    static void write(Path target, byte[] content) throws IOException {
         // Through a symbolic link to the file it names: renaming onto the link
         // replaced the link itself with a plain file, and the file it pointed
         // at kept the old text.
         Path destination = followLinks(target.toAbsolutePath());
         Path temp = createTemp(destination.getParent());
         try {
-            Files.writeString(temp, text, StandardCharsets.UTF_8);
+            Files.write(temp, content);
             keepPermissions(destination, temp);
             replace(temp, destination);
         } finally {
@@ -85,7 +90,30 @@ final class AtomicFileWriter {
     // Windows can reject simultaneous replacements of the same destination.
     // Serialize only the rename step; writing the independent temp files can
     // proceed concurrently, and no per-path lock registry needs to be retained.
+    // Windows also refuses, as access denied, to replace a file that another
+    // program holds open for a moment, as a virus scanner or the indexer does
+    // with a file just written. A moment later the rename succeeds, so it is
+    // retried briefly before the save fails.
     private static synchronized void replace(Path temp, Path target) throws IOException {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                move(temp, target);
+                return;
+            } catch (AccessDeniedException held) {
+                if (attempt == REPLACE_ATTEMPTS) throw held;
+                try {
+                    Thread.sleep(20L * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw held;
+                }
+            }
+        }
+    }
+
+    private static final int REPLACE_ATTEMPTS = 10;
+
+    private static void move(Path temp, Path target) throws IOException {
         try {
             Files.move(temp, target, REPLACE_EXISTING, ATOMIC_MOVE);
         } catch (AtomicMoveNotSupportedException notAtomicHere) {

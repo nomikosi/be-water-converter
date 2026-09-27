@@ -106,26 +106,59 @@ final class ConverterFileOps {
         if (wrapper == null) return;
         File file = wrapper.getFile();
         host.status("Saving " + file.getName() + "…", true);
+        String newFileSeparator = newFileLineSeparator();
+        java.nio.charset.Charset ideCharset = ideCharset(file);
         // Written off the EDT for the same reason reads are: a large output or a
         // slow network target would otherwise freeze the IDE.
         runOffEdt(() -> {
             try {
-                AtomicFileWriter.write(file.toPath(), output);
-                return null;
+                // A file saved over keeps its line breaks, so replacing a CRLF
+                // file did not change every line, and a CSV or source file its
+                // encoding; a new one gets the IDE's line separator for new
+                // files, in UTF-8.
+                var encoded = com.converter.core.TextEncoder.forSave(output, outputFormat,
+                      existingHead(file.toPath()), ideCharset, newFileSeparator);
+                AtomicFileWriter.write(file.toPath(), encoded.bytes());
+                return encoded;
             } catch (IOException ex) {
                 throw new java.util.concurrent.CompletionException(ex);
             }
-        }, (ignored, cause) -> {
+        }, (encoded, cause) -> {
             if (cause != null) {
                 host.status("Failed to save: " + ConverterNotifications.describe(cause), false);
                 return;
             }
-            host.status("Saved to " + file.getName(), true);
+            if (encoded.refused() != null) {
+                host.status("Saved to " + file.getName() + " as UTF-8: " + encoded.refused().name()
+                      + " cannot hold every character of the output", false);
+            } else {
+                host.status("Saved to " + file.getName() + (StandardCharsets.UTF_8.equals(encoded.charset())
+                      ? "" : " (" + encoded.charset().name() + ")"), true);
+            }
             // The write went behind the VFS's back, so tell it. Without this a
             // file saved into the project was not listed, and an editor already
             // showing it kept the old text, until something else refreshed.
             refreshInVfs(file);
         });
+    }
+
+    /** The start of the file a save replaces, enough to tell its encoding and line breaks; null when it is new. */
+    private static byte[] existingHead(java.nio.file.Path path) throws IOException {
+        if (!Files.isRegularFile(path)) return null;
+        try (var in = Files.newInputStream(path)) {
+            return in.readNBytes(64 * 1024);
+        }
+    }
+
+    /** Settings | Editor | Code Style | Line separator, for new files; LF outside the IDE. */
+    private String newFileLineSeparator() {
+        try {
+            String separator = project == null ? null
+                  : com.intellij.application.options.CodeStyle.getProjectOrDefaultSettings(project).getLineSeparator();
+            return separator == null ? "\n" : separator;
+        } catch (Throwable outsideIde) {
+            return "\n";
+        }
     }
 
     private static void refreshInVfs(File file) {
@@ -160,15 +193,19 @@ final class ConverterFileOps {
         }
 
         host.status("Loading " + file.getName() + "…", true);
+        java.nio.charset.Charset ideCharset = ideCharset(file);
         // Read off the EDT so a large or slow-network file cannot freeze the IDE.
         runOffEdt(() -> {
             try {
-                // By its byte-order mark first: read as UTF-8 with a Latin-1
-                // fallback, a UTF-16 file opened as NUL-interleaved garbage.
+                // By its byte-order mark first, then by the charset the IDE has
+                // for the file — File Encodings, .editorconfig — as the context
+                // menu reads it: read as UTF-8 with a Latin-1 fallback, a UTF-16
+                // file opened as NUL-interleaved garbage, and a Windows-1252
+                // one lost its euro signs and curly quotes.
                 var decoded = com.converter.core.TextDecoder.decode(
-                      Files.readAllBytes(file.toPath()));
+                      Files.readAllBytes(file.toPath()), ideCharset);
                 String note = decoded.fallback()
-                      ? " (not valid UTF-8 — read as ISO-8859-1)"
+                      ? " (not valid UTF-8 — read as " + decoded.charset().name() + ")"
                       : decoded.charset().equals(StandardCharsets.UTF_8) ? ""
                       : " (read as " + decoded.charset().name() + ")";
                 return new Loaded(decoded.text(), note);
@@ -187,6 +224,16 @@ final class ConverterFileOps {
             }
             host.loaded(content.text(), Formats.inputForFileName(file.getName()), file.getName() + content.note());
         });
+    }
+
+    /** The charset the IDE has for a file, or null outside a running IDE or when it has none. */
+    private static java.nio.charset.Charset ideCharset(File file) {
+        try {
+            VirtualFile virtualFile = com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByIoFile(file);
+            return virtualFile == null ? null : virtualFile.getCharset();
+        } catch (Throwable outsideIde) {
+            return null;
+        }
     }
 
     /**
