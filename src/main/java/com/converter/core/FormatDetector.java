@@ -47,7 +47,8 @@ public final class FormatDetector {
         // "// note" or "# note" above a JSON object detected nothing, and a
         // "# note" above "[1, 2]" made the TOML table-header check see the
         // bracket line first and call the array TOML.
-        String structural = structuralFormat(withoutLeadingComments(raw));
+        String body = withoutLeadingComments(raw);
+        String structural = structuralFormat(body);
         if (structural != null) return structural;
 
         // CSV last: it is the weakest signal, so require a delimiter in the
@@ -62,7 +63,10 @@ public final class FormatDetector {
         // before leading comments were skipped for the others.
         if (detectCsvDelimiter(raw) != null) return FMT_CSV;
 
-        return null;
+        // Only then a key anywhere in the document. Before CSV, a mail export
+        // whose rows held "Re: invoice" was taken for YAML by that line alone,
+        // and the conversion failed on the first comma.
+        return documentWideFormat(body);
     }
 
     /**
@@ -95,10 +99,14 @@ public final class FormatDetector {
             if (TOML_MARKER.matcher(firstLine).find()) return FMT_TOML;
         }
 
-        // Nothing decisive on line one: fall back to the document-wide scan.
+        return null;
+    }
+
+    /** Nothing decisive on the first line and not CSV: a key anywhere in the document. */
+    private static String documentWideFormat(String s) {
+        if (s.isEmpty()) return null;
         if (TOML_MARKER.matcher(s).find()) return FMT_TOML;
         if (YAML_MARKER.matcher(s).find()) return FMT_YAML;
-
         return null;
     }
 
@@ -177,6 +185,12 @@ public final class FormatDetector {
      * document for it classified any YAML that merely embedded such a line — a
      * k8s ConfigMap carrying a source file — as Protobuf. The remaining markers
      * are ones nothing else writes at the start of a line.
+     *
+     * <p>At the very start: a .proto file declares its syntax and top-level
+     * types at column 0, while a proto embedded in YAML — a ConfigMap entry, a
+     * workflow step writing one out — is indented under its key. Matched
+     * indented, the whole YAML file was taken for Protobuf and converted to the
+     * one message it carried.
      */
     //
     // Leading whitespace is horizontal and possessive on purpose. As "^\s*" the
@@ -185,9 +199,10 @@ public final class FormatDetector {
     // the number of blank lines, and 16,000 of them took seven seconds on the
     // EDT. "[ \t]*+" stops at the line's own end and never backtracks.
     private static final Pattern PROTO_MARKER = Pattern.compile(
-          "(?m)^[ \\t]*+(syntax\\s*+=\\s*+[\"']proto[23][\"']|message\\s++\\w+\\s*+\\{|enum\\s++\\w+\\s*+\\{)");
+          "(?m)^(syntax\\s*+=\\s*+[\"']proto[23][\"']|edition\\s*+=\\s*+[\"']\\d{4}[\"']\\s*+;"
+          + "|message\\s++\\w+\\s*+\\{|enum\\s++\\w+\\s*+\\{)");
     private static final Pattern TOML_MARKER = Pattern.compile(
-          "(?m)^[ \\t]*+(\\[[^]]+][ \\t]*+$|[A-Za-z_][\\w.-]*+[ \\t]*+=)");
+          "(?m)^[ \\t]*+(\\[[^]]+][ \\t]*+(?:#.*)?$|[A-Za-z_][\\w.-]*+[ \\t]*+=)");
     private static final Pattern YAML_MARKER = Pattern.compile(
           "(?m)^[ \\t]*+(-\\s++\\S|[A-Za-z_][\\w.-]*+[ \\t]*+:(\\s|$))");
 
@@ -205,9 +220,13 @@ public final class FormatDetector {
         return null;
     }
 
-    /** A lone [table] or [[array.of.tables]] header on line 1, plus a later 'key =' line. */
+    /**
+     * A lone [table] or [[array.of.tables]] header on line 1, plus a later
+     * 'key =' line. The header may carry a comment: "[package] # the crate"
+     * was taken for a JSON array.
+     */
     private static final java.util.regex.Pattern TOML_TABLE_HEADER =
-          java.util.regex.Pattern.compile("^\\[\\[?[^\\[\\]]+]]?$");
+          java.util.regex.Pattern.compile("^\\[\\[?[^\\[\\]]+]]?[ \\t]*(?:#.*)?$");
     private static final Pattern TOML_KEY_VALUE =
           Pattern.compile("(?m)^[ \\t]*+[A-Za-z_\"'][\\w.\\-\"']*+[ \\t]*+=");
 
@@ -221,24 +240,51 @@ public final class FormatDetector {
 
     /**
      * Header plus at least one row with a matching column count. Delimiters
-     * inside quoted fields do not count, a third line must agree when present,
+     * inside quoted fields do not count, a third row must agree when present,
      * and sentence-like first lines are rejected — two lines of prose that
      * happen to contain one comma each were otherwise detected as CSV.
+     *
+     * <p>Rows, not lines: a quoted cell may hold a line break, which Excel
+     * writes for any cell with one. Counted per line, "1;Widget;\"Line one" and
+     * "Line two\";5" each disagreed with the header, nothing was detected, and
+     * the semicolon file was read with the remembered comma.
      */
     private static int csvColumns(String s, char delimiter) {
-        String[] lines = s.split("\r?\n", 4);
-        if (lines.length < 2 || lines[1].isBlank()) return 0;
+        java.util.List<String> rows = firstRows(s, 3);
+        if (rows.size() < 2 || rows.get(1).isBlank()) return 0;
 
-        String header = lines[0];
+        String header = rows.get(0);
         // ". " or a trailing period is prose punctuation, not a column name.
         if (header.contains(". ") || header.stripTrailing().endsWith(".")) return 0;
 
         int expected = countDelimitersOutsideQuotes(header, delimiter);
         if (expected == 0) return 0;
-        if (countDelimitersOutsideQuotes(lines[1], delimiter) != expected) return 0;
-        if (lines.length > 2 && !lines[2].isBlank()
-              && countDelimitersOutsideQuotes(lines[2], delimiter) != expected) return 0;
+        if (countDelimitersOutsideQuotes(rows.get(1), delimiter) != expected) return 0;
+        if (rows.size() > 2 && !rows.get(2).isBlank()
+              && countDelimitersOutsideQuotes(rows.get(2), delimiter) != expected) return 0;
         return expected + 1;
+    }
+
+    /**
+     * Up to {@code max} rows from the start of a CSV text, split at line
+     * breaks outside quotes; CR, LF and CRLF all end a row.
+     */
+    static java.util.List<String> firstRows(String s, int max) {
+        java.util.List<String> rows = new java.util.ArrayList<>(max);
+        boolean inQuotes = false;
+        int start = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '"') inQuotes = !inQuotes;
+            else if ((c == '\n' || c == '\r') && !inQuotes) {
+                rows.add(s.substring(start, i));
+                if (rows.size() == max) return rows;
+                if (c == '\r' && i + 1 < s.length() && s.charAt(i + 1) == '\n') i++;
+                start = i + 1;
+            }
+        }
+        rows.add(s.substring(start));
+        return rows;
     }
 
     private static int countDelimitersOutsideQuotes(String line, char delimiter) {

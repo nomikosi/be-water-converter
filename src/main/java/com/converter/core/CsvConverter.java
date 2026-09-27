@@ -168,6 +168,12 @@ public class CsvConverter {
      * row lost its leading spaces: Format turned "  A1" into "A1", and " 42"
      * came back as the number 42. A line inside a quoted value is that value's
      * content and is kept whatever it holds.
+     *
+     * <p>A line holding the delimiter is a row, even when the delimiter is a
+     * tab: Excel writes a row of empty cells as tabs alone, and taking those for
+     * whitespace dropped the row — from files this plugin wrote as well. CR on
+     * its own ends a line too, as in files from old Macs, where a blank line
+     * otherwise became a row with one empty cell.
      */
     static String withoutBlankLines(String text, CsvFormat format) {
         char quote = format.quote();
@@ -177,11 +183,13 @@ public class CsvConverter {
         boolean fieldStart = true;
         int n = text.length();
         for (int i = 0; i < n; i++) {
-            if (!inQuotes && (i == 0 || text.charAt(i - 1) == '\n')) {
+            if (!inQuotes && lineStart(text, i)) {
                 int end = i;
-                while (end < n && text.charAt(end) != '\n' && Character.isWhitespace(text.charAt(end))) end++;
-                if (end == n || text.charAt(end) == '\n') {
+                while (end < n && !lineBreak(text.charAt(end)) && text.charAt(end) != delimiter
+                      && Character.isWhitespace(text.charAt(end))) end++;
+                if (end == n || lineBreak(text.charAt(end))) {
                     if (out == null) out = new StringBuilder(n).append(text, 0, i);
+                    if (end + 1 < n && text.charAt(end) == '\r' && text.charAt(end + 1) == '\n') end++;
                     i = end;               // the loop's i++ steps over the line break
                     continue;
                 }
@@ -199,9 +207,20 @@ public class CsvConverter {
                 continue;
             }
             if (c == quote && fieldStart) inQuotes = true;
-            fieldStart = c == delimiter || c == '\n';
+            fieldStart = c == delimiter || lineBreak(c);
         }
         return out == null ? text : out.toString();
+    }
+
+    private static boolean lineBreak(char c) {
+        return c == '\n' || c == '\r';
+    }
+
+    /** Whether a line starts at {@code i}: after LF, or after a CR that no LF follows. */
+    private static boolean lineStart(String text, int i) {
+        if (i == 0) return true;
+        char previous = text.charAt(i - 1);
+        return previous == '\n' || (previous == '\r' && text.charAt(i) != '\n');
     }
 
     private static CsvSchema schemaFor(CsvFormat format) {

@@ -918,11 +918,11 @@ class CsvConverterTest {
             assertThatThrownBy(() -> converter.csvToJson(null)).isInstanceOf(Exception.class);
         }
 
-        @Test @DisplayName("CSV->JSON: blank input throws or returns empty")
+        @Test @DisplayName("CSV->JSON: blank input is refused as empty")
         void csvToJsonBlank() {
-            assertThatCode(() -> converter.csvToJson(" "))
-                  .satisfiesAnyOf(t -> { /* empty result ok */ },
-                        t -> assertThat(t).isInstanceOf(Exception.class));
+            assertThatThrownBy(() -> converter.csvToJson(" "))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessage("Input CSV must not be empty");
         }
 
         @Test @DisplayName("JSON->CSV: null input throws")
@@ -935,11 +935,11 @@ class CsvConverterTest {
             assertThatThrownBy(() -> converter.jsonToCsv(" ")).isInstanceOf(Exception.class);
         }
 
-        @Test @DisplayName("CSV->JSON: completely empty string throws or returns empty")
+        @Test @DisplayName("CSV->JSON: an empty string is refused as empty")
         void csvToJsonEmpty() {
-            assertThatCode(() -> converter.csvToJson(""))
-                  .satisfiesAnyOf(t -> { /* empty result ok */ },
-                        t -> assertThat(t).isInstanceOf(Exception.class));
+            assertThatThrownBy(() -> converter.csvToJson(""))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessage("Input CSV must not be empty");
         }
     }
 
@@ -1636,6 +1636,30 @@ class CsvConverterTest {
                   "commit,gene,sci,frac,two\n1234e56,2310009E13,1e3,1.5e3,12e3\n", true)))
                   .isEqualTo(json.readTree(
                         "[{\"commit\":\"1234e56\",\"gene\":\"2310009E13\",\"sci\":1E+3,\"frac\":1.5E+3,\"two\":\"12e3\"}]"));
+        }
+    }
+
+    @Nested @DisplayName("Rows of empty cells and line endings")
+    class RowsOfEmptyCells {
+        private final ConversionPipeline pipeline = new ConversionPipeline();
+        private final ConversionOptions tab = ConversionOptions.DEFAULTS.withCsvFormat(CsvConverter.CsvFormat.TAB);
+
+        @Test @DisplayName("a tab-separated row of empty cells is a row, not a blank line")
+        void tabRowsOfEmptyCellsSurvive() throws Exception {
+            // The tab is whitespace to Character.isWhitespace, so the row looked
+            // blank and was dropped — from TSV this plugin wrote, too.
+            assertThat(pipeline.formatInput("a\tb\tc\n1\t2\t3\n\t\t\n4\t5\t6\n", Formats.FMT_CSV, tab))
+                  .isEqualTo("a\tb\tc\n1\t2\t3\n\t\t\n4\t5\t6\n");
+            String tsv = pipeline.renderFromJson("[{\"a\":\"\",\"b\":\"\"},{\"a\":\"x\",\"b\":\"y\"}]",
+                  Formats.FMT_CSV, tab);
+            assertThat(pipeline.normalizeToJson(tsv, Formats.FMT_CSV, tab))
+                  .isEqualTo("[{\"a\":\"\",\"b\":\"\"},{\"a\":\"x\",\"b\":\"y\"}]");
+        }
+
+        @Test @DisplayName("a blank line in a CR-only file is not a row")
+        void crOnlyBlankLines() throws Exception {
+            assertThat(pipeline.normalizeToJson("a,b\r1,2\r\r3,4\r", Formats.FMT_CSV, ConversionOptions.DEFAULTS))
+                  .isEqualTo("[{\"a\":1,\"b\":2},{\"a\":3,\"b\":4}]");
         }
     }
 }

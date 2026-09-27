@@ -304,4 +304,36 @@ class FormatDetectorTest {
             assertThat(FormatDetector.detectCsvDelimiter("a,b;c\n1,2;3\n")).isEqualTo(',');
         }
     }
+
+    @Nested @DisplayName("Realistic documents")
+    class RealisticDocuments {
+
+        @Test @DisplayName("a quoted cell spanning lines does not hide the delimiter")
+        void multiLineCells() {
+            String semicolons = "id;name;notes;qty\r\n1;Widget;\"Line one\r\nLine two\";5\r\n"
+                  + "2;Gadget;\"Plain; with semicolon\";7\r\n3;Doohickey;Other;9\r\n";
+            assertThat(detectFormat(semicolons)).isEqualTo(Formats.FMT_CSV);
+            assertThat(FormatDetector.detectCsvDelimiter(semicolons)).isEqualTo(';');
+            assertThat(FormatDetector.detectCsvDelimiter("a\tb\n\"x\ny\"\t2\n3\t4\n")).isEqualTo('\t');
+        }
+
+        @Test @DisplayName("YAML carrying a .proto is YAML; a .proto, however indented, is Protobuf")
+        void embeddedProto() {
+            String configMap = "apiVersion: v1\nkind: ConfigMap\ndata:\n  user.proto: |\n"
+                  + "    syntax = \"proto3\";\n    message User {\n      string name = 1;\n    }\n";
+            assertThat(detectFormat(configMap)).isEqualTo(Formats.FMT_YAML);
+            assertThat(detectFormat("    message Inner {\n      int32 x = 1;\n    }\n")).isEqualTo(Formats.FMT_PROTO);
+            assertThat(detectFormat("edition = \"2023\";\n\nmessage A {\n  int32 x = 1;\n}\n")).isEqualTo(Formats.FMT_PROTO);
+            // Cargo.toml's edition has no semicolon.
+            assertThat(detectFormat("name = \"x\"\nedition = \"2021\"\n")).isEqualTo(Formats.FMT_TOML);
+        }
+
+        @Test @DisplayName("CSV whose rows hold 'Re:' is CSV, and a TOML header may carry a comment")
+        void keysInsideRowsAndCommentedHeaders() {
+            assertThat(detectFormat("subject,from,count\nRe: invoice,alice@example.com,3\nFwd: report,bob@example.com,5\n"))
+                  .isEqualTo(Formats.FMT_CSV);
+            assertThat(detectFormat("[package] # the crate\nname = \"x\"\nversion = \"0.1.0\"\n"))
+                  .isEqualTo(Formats.FMT_TOML);
+        }
+    }
 }

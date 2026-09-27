@@ -50,7 +50,7 @@ public final class Formats {
           new Format(FMT_JSON, List.of("json"), true, null, false),
           new Format(FMT_XML, List.of("xml"), true, null, false),
           new Format(FMT_YAML, List.of("yaml", "yml"), true, null, false),
-          new Format(FMT_CSV, List.of("csv"), true, null, false),
+          new Format(FMT_CSV, List.of("csv", "tsv"), true, null, false),
           new Format(FMT_TOML, List.of("toml"), true, null, false),
           new Format(FMT_PROTO, List.of("proto"), true, null, false),
           new Format(FMT_JAVA, List.of("java"), false,
