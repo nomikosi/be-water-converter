@@ -68,22 +68,25 @@ public final class ConverterContextActions {
          * <p>An unsaved editor Document wins over the bytes on disk: autosave is
          * off by default and does not fire when focus moves to the Project view,
          * so reading the file directly produced a silently stale conversion with
-         * an unbounded staleness window. {@code LoadTextUtil} is used for the
-         * on-disk case so the file's own charset is honoured rather than assumed
-         * to be UTF-8.
+         * an unbounded staleness window. The file itself is decoded as the tool
+         * window's Open decodes it, preferring the charset the IDE has for it.
+         *
+         * <p>Only the document is read under a read action. Held across the
+         * disk read as well, it kept every edit in the IDE waiting until a large
+         * file on a slow drive was in.
          */
-        String resolve() {
+        String resolve() throws java.io.IOException {
             if (text != null) return text;
             // runReadAction(Computable), not ReadAction.compute(ThrowableComputable):
             // the latter is deprecated as of 2026.2 and the verifier flags it.
-            return ApplicationManager.getApplication().runReadAction(
+            String open = ApplicationManager.getApplication().runReadAction(
                   (com.intellij.openapi.util.Computable<String>) () -> {
                       var document = com.intellij.openapi.fileEditor.FileDocumentManager
                             .getInstance().getCachedDocument(file);
-                      if (document != null) return document.getText();
-                      return com.intellij.openapi.fileEditor.impl.LoadTextUtil
-                            .loadText(file).toString();
+                      return document == null ? null : document.getText();
                   });
+            if (open != null) return open;
+            return com.converter.core.TextDecoder.decode(file.contentsToByteArray(), file.getCharset()).text();
         }
     }
 
@@ -109,36 +112,40 @@ public final class ConverterContextActions {
         return null;
     }
 
-    /** Prefix of an editor document sniffed when the file name says nothing. */
-    private static final int SNIFF_PREFIX_CHARS = 4_096;
-
     /**
-     * True when the context is something the plugin can actually read. A bare
-     * "is there an editor" check put both entries in every popup, so a .java
-     * file (detected as Protobuf via {@code package x.y;}) or gradle.properties
-     * (detected as TOML) offered a conversion that could only fail — and prose
-     * detected as YAML silently produced a junk scratch file.
+     * True when the context is something the plugin can actually read; see
+     * {@link ContextDecisions#offer}. Only the first
+     * {@link ContextDecisions#MENU_SNIFF_CHARS} characters are looked at, of a
+     * selection as much as of a document: the whole selection was copied and
+     * sniffed every time a menu opened.
      */
     private static boolean isConvertible(AnActionEvent e) {
         VirtualFile file = e.getData(CommonDataKeys.VIRTUAL_FILE);
-        if (file != null && !file.isDirectory()) {
-            if (Formats.inputForFileName(file.getName()) != null) return true;
-        }
+        if (file != null && file.isDirectory()) file = null;
         Editor editor = e.getData(CommonDataKeys.EDITOR);
-        if (editor == null) return false;
-        // No usable extension: only offer when the content itself is recognisable.
-        // A bounded prefix keeps update() cheap on a large document.
-        String selected = editor.getSelectionModel().getSelectedText();
-        String sample = selected != null && !selected.isBlank() ? selected
-              : editor.getDocument().getText(new com.intellij.openapi.util.TextRange(0,
-                    Math.min(SNIFF_PREFIX_CHARS, editor.getDocument().getTextLength())));
-        return FormatDetector.detectFormat(sample) != null;
+        if (editor == null && file == null) return false;
+        ContextDecisions.Kind kind = file == null ? ContextDecisions.Kind.PLAIN
+              : ContextDecisions.kindOf(file.getFileType().getName(),
+                    file.getFileType() instanceof com.intellij.openapi.fileTypes.PlainTextFileType
+                          || file.getFileType() instanceof com.intellij.openapi.fileTypes.UnknownFileType);
+        CharSequence selection = null, prefix = null;
+        if (editor != null) {
+            CharSequence text = editor.getDocument().getImmutableCharSequence();
+            var selectionModel = editor.getSelectionModel();
+            if (selectionModel.hasSelection()) {
+                int start = selectionModel.getSelectionStart();
+                selection = text.subSequence(start,
+                      Math.min(selectionModel.getSelectionEnd(), start + ContextDecisions.MENU_SNIFF_CHARS));
+            }
+            prefix = text.subSequence(0, Math.min(text.length(), ContextDecisions.MENU_SNIFF_CHARS));
+        } else if (kind != ContextDecisions.Kind.DATA && Formats.inputForFileName(file.getName()) == null) {
+            return false;     // a file in the Project view: its name or type has to say
+        }
+        return ContextDecisions.offer(file == null ? null : file.getName(), kind, selection, prefix);
     }
 
-    /** Extension wins when there is one; otherwise fall back to sniffing the text. */
     private static String formatFor(String fileName, String text) {
-        String byExtension = Formats.inputForFileName(fileName);
-        return byExtension != null ? byExtension : FormatDetector.detectFormat(text);
+        return ContextDecisions.formatFor(fileName, text);
     }
 
     private static void notifyError(Project project, String message) {
@@ -215,6 +222,8 @@ public final class ConverterContextActions {
                           project.getDisposed());
                     return;
                 }
+                // Cancelled while reading: the text was loaded or converted anyway.
+                indicator.checkCanceled();
                 ApplicationManager.getApplication().invokeLater(
                       () -> onText.accept(text), project.getDisposed());
             }
@@ -300,6 +309,27 @@ public final class ConverterContextActions {
 
         private void runConversion(Project project, String sourceName, String text,
               String inputFormat, ProgressIndicator indicator) {
+            // Cancel on the progress bar only sets the indicator's flag, which
+            // the conversion never reads: a CSV expansion ran to its end. The
+            // interrupt is what the conversion stops for, delivered the way the
+            // tool window delivers it and cleared before the thread goes back.
+            ConversionRun run = new ConversionRun();
+            run.tryStart();
+            run.attachWorker();
+            var watch = com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService()
+                  .scheduleWithFixedDelay(() -> { if (indicator.isCanceled()) run.stop(); },
+                        100, 100, java.util.concurrent.TimeUnit.MILLISECONDS);
+            try {
+                convertAndDeliver(project, sourceName, text, inputFormat, indicator);
+            } finally {
+                watch.cancel(false);
+                run.detachWorker();
+                run.finished();
+            }
+        }
+
+        private void convertAndDeliver(Project project, String sourceName, String text,
+              String inputFormat, ProgressIndicator indicator) {
             String result;
             try {
                 ConversionPipeline pipeline = new ConversionPipeline();
@@ -310,14 +340,11 @@ public final class ConverterContextActions {
                 // The subtree filter is deliberately not carried over — it
                 // belongs to the document open in the panel.
                 ConversionOptions options = ConverterSettings.options();
-                if (Formats.FMT_CSV.equals(inputFormat)) {
-                    // The document's own delimiter beats the remembered one: a
-                    // semicolon file read with the comma setting is one column wide.
-                    Character delimiter = FormatDetector.detectCsvDelimiter(text);
-                    if (delimiter != null)
-                        options = options.withCsvFormat(
-                              com.converter.core.CsvConverter.CsvFormat.forDelimiter(delimiter));
-                }
+                // The document's own delimiter beats the remembered one: a
+                // semicolon file read with the comma setting is one column wide.
+                if (Formats.FMT_CSV.equals(inputFormat))
+                    options = options.withCsvFormat(
+                          ContextDecisions.csvFormatFor(sourceName, text, options.csvFormat()));
                 String pivot = pipeline.normalizeToJson(text, inputFormat, options);
                 indicator.checkCanceled();
                 // The same row-count confirmation the tool window gives: this
@@ -336,6 +363,8 @@ public final class ConverterContextActions {
                 indicator.checkCanceled();
             } catch (com.intellij.openapi.progress.ProcessCanceledException cancelled) {
                 throw cancelled;
+            } catch (java.util.concurrent.CancellationException cancelled) {
+                return;   // the user cancelled: nothing to report
             } catch (Exception failure) {
                 String message = ConverterNotifications.describe(failure);
                 ApplicationManager.getApplication().invokeLater(
