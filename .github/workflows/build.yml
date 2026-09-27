@@ -42,9 +42,16 @@ jobs:
         run: ./gradlew unitTest check buildPlugin --console=plain
 
       # Cheap descriptor and project-configuration checks that used to run only
-      # on a release tag, where a failure is expensive to discover.
+      # on a release tag, where a failure is expensive to discover. The
+      # configuration check only warns, so its warning fails the step here.
       - name: Verify plugin structure and configuration
-        run: ./gradlew verifyPluginStructure verifyPluginProjectConfiguration --console=plain
+        shell: bash
+        run: |
+          ./gradlew verifyPluginStructure verifyPluginProjectConfiguration --console=plain | tee verification.log
+          if grep -q "The following plugin configuration issues were found" verification.log; then
+            echo "verifyPluginProjectConfiguration reported configuration issues; see above." >&2
+            exit 1
+          fi
 
       - name: Upload plugin ZIP
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

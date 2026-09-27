@@ -159,9 +159,11 @@ tasks.register('unitTest', Test) {
     include 'com/converter/**/*Test.class'
     // Exclude before JUnit discovery: tags are evaluated only after loading
     // classes, and these tests require the platform-aware test class loader.
+    // The descriptor test loads the plugin's classes, which extend platform types.
     exclude 'com/converter/ConverterPanel*Test.class'
     exclude 'com/converter/ConverterActionsTest.class'
     exclude 'com/converter/FindBarTest.class'
+    exclude 'com/converter/PluginDescriptorTest.class'
 
     testLogging {
         events 'passed', 'skipped', 'failed'

@@ -8,6 +8,11 @@ gradlew text eol=lf
 # Windows batch files need CRLF.
 *.bat   text eol=crlf
 
+# Files packed into the plugin as they are, so every checkout builds the same
+# plugin: a Windows clone wrote CRLF into the icons, and its build no longer
+# matched the one uploaded to the Marketplace byte for byte.
+*.svg   text eol=lf
+
 # Binary files.
 *.jar   binary
 *.png   binary
