@@ -90,41 +90,81 @@ class GeneratedJavaCompilesTest {
     /**
      * Compiling is not the whole job: with Lombok the classes have to read the
      * JSON they came from and write it back. xAxis gets the getter getXAxis,
-     * which Jackson reads as "xaxis"; an object whose only key is $ref lost its
+     * which Jackson reads as "xaxis"; an object whose only key was $ref lost its
      * field to Lombok; url and URL are two classes whose files are one on
      * Windows and macOS.
+     *
+     * <p>Every compile sample is bound too, not only these: binding just the
+     * naming cases let a class generated for {@code {}} ship that Jackson could
+     * not write back at all. Dates need the JavaTimeModule, as they do for the
+     * user, and a sample with an array root is bound element by element.
      */
     @org.junit.jupiter.api.Test
     void lombokClassesReadAndWriteTheirOwnJson() throws Exception {
-        String[] samples = {
+        List<String> samples = new ArrayList<>(List.of(
               "{\"xAxis\":1,\"eTag\":\"a\",\"name\":\"n\"}",
               "{\"schema\":{\"$ref\":\"#/components/schemas/Pet\"}}",
               "{\"url\":{\"host\":\"a\"},\"URL\":{\"port\":1}}",
               "{\"id\":1,\"ID\":2,\"iPhone\":{\"aB\":[1,2]}}",
-              "{\"first-name\":\"Ada\",\"X-Axis\":2}"};
+              "{\"first-name\":\"Ada\",\"X-Axis\":2}"));
+        samples.addAll(List.of(SAMPLES));
+        samples.add(KotlinJvmLimitsTest.input(255, "1", false));
         String lombokCp = TestProcesses.configured("bewater.lombok.classpath");
         String classpath = TestProcesses.configured("bewater.jackson.annotations.classpath")
               + File.pathSeparator + lombokCp;
         Path output = Files.createDirectory(temp.resolve("bound"));
         List<String> command = new ArrayList<>(List.of("-encoding", "UTF-8", "-classpath", classpath,
               "-d", output.toString(), "-processorpath", lombokCp, "-proc:full"));
-        for (int i = 0; i < samples.length; i++) {
+        for (int i = 0; i < samples.size(); i++) {
             Path source = Files.createDirectories(temp.resolve("bound-src").resolve("bound" + i)).resolve("Root.java");
-            Files.writeString(source, "package bound" + i + ";\n\n" + new JavaPojoGenerator().fromJson(samples[i], true));
+            Files.writeString(source, "package bound" + i + ";\n\n" + new JavaPojoGenerator().fromJson(samples.get(i), true));
             command.add(source.toString());
         }
         TestProcesses.run(temp, TestProcesses.configured("bewater.javac"), command);
         // The test's own loader as parent, so the generated annotations are the
         // ones this ObjectMapper reads.
-        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+              .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+              .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+              .disable(com.fasterxml.jackson.databind.DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE);
+        var exact = new com.fasterxml.jackson.databind.ObjectMapper()
+              .enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+              .enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_INTEGER_FOR_INTS);
         try (URLClassLoader loader = new URLClassLoader(new URL[]{output.toUri().toURL()},
               GeneratedJavaCompilesTest.class.getClassLoader())) {
-            for (int i = 0; i < samples.length; i++) {
+            for (int i = 0; i < samples.size(); i++) {
                 Class<?> root = Class.forName("bound" + i + ".Root", true, loader);
-                Object value = mapper.readValue(samples[i], root);
-                assertThat(mapper.readTree(mapper.writeValueAsString(value))).as(samples[i])
-                      .isEqualTo(mapper.readTree(samples[i]));
+                com.fasterxml.jackson.databind.JsonNode tree = exact.readTree(samples.get(i));
+                while (tree.isArray() && tree.size() > 0 && tree.get(0).isArray()) tree = tree.get(0);
+                for (com.fasterxml.jackson.databind.JsonNode document : tree.isArray() ? tree : List.of(tree)) {
+                    Object value = mapper.treeToValue(document, root);
+                    com.fasterxml.jackson.databind.JsonNode back = exact.readTree(mapper.writeValueAsString(value));
+                    assertThat(withoutNulls(back).equals(NUMBERS_BY_VALUE, withoutNulls(document)))
+                          .as("%s read and written back as %s", document, back).isTrue();
+                }
             }
         }
     }
+
+    /**
+     * A tree without its null-valued fields: a class writes every field it has,
+     * so a key some elements lacked comes back as null.
+     */
+    private static com.fasterxml.jackson.databind.JsonNode withoutNulls(com.fasterxml.jackson.databind.JsonNode node) {
+        if (node.isObject()) {
+            var out = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+            node.properties().forEach(e -> { if (!e.getValue().isNull()) out.set(e.getKey(), withoutNulls(e.getValue())); });
+            return out;
+        }
+        if (node.isArray()) {
+            var out = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+            node.forEach(item -> out.add(withoutNulls(item)));
+            return out;
+        }
+        return node;
+    }
+
+    /** Numbers equal by value, however they are spelled: 1e400 and 1E+400, 1.0 and 1.00. */
+    private static final java.util.Comparator<com.fasterxml.jackson.databind.JsonNode> NUMBERS_BY_VALUE = (a, b) ->
+          a.isNumber() && b.isNumber() ? a.decimalValue().compareTo(b.decimalValue()) : a.equals(b) ? 0 : 1;
 }

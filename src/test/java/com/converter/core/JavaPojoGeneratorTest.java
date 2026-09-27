@@ -636,4 +636,38 @@ class JavaPojoGeneratorTest {
             assertThat(kotlin).contains("data class Url(").contains("data class URL2(");
         }
     }
+
+    @Nested @DisplayName("Wide and empty objects")
+    class WideAndEmpty {
+        private final JavaPojoGenerator generator = new JavaPojoGenerator();
+
+        private String wide(int keys) {
+            StringBuilder json = new StringBuilder("{");
+            for (int i = 1; i <= keys; i++) json.append(i > 1 ? "," : "").append("\"key").append(i).append("\":\"v\"");
+            return json.append("}").toString();
+        }
+
+        @Test @DisplayName("an empty object below the root is a map; an empty root a class Jackson can write")
+        void emptyObjects() throws Exception {
+            String out = generator.fromJson("{\"meta\":{},\"items\":[{}]}", true);
+            assertThat(out).contains("import java.util.Map;")
+                  .contains("private Map<String, Object> meta;")
+                  .contains("private List<Map<String, Object>> items;")
+                  .doesNotContain("class Meta");
+            assertThat(generator.fromJson("{}", true))
+                  .contains("import com.fasterxml.jackson.annotation.JsonIgnoreProperties;")
+                  .contains("@JsonIgnoreProperties(ignoreUnknown = true)\n@Data");
+        }
+
+        @Test @DisplayName("Lombok classes stay compilable however wide")
+        void wideLombokClasses() throws Exception {
+            assertThat(generator.fromJson(wide(JavaPojoGenerator.LOMBOK_TO_STRING_LIMIT), true))
+                  .doesNotContain("@ToString(");
+            assertThat(generator.fromJson(wide(JavaPojoGenerator.LOMBOK_TO_STRING_LIMIT + 1), true))
+                  .contains("import lombok.ToString;").contains("@ToString(onlyExplicitlyIncluded = true)\n@Data");
+            assertThat(generator.fromJson(wide(JavaPojoGenerator.LOMBOK_DATA_LIMIT + 1), true))
+                  .contains("import lombok.Getter;").contains("@Getter\n@Setter\n@NoArgsConstructor\n")
+                  .doesNotContain("@Data\n").doesNotContain("@ToString(");
+        }
+    }
 }

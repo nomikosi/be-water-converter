@@ -101,6 +101,11 @@ public final class StructureModel {
 
     private void collect(JsonNode node, String desiredName) {
         if (!node.isObject() || names.containsKey(node)) return;
+        // An empty object below the root is no type: the example says nothing
+        // about its fields, and the generators give it a map, which reads
+        // whatever the real data holds. As a class with no fields it could
+        // not be written back by Jackson, and in Kotlin compared by identity.
+        if (node.isEmpty() && !types.isEmpty()) return;
         String name = unique(desiredName);
         takenIgnoringCase.add(name.toLowerCase(Locale.ROOT));
         names.put(node, name);

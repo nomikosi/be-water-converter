@@ -96,11 +96,12 @@ class GeneratorShapeMergeTest {
 
     @Test @DisplayName("Lombok's all-args constructor is left off a class with no fields")
     void lombokEmptyClass() throws Exception {
-        // On a field-less class it is the no-args constructor again, declared twice.
-        String out = java.fromJson("{\"e\":{}}", true);
-        assertThat(out).contains("@NoArgsConstructor\nclass E");
-        assertThat(out).doesNotContain("@AllArgsConstructor\nclass E");
-        assertThat(out).contains("@AllArgsConstructor\npublic class Root");
+        // On a field-less class it is the no-args constructor again, declared
+        // twice. Only a root can be one: an empty object below it is a map.
+        String out = java.fromJson("{}", true);
+        assertThat(out).contains("@NoArgsConstructor\npublic class Root").doesNotContain("@AllArgsConstructor");
+        assertThat(java.fromJson("{\"e\":{}}", true)).contains("private Map<String, Object> e;")
+              .contains("@AllArgsConstructor\npublic class Root");
     }
 
     @Test @DisplayName("a Kotlin class past the JVM parameter limit is rejected")

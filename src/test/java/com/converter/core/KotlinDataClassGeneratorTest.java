@@ -74,10 +74,17 @@ class KotlinDataClassGeneratorTest {
               .contains("data class Xs(");
     }
 
-    @Test @DisplayName("an empty object is a plain class, since a data class needs a parameter")
-    void emptyObjectIsPlainClass() throws Exception {
-        String out = generator.fromJson("{\"meta\":{}}");
-        assertThat(out).contains("class Meta").doesNotContain("data class Meta");
+    @Test @DisplayName("an empty object is a map, and an empty root a class that compares by type")
+    void emptyObjects() throws Exception {
+        // As a plain class with no fields, an empty object compared by identity,
+        // so the data class holding it never equalled a copy of itself.
+        assertThat(generator.fromJson("{\"meta\":{}}"))
+              .contains("val meta: Map<String, Any?>").doesNotContain("class Meta");
+        assertThat(generator.fromJson("{}"))
+              .contains("import com.fasterxml.jackson.annotation.JsonIgnoreProperties")
+              .contains("@JsonIgnoreProperties(ignoreUnknown = true)\nclass Root {")
+              .contains("override fun equals(other: Any?) = other is Root")
+              .doesNotContain("data class");
     }
 
     @Test @DisplayName("Kotlin hard keywords are renamed and mapped back with @JsonProperty")

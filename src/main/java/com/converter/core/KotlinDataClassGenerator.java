@@ -73,10 +73,10 @@ public class KotlinDataClassGenerator {
      * {@code List<…>} in the same file then fails to resolve.
      */
     static final Set<String> RESERVED_TYPE_NAMES = Set.of(
-          "JsonAutoDetect", "JsonProperty",
+          "JsonAutoDetect", "JsonIgnoreProperties", "JsonProperty",
           "BigDecimal", "BigInteger",
           "LocalDate", "LocalDateTime", "OffsetDateTime",
-          "Any", "Boolean", "Double", "Float", "Int", "List", "Long", "String");
+          "Any", "Boolean", "Double", "Int", "List", "Long", "Map", "String");
 
     /** Kotlin identifiers, unlike Java's, do not admit {@code $}. */
     private static final Pattern ILLEGAL_IN_IDENTIFIER = Pattern.compile("[^a-zA-Z0-9_]");
@@ -114,6 +114,8 @@ public class KotlinDataClassGenerator {
         StringBuilder out = new StringBuilder();
         if (usedTypes.contains("JsonAutoDetect"))
             out.append("import com.fasterxml.jackson.annotation.JsonAutoDetect\n");
+        if (usedTypes.contains("JsonIgnoreProperties"))
+            out.append("import com.fasterxml.jackson.annotation.JsonIgnoreProperties\n");
         if (usedTypes.contains("JsonProperty"))
             out.append("import com.fasterxml.jackson.annotation.JsonProperty\n");
         if (usedTypes.contains("BigDecimal"))     out.append("import java.math.BigDecimal\n");
@@ -128,9 +130,18 @@ public class KotlinDataClassGenerator {
     private void generateClass(String className, JsonNode node, StringBuilder sb,
           boolean detectDates, Set<String> usedTypes, StructureModel model) {
         // A data class must declare at least one parameter, so an object with no
-        // properties has to be emitted as a plain class rather than a data class.
+        // properties — only ever the root: nested ones are maps — is a plain
+        // class. It compares by type, as a data class would, rather than by
+        // identity, and carries a Jackson annotation so Jackson writes it as {}
+        // instead of refusing a class with no properties.
         if (node.isEmpty()) {
-            sb.append("class ").append(className).append("\n");
+            usedTypes.add("JsonIgnoreProperties");
+            sb.append("@JsonIgnoreProperties(ignoreUnknown = true)\n")
+              .append("class ").append(className).append(" {\n")
+              .append("    override fun equals(other: Any?) = other is ").append(className).append("\n")
+              .append("    override fun hashCode() = 0\n")
+              .append("    override fun toString() = \"").append(className).append("()\"\n")
+              .append("}\n");
             return;
         }
 
@@ -195,7 +206,6 @@ public class KotlinDataClassGenerator {
         if (node.isInt() || node.isShort())  return "Int";
         if (node.isLong())                   return "Long";
         if (node.isBigInteger())             { usedTypes.add("BigInteger"); return "BigInteger"; }
-        if (node.isFloat())                  return "Float";
         if (node.isDouble())                 return "Double";
         if (node.isBigDecimal())             { usedTypes.add("BigDecimal"); return "BigDecimal"; }
         if (node.isBoolean())                return "Boolean";
@@ -212,6 +222,8 @@ public class KotlinDataClassGenerator {
         // The example showed null, so the type is genuinely unknown AND nullable.
         if (node.isNull())                   return "Any?";
         if (node.isObject()) {
+            // An empty object has no class: see StructureModel.
+            if (node.isEmpty() && model.nameOf(node) == null) return "Map<String, Any?>";
             String assigned = model.nameOf(node);
             return assigned != null ? assigned : capitalize(toCamelCase(fieldName));
         }

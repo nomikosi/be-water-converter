@@ -67,11 +67,11 @@ public class JavaPojoGenerator {
      * little costs a file that does not compile.
      */
     private static final Set<String> RESERVED_TYPE_NAMES = Set.of(
-          "JsonAutoDetect", "JsonProperty",
+          "JsonAutoDetect", "JsonIgnoreProperties", "JsonProperty",
           "BigDecimal", "BigInteger",
           "LocalDate", "LocalDateTime", "OffsetDateTime",
-          "List",
-          "Boolean", "Double", "Float", "Integer", "Long", "Object", "String");
+          "List", "Map",
+          "Boolean", "Double", "Integer", "Long", "Object", "String");
 
     /**
      * The Lombok annotations, reserved only in Lombok mode. {@code data} is a
@@ -80,7 +80,22 @@ public class JavaPojoGenerator {
      * and where the Kotlin generator still emits {@code Data}.
      */
     private static final Set<String> LOMBOK_TYPE_NAMES =
-          Set.of("AllArgsConstructor", "Data", "NoArgsConstructor");
+          Set.of("AllArgsConstructor", "Data", "Getter", "NoArgsConstructor", "Setter", "ToString");
+
+    /**
+     * Fields beyond which a Lombok class lists none in its toString. Lombok's
+     * toString for about a thousand fields is one expression javac recurses
+     * through until its stack overflows ("The system is out of resources"):
+     * maps keyed by id or locale make classes that wide.
+     */
+    static final int LOMBOK_TO_STRING_LIMIT = 500;
+
+    /**
+     * Fields beyond which a Lombok class gets getters and setters instead of
+     * {@code @Data}, whose equals outgrows the JVM's 64 KB method limit
+     * ("code too large") somewhere between 1,300 and 1,400 fields.
+     */
+    static final int LOMBOK_DATA_LIMIT = 1_000;
 
     private static Set<String> reservedTypeNames(boolean useLombok) {
         if (!useLombok) return RESERVED_TYPE_NAMES;
@@ -139,6 +154,8 @@ public class JavaPojoGenerator {
         StringBuilder sb = new StringBuilder();
         if (usedTypes.contains("JsonAutoDetect"))
             sb.append("import com.fasterxml.jackson.annotation.JsonAutoDetect;\n");
+        if (usedTypes.contains("JsonIgnoreProperties"))
+            sb.append("import com.fasterxml.jackson.annotation.JsonIgnoreProperties;\n");
         if (usedTypes.contains("JsonProperty"))
             sb.append("import com.fasterxml.jackson.annotation.JsonProperty;\n");
         if (usedTypes.contains("BigDecimal"))     sb.append("import java.math.BigDecimal;\n");
@@ -147,10 +164,14 @@ public class JavaPojoGenerator {
         if (usedTypes.contains("LocalDateTime"))  sb.append("import java.time.LocalDateTime;\n");
         if (usedTypes.contains("OffsetDateTime")) sb.append("import java.time.OffsetDateTime;\n");
         if (usedTypes.contains("List"))           sb.append("import java.util.List;\n");
+        if (usedTypes.contains("Map"))            sb.append("import java.util.Map;\n");
         if (useLombok) {
             sb.append("import lombok.AllArgsConstructor;\n");
             sb.append("import lombok.Data;\n");
             sb.append("import lombok.NoArgsConstructor;\n");
+            if (usedTypes.contains("Getter"))     sb.append("import lombok.Getter;\n");
+            if (usedTypes.contains("Setter"))     sb.append("import lombok.Setter;\n");
+            if (usedTypes.contains("ToString"))   sb.append("import lombok.ToString;\n");
         }
         if (!sb.isEmpty()) sb.append("\n");
         sb.append(body);
@@ -173,7 +194,25 @@ public class JavaPojoGenerator {
         List<String> fieldNames = new ArrayList<>();
         for (String key : (Iterable<String>) node::fieldNames)
             fieldNames.add(uniqueName(toCamelCase(key), "", usedNames));
+        // A class with no fields — the root of {} — has no properties for
+        // Jackson to write, which it refuses ("No serializer found"). With any
+        // Jackson annotation on it, Jackson writes {} instead.
+        if (node.isEmpty()) {
+            usedTypes.add("JsonIgnoreProperties");
+            sb.append("@JsonIgnoreProperties(ignoreUnknown = true)\n");
+        }
         if (useLombok) {
+            boolean wide = node.size() > LOMBOK_DATA_LIMIT;
+            if (wide) {
+                usedTypes.add("Getter");
+                usedTypes.add("Setter");
+                sb.append("// No @Data: for this many fields its equals exceeds the JVM's 64 KB method limit,\n")
+                  .append("// so instances compare by identity.\n");
+            } else if (node.size() > LOMBOK_TO_STRING_LIMIT) {
+                usedTypes.add("ToString");
+                sb.append("// toString lists no fields: for this many, Lombok's overflows javac's stack.\n");
+                sb.append("@ToString(onlyExplicitlyIncluded = true)\n");
+            }
             // Lombok's getter for xAxis is getXAxis, which Jackson reads as the
             // property "xaxis": the class could not read the JSON it was
             // generated from. Binding through the fields keeps their names.
@@ -181,7 +220,7 @@ public class JavaPojoGenerator {
                 usedTypes.add("JsonAutoDetect");
                 sb.append("@JsonAutoDetect(").append(SourceConventions.FIELD_BINDING).append(")\n");
             }
-            sb.append("@Data\n");
+            sb.append(wide ? "@Getter\n@Setter\n" : "@Data\n");
             sb.append("@NoArgsConstructor\n");
             // On a class with no fields the all-args constructor IS the no-args
             // one, and Lombok then declares the same constructor twice.
@@ -222,7 +261,6 @@ public class JavaPojoGenerator {
         if (node.isInt() || node.isShort())  return "Integer";
         if (node.isLong())                   return "Long";
         if (node.isBigInteger())             { usedTypes.add("BigInteger"); return "BigInteger"; }
-        if (node.isFloat())                  return "Float";
         if (node.isDouble())                 return "Double";
         if (node.isBigDecimal())             { usedTypes.add("BigDecimal"); return "BigDecimal"; }
         if (node.isBoolean())                return "Boolean";
@@ -238,6 +276,11 @@ public class JavaPojoGenerator {
         }
         if (node.isNull())                   return "Object";
         if (node.isObject()) {
+            // An empty object has no class: see StructureModel.
+            if (node.isEmpty() && model.nameOf(node) == null) {
+                usedTypes.add("Map");
+                return "Map<String, Object>";
+            }
             // The name assigned during collection — not a recomputation, which
             // would silently point at another object's class on a collision.
             String assigned = model.nameOf(node);

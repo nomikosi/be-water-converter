@@ -69,6 +69,9 @@ dependencies {
     // one test per arm, which is what let several arms go untested.
     testImplementation 'org.junit.jupiter:junit-jupiter-params'
     testImplementation 'org.assertj:assertj-core:3.27.7'
+    // Generated classes type dates as java.time, which plain Jackson refuses
+    // to bind; the tests read them the way a user of that output has to.
+    testImplementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
     // JUnit 4 is required at runtime by the IntelliJ platform test executor,
     // even though all tests are JUnit 5.
     testRuntimeOnly 'junit:junit:4.13.2'
