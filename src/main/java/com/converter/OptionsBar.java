@@ -58,11 +58,19 @@ final class OptionsBar {
     private final JPanel csvInputOptions;
     private final JPanel csvDelimiterOptions;
     private final JPanel javaOptions;
+    /**
+     * True while the controls are set from, or saved to, the remembered
+     * settings: the panel then neither saves a change it is following nor
+     * follows a change it is saving.
+     */
+    private boolean following;
+    private final Runnable follow = this::followSettings;
 
     /** @param onFilterEnter what Enter in the filter box does: re-run the conversion */
     OptionsBar(Runnable onFilterEnter) {
         csvModeCombo = ConverterWidgets.combo(CsvConverter.CsvMode.values());
         csvModeCombo.setToolTipText("How arrays of objects are expanded into CSV rows");
+        csvModeCombo.getAccessibleContext().setAccessibleName("CSV mode");
 
         csvModeHint = new JLabel(csvModeHintFor(CsvConverter.CsvMode.FLAT_FIRST));
         csvModeHint.setForeground(TEXT_DIM);
@@ -78,6 +86,7 @@ final class OptionsBar {
               "CSV conversions estimated to exceed this row count trigger a confirmation");
         rowThresholdSpinner.setFont(JBFont.label());
         rowThresholdSpinner.setPreferredSize(JBUI.size(90, 26));
+        rowThresholdSpinner.getAccessibleContext().setAccessibleName("Row warning threshold");
 
         lombokCheck = ConverterWidgets.checkBox("Lombok annotations", false,
               "Annotate generated classes with @Data, @NoArgsConstructor and @AllArgsConstructor");
@@ -92,6 +101,7 @@ final class OptionsBar {
         csvDelimiterCombo = ConverterWidgets.combo(CsvDelimiter.values());
         csvDelimiterCombo.setToolTipText(
               "Delimiter used when reading and writing CSV (semicolon is common in Europe)");
+        csvDelimiterCombo.getAccessibleContext().setAccessibleName("CSV delimiter");
 
         csvOptions = group("CSV mode:", csvModeCombo, csvModeHint,
               ConverterWidgets.toolbarLabel("Row warning:"), rowThresholdSpinner);
@@ -114,6 +124,7 @@ final class OptionsBar {
         filterField.setBorder(BorderFactory.createCompoundBorder(
               BorderFactory.createLineBorder(BORDER, 1), JBUI.Borders.empty(3, 6)));
         filterField.addActionListener(e -> onFilterEnter.run());
+        filterField.getAccessibleContext().setAccessibleName("Subtree filter");
 
         // Sort keys and the filter apply to every conversion, so they always show.
         JPanel generalOptions = group(null, sortKeysCheck, ConverterWidgets.toolbarLabel("Filter:"), filterField);
@@ -144,17 +155,67 @@ final class OptionsBar {
         return new JComponent[]{csvModeCombo, rowThresholdSpinner, lombokCheck};
     }
 
-    /** Restores the remembered choices, then remembers every change from here on. */
+    /**
+     * Restores the remembered choices, then remembers each change from here on
+     * and follows changes made in other projects' panels.
+     */
     void restoreAndRemember() {
-        applyOptions(ConverterSettings.options());
-        rowThresholdSpinner.setValue(ConverterSettings.rowWarningThreshold());
-        Runnable save = () -> ConverterSettings.saveOptions(currentOptions());
-        csvModeCombo.addActionListener(e -> save.run());
-        csvDelimiterCombo.addActionListener(e -> save.run());
-        for (JCheckBox check : new JCheckBox[]{lombokCheck, detectDatesCheck, inferTypesCheck, sortKeysCheck})
-            check.addActionListener(e -> save.run());
+        followSettings();
+        csvModeCombo.addActionListener(e -> {
+            if (csvModeCombo.getSelectedItem() instanceof CsvConverter.CsvMode mode)
+                remember(() -> ConverterSettings.saveCsvMode(mode));
+        });
+        csvDelimiterCombo.addActionListener(e -> {
+            if (csvDelimiterCombo.getSelectedItem() instanceof CsvDelimiter delimiter)
+                remember(() -> ConverterSettings.saveCsvDelimiter(delimiter));
+        });
+        lombokCheck.addActionListener(e -> remember(() -> ConverterSettings.saveLombok(lombokCheck.isSelected())));
+        detectDatesCheck.addActionListener(e ->
+              remember(() -> ConverterSettings.saveDetectDates(detectDatesCheck.isSelected())));
+        inferTypesCheck.addActionListener(e ->
+              remember(() -> ConverterSettings.saveInferTypes(inferTypesCheck.isSelected())));
+        sortKeysCheck.addActionListener(e -> remember(() -> ConverterSettings.saveSortKeys(sortKeysCheck.isSelected())));
         rowThresholdSpinner.addChangeListener(e ->
-              ConverterSettings.saveRowWarningThreshold(rowWarningThreshold()));
+              remember(() -> ConverterSettings.saveRowWarningThreshold(rowWarningThreshold())));
+        ConverterSettings.addListener(follow);
+    }
+
+    /**
+     * Saves a change made in this panel. The panel already shows it, so it
+     * does not follow its own save: reloading every control would put stored
+     * values back over ones set but not yet saved.
+     */
+    private void remember(Runnable save) {
+        if (following) return;
+        following = true;
+        try {
+            save.run();
+        } finally {
+            following = false;
+        }
+    }
+
+    /** Stops following the remembered settings: the panel is gone. */
+    void dispose() {
+        ConverterSettings.removeListener(follow);
+    }
+
+    /** Shows the remembered settings, the filter aside, without saving them again. */
+    private void followSettings() {
+        if (following) return;
+        following = true;
+        try {
+            ConversionOptions stored = ConverterSettings.options();
+            csvModeCombo.setSelectedItem(stored.csvMode());
+            csvDelimiterCombo.setSelectedItem(CsvDelimiter.forChar(stored.csvFormat().delimiter()));
+            lombokCheck.setSelected(stored.useLombok());
+            detectDatesCheck.setSelected(stored.detectDates());
+            inferTypesCheck.setSelected(stored.inferTypes());
+            sortKeysCheck.setSelected(stored.sortKeys());
+            rowThresholdSpinner.setValue(ConverterSettings.rowWarningThreshold());
+        } finally {
+            following = false;
+        }
     }
 
     /** Shows the groups the current input and output formats make relevant. */
@@ -188,16 +249,23 @@ final class OptionsBar {
 
     /** Sets every control to {@code options} and remembers them, as history restores them. */
     void applyOptions(ConversionOptions options) {
-        csvModeCombo.setSelectedItem(options.csvMode());
-        csvDelimiterCombo.setSelectedItem(CsvDelimiter.forChar(options.csvFormat().delimiter()));
-        lombokCheck.setSelected(options.useLombok());
-        detectDatesCheck.setSelected(options.detectDates());
-        inferTypesCheck.setSelected(options.inferTypes());
-        sortKeysCheck.setSelected(options.sortKeys());
-        filterField.setText(options.filterPath());
-        // setSelected fires no ActionListener: remember the restored choices
-        // explicitly, so context-menu conversions and the next IDE session agree.
-        ConverterSettings.saveOptions(currentOptions());
+        // One save for every option, not one per control that fires as it is set.
+        following = true;
+        try {
+            csvModeCombo.setSelectedItem(options.csvMode());
+            csvDelimiterCombo.setSelectedItem(CsvDelimiter.forChar(options.csvFormat().delimiter()));
+            lombokCheck.setSelected(options.useLombok());
+            detectDatesCheck.setSelected(options.detectDates());
+            inferTypesCheck.setSelected(options.inferTypes());
+            sortKeysCheck.setSelected(options.sortKeys());
+            filterField.setText(options.filterPath());
+            // setSelected fires no ActionListener either: remember the restored
+            // choices explicitly, so context-menu conversions and the next IDE
+            // session agree.
+            ConverterSettings.saveOptions(currentOptions());
+        } finally {
+            following = false;
+        }
     }
 
     long rowWarningThreshold() {
@@ -210,8 +278,8 @@ final class OptionsBar {
      * a status suffix naming the change, or "" when the selection already
      * matched or nothing could be told.
      */
-    String applyDetectedDelimiter(String text) {
-        Character found = FormatDetector.detectCsvDelimiter(text);
+    String applyDetectedDelimiter(String text, String fileName) {
+        Character found = ContextDecisions.delimiterFor(fileName, text);
         CsvDelimiter option = found == null ? null : CsvDelimiter.forChar(found);
         if (option == null || option == csvDelimiterCombo.getSelectedItem()) return "";
         csvDelimiterCombo.setSelectedItem(option);   // its listener remembers the choice

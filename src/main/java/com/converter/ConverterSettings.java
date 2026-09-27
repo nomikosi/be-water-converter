@@ -61,14 +61,46 @@ final class ConverterSettings {
               flag(SORT_KEYS, false), "");
     }
 
+    /** Every option at once, as restoring a history entry sets them. */
     static void saveOptions(ConversionOptions options) {
-        save(CSV_MODE, options.csvMode().name());
+        store(CSV_MODE, options.csvMode().name());
         CsvDelimiter delimiter = CsvDelimiter.forChar(options.csvFormat().delimiter());
-        if (delimiter != null) save(CSV_DELIMITER, delimiter.name());
-        save(LOMBOK, String.valueOf(options.useLombok()));
-        save(DETECT_DATES, String.valueOf(options.detectDates()));
-        save(INFER_TYPES, String.valueOf(options.inferTypes()));
-        save(SORT_KEYS, String.valueOf(options.sortKeys()));
+        if (delimiter != null) store(CSV_DELIMITER, delimiter.name());
+        store(LOMBOK, String.valueOf(options.useLombok()));
+        store(DETECT_DATES, String.valueOf(options.detectDates()));
+        store(INFER_TYPES, String.valueOf(options.inferTypes()));
+        store(SORT_KEYS, String.valueOf(options.sortKeys()));
+        changed();
+    }
+
+    // One option each. The settings are application-wide and every open
+    // project has its own panel: saving all of them from one panel's controls
+    // wrote that panel's stale values over a choice just made in another.
+    static void saveCsvMode(CsvConverter.CsvMode mode) { save(CSV_MODE, mode.name()); }
+
+    static void saveCsvDelimiter(CsvDelimiter delimiter) { save(CSV_DELIMITER, delimiter.name()); }
+
+    static void saveLombok(boolean lombok) { save(LOMBOK, String.valueOf(lombok)); }
+
+    static void saveDetectDates(boolean detect) { save(DETECT_DATES, String.valueOf(detect)); }
+
+    static void saveInferTypes(boolean infer) { save(INFER_TYPES, String.valueOf(infer)); }
+
+    static void saveSortKeys(boolean sort) { save(SORT_KEYS, String.valueOf(sort)); }
+
+    /**
+     * Runs after any option changes, on the EDT where every change is made:
+     * the panels of other open projects follow, instead of showing choices
+     * their conversions no longer use. A panel removes its own on dispose.
+     */
+    private static final java.util.List<Runnable> LISTENERS = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    static void addListener(Runnable listener) { LISTENERS.add(listener); }
+
+    static void removeListener(Runnable listener) { LISTENERS.remove(listener); }
+
+    private static void changed() {
+        for (Runnable listener : LISTENERS) listener.run();
     }
 
     /** The row count above which a CSV conversion asks first. */
@@ -87,11 +119,13 @@ final class ConverterSettings {
 
     static boolean wrapLines() { return flag(WRAP_LINES, false); }
 
-    static void saveWrapLines(boolean wrap) { save(WRAP_LINES, String.valueOf(wrap)); }
+    // Layout is each panel's own: a new panel opens with the last choice,
+    // and open panels keep theirs, so these two notify nobody.
+    static void saveWrapLines(boolean wrap) { store(WRAP_LINES, String.valueOf(wrap)); }
 
     static boolean splitVertical() { return flag(SPLIT_VERTICAL, false); }
 
-    static void saveSplitVertical(boolean vertical) { save(SPLIT_VERTICAL, String.valueOf(vertical)); }
+    static void saveSplitVertical(boolean vertical) { store(SPLIT_VERTICAL, String.valueOf(vertical)); }
 
     /** A stored boolean, or {@code absent} when it was never set. */
     private static boolean flag(String key, boolean absent) {
@@ -117,6 +151,11 @@ final class ConverterSettings {
     }
 
     private static void save(String key, String value) {
+        store(key, value);
+        changed();
+    }
+
+    private static void store(String key, String value) {
         try {
             com.intellij.ide.util.PropertiesComponent.getInstance().setValue(key, value);
         } catch (Throwable outsideIde) {

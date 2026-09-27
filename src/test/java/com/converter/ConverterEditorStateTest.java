@@ -24,6 +24,35 @@ import static com.converter.TestTasks.onEdt;
 import static org.assertj.core.api.Assertions.*;
 
 class ConverterEditorStateTest {
+    // A blinking caret runs a Swing timer until it is stopped, which the
+    // platform's test framework reports as a leak.
+    private final java.util.List<RSyntaxTextArea> editors = new java.util.ArrayList<>();
+
+    private RSyntaxTextArea track(RSyntaxTextArea editor) {
+        editors.add(editor);
+        return editor;
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void stopCarets() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> editors.forEach(e -> e.getCaret().setBlinkRate(0)));
+    }
+
+    @Test void aHugeDocumentIsNeverSoftWrapped() throws Exception {
+        onEdt(() -> {
+            var input = track(new RSyntaxTextArea());
+            var output = track(new RSyntaxTextArea());
+            var state = new ConverterEditorState(input, output, new JLabel("JSON"), new JLabel("XML"));
+            state.setLineWrap(true);
+            state.replaceOutput(" ".repeat(ConverterEditorState.HIGHLIGHT_LIMIT_CHARS + 1), "YAML");
+            // Wrapping measures every line again at each width: seconds per resize.
+            assertThat(output.getLineWrap()).isFalse();
+            assertThat(input.getLineWrap()).isTrue();
+            state.replaceOutput("a: 1", "YAML");
+            assertThat(output.getLineWrap()).isTrue();
+        });
+    }
+
     @Test void everyFormatHasAnEditorStyle() {
         for (String format : com.converter.core.Formats.outputNames())
             assertThat(ConverterEditorState.syntaxStyle(format)).as(format)
@@ -34,8 +63,8 @@ class ConverterEditorStateTest {
 
     @Test void snapshotsSwapAndRestoreBothEditorsWithTheirFormats() throws Exception {
         onEdt(() -> {
-            var input = new RSyntaxTextArea();
-            var output = new RSyntaxTextArea();
+            var input = track(new RSyntaxTextArea());
+            var output = track(new RSyntaxTextArea());
             var inputLabel = new JLabel("JSON");
             var outputLabel = new JLabel("XML");
             var state = new ConverterEditorState(input, output, inputLabel, outputLabel);
@@ -57,8 +86,8 @@ class ConverterEditorStateTest {
 
     @Test void clearingEmptyEditorsStillInvalidatesPendingWorkAndKeepsBadgesConsistent() throws Exception {
         onEdt(() -> {
-            var input = new RSyntaxTextArea();
-            var output = new RSyntaxTextArea();
+            var input = track(new RSyntaxTextArea());
+            var output = track(new RSyntaxTextArea());
             var state = new ConverterEditorState(input, output, new JLabel("JSON"), new JLabel("XML"));
             long revision = state.revision();
             state.clear();
@@ -71,8 +100,8 @@ class ConverterEditorStateTest {
 
     @Test void restoringLargeOutputAndChangingWrapCannotReenableExpensiveHighlighting() throws Exception {
         onEdt(() -> {
-            var input = new RSyntaxTextArea();
-            var output = new RSyntaxTextArea();
+            var input = track(new RSyntaxTextArea());
+            var output = track(new RSyntaxTextArea());
             var state = new ConverterEditorState(input, output, new JLabel("JSON"), new JLabel("XML"));
             var large = new ConverterEditorState.Snapshot(new ConverterEditorState.Document("{}", "JSON"),
                   new ConverterEditorState.Document(" ".repeat(ConverterEditorState.HIGHLIGHT_LIMIT_CHARS + 1), "YAML"));

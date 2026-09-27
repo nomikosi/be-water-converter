@@ -127,18 +127,25 @@ final class ConverterEditorState {
         apply(new Snapshot(new Document("", Formats.FMT_JSON), new Document("", Formats.FMT_XML)));
     }
 
+    /** Soft wrap as the user asked for it; a huge document is never wrapped regardless. */
+    private boolean wrap;
+
     void setLineWrap(boolean wrap) {
-        for (RSyntaxTextArea area : new RSyntaxTextArea[]{input, output}) {
-            area.setLineWrap(wrap);
-            area.setWrapStyleWord(wrap);
-        }
+        this.wrap = wrap;
         present(input, inputLabel, inputLabel.getText(), input.getDocument().getLength());
         present(output, outputLabel, outputLabel.getText(), output.getDocument().getLength());
     }
 
-    private static boolean present(RSyntaxTextArea area, JLabel label, String format, int length) {
+    /**
+     * Presents a document for its size. Past the highlighting limit it gets no
+     * highlighting, no folding and no soft wrap: wrapping measures every line
+     * again at each width, and a 16 MB document took seconds per resize.
+     */
+    private boolean present(RSyntaxTextArea area, JLabel label, String format, int length) {
         boolean huge = length > HIGHLIGHT_LIMIT_CHARS;
         area.setSyntaxEditingStyle(huge ? SyntaxConstants.SYNTAX_STYLE_NONE : syntaxStyle(format));
+        area.setLineWrap(wrap && !huge);
+        area.setWrapStyleWord(wrap && !huge);
         area.setCodeFoldingEnabled(!huge && !area.getLineWrap());
         label.setText(format);
         label.repaint();

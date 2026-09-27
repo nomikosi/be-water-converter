@@ -23,6 +23,7 @@ import org.fife.ui.rtextarea.SearchContext;
 import org.fife.ui.rtextarea.SearchEngine;
 
 import javax.swing.*;
+import javax.swing.text.Caret;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
@@ -53,6 +54,7 @@ final class FindBar extends JPanel {
         this.status = status;
 
         field = new JTextField(24);
+        field.getAccessibleContext().setAccessibleName("Find");
         field.setFont(JBFont.label());
         field.setBackground(DROPDOWN_BG);
         field.setForeground(TEXT_BRIGHT);
@@ -116,8 +118,23 @@ final class FindBar extends JPanel {
         SearchContext ctx = new SearchContext(query);
         ctx.setSearchForward(forward);
         ctx.setMatchCase(false);
-        ctx.setSearchWrap(true);
-        if (SearchEngine.find(area, ctx).wasFound()) {
+        // Wrapped here rather than with setSearchWrap: RSyntaxTextArea resumes
+        // a backward search one character short of the end, so Previous never
+        // reached a match that ends the document and selected another instead.
+        ctx.setSearchWrap(false);
+        boolean found = SearchEngine.find(area, ctx).wasFound();
+        if (!found) {
+            Caret caret = area.getCaret();
+            int dot = caret.getDot();
+            int mark = caret.getMark();
+            caret.setDot(forward ? 0 : area.getDocument().getLength());
+            found = SearchEngine.find(area, ctx).wasFound();
+            if (!found) {
+                caret.setDot(mark);
+                caret.moveDot(dot);
+            }
+        }
+        if (found) {
             status.ok("Found \"" + query + "\"");
         } else {
             status.warn("No matches for \"" + query + "\"");

@@ -32,8 +32,10 @@ public class ConverterToolWindowFactory implements ToolWindowFactory, DumbAware 
         ConverterPanel panel = new ConverterPanel(project);
         ContentFactory cf = ContentFactory.getInstance();
         Content content = cf.createContent(panel.getContent(), "Converter", false);
-        // Dispose the panel with its content so its static UIManager listener is removed.
+        // Dispose the panel with its content so its application-wide listeners are removed.
         content.setDisposer(panel);
+        // Opening the tool window put focus on the first control, the From combo.
+        content.setPreferredFocusableComponent(panel.preferredFocusComponent());
         toolWindow.getContentManager().addContent(content);
     }
 }

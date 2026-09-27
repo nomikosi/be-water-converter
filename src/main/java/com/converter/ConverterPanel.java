@@ -82,9 +82,6 @@ public class ConverterPanel implements Disposable {
 
     private static final int STATUS_MAX_LEN = 120;
     private static final String ACTION_CONVERT = "convert";
-    private static final String ACTION_FORMAT = "format";
-    private static final String ACTION_COPY_OUTPUT = "copyOutput";
-    private static final String ACTION_OPEN_FILE = "openFile";
     private static final String ACTION_SAVE_FILE = "saveFile";
     private static final String ACTION_FIND      = "find";
 
@@ -109,7 +106,10 @@ public class ConverterPanel implements Disposable {
 
     private final com.intellij.openapi.project.Project project;
     private final ConversionRun run = new ConversionRun();
-    private final PropertyChangeListener lafListener;
+    /** Theme, editor font and zoom changes; null outside a running IDE. */
+    private final com.intellij.util.messages.MessageBusConnection appearance;
+    /** True while a Format runs: a second one asked its question again and then reported a change. */
+    private boolean formatting;
     private volatile boolean disposed;
 
     private final ConversionPipeline pipeline;
@@ -136,6 +136,8 @@ public class ConverterPanel implements Disposable {
         inputArea  = buildEditor();
         outputArea = buildEditor();
         outputArea.setEditable(false);
+        inputArea.getAccessibleContext().setAccessibleName("Input");
+        outputArea.getAccessibleContext().setAccessibleName("Output");
         applyEditorTheme(inputArea);
         applyEditorTheme(outputArea);
         fileOps = new ConverterFileOps(mainPanel, project, () -> disposed,
@@ -151,7 +153,7 @@ public class ConverterPanel implements Disposable {
                       if (detectedFormat != null) {
                           setInputTextQuietly(content);
                           inputCombo.setSelectedItem(detectedFormat);
-                          if (FMT_CSV.equals(detectedFormat)) note = options.applyDetectedDelimiter(content);
+                          if (FMT_CSV.equals(detectedFormat)) note = options.applyDetectedDelimiter(content, fileName);
                       } else {
                           editors.replaceInput(content, true);
                       }
@@ -166,6 +168,8 @@ public class ConverterPanel implements Disposable {
 
         inputCombo  = buildCombo(ALL_INPUTS);
         outputCombo = buildCombo(Formats.outputsFor(FMT_JSON));
+        inputCombo.getAccessibleContext().setAccessibleName("Input format");
+        outputCombo.getAccessibleContext().setAccessibleName("Output format");
         outputCombo.setSelectedItem(FMT_XML);
 
         options = new OptionsBar(this::doConvert);   // Enter in the filter re-runs the conversion
@@ -255,26 +259,49 @@ public class ConverterPanel implements Disposable {
         outputArea.getDocument().addDocumentListener(countUpdater);
         installPasteDetection();
 
-        // ── re-apply editor theme when IDE L&F changes ───────────────────
-        // UIManager is static: the listener must be removed in dispose() or
-        // every panel instance leaks for the lifetime of the IDE.
-        lafListener = evt -> {
-            if ("lookAndFeel".equals(evt.getPropertyName())) {
-                applyEditorTheme(inputArea);
-                applyEditorTheme(outputArea);
-                // Custom-painted components use JBColor (which resolves per
-                // theme at paint time) — a repaint refreshes them all.
-                mainPanel.repaint();
-            }
-        };
-        UIManager.addPropertyChangeListener(lafListener);
+        // ── follow the IDE's theme, editor font and zoom ─────────────────
+        // A UIManager listener fired inside UIManager.setLookAndFeel, before
+        // the IDE had switched JBColor to the new theme, so both editors took
+        // the theme being left. LafManagerListener runs after that, and the
+        // work waits until the IDE has rebuilt its components' UI, which also
+        // replaces the split pane's custom divider.
+        var application = com.intellij.openapi.application.ApplicationManager.getApplication();
+        appearance = application == null ? null : application.getMessageBus().connect();
+        if (appearance != null) {
+            appearance.subscribe(com.intellij.ide.ui.LafManagerListener.TOPIC, source -> refreshAppearance());
+            appearance.subscribe(com.intellij.openapi.editor.colors.EditorColorsManager.TOPIC,
+                  scheme -> refreshAppearance());
+            appearance.subscribe(com.intellij.ide.ui.UISettingsListener.TOPIC, settings -> refreshAppearance());
+        }
+    }
+
+    private void refreshAppearance() {
+        SwingUtilities.invokeLater(() -> {
+            if (disposed) return;
+            applyEditorTheme(inputArea);
+            applyEditorTheme(outputArea);
+            installDividerUI();
+            // Custom-painted components use JBColor (which resolves per theme
+            // at paint time), so a repaint refreshes them.
+            mainPanel.repaint();
+        });
+    }
+
+    /** What the tool window focuses when it opens: the input editor. */
+    public JComponent preferredFocusComponent() {
+        return inputArea;
     }
 
     @Override
     public void dispose() {
         disposed = true;
         run.stop();
-        UIManager.removePropertyChangeListener(lafListener);
+        if (appearance != null) appearance.disconnect();
+        options.dispose();
+        // A blinking caret runs a Swing timer that holds its editor, and through
+        // it this panel, until it is stopped.
+        inputArea.getCaret().setBlinkRate(0);
+        outputArea.getCaret().setBlinkRate(0);
     }
 
     // ── Public entry points for registered IDE actions ───────────────────
@@ -289,7 +316,7 @@ public class ConverterPanel implements Disposable {
             setInputTextQuietly(text);
             inputCombo.setSelectedItem(format);
             if (FMT_CSV.equals(format)) {
-                String note = options.applyDetectedDelimiter(text);
+                String note = options.applyDetectedDelimiter(text, null);
                 if (!note.isEmpty()) setStatus("Loaded CSV input" + note, true);
             }
         } else {
@@ -322,24 +349,11 @@ public class ConverterPanel implements Disposable {
                   @Override public void actionPerformed(ActionEvent e) { doConvert(); }
               });
 
-        bindShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_L,
-              InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
-              ACTION_FORMAT, new AbstractAction() {
-                  @Override public void actionPerformed(ActionEvent e) { doFormat(); }
-              });
-
-        bindShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_C,
-              InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
-              ACTION_COPY_OUTPUT, new AbstractAction() {
-                  @Override public void actionPerformed(ActionEvent e) { doCopy(); }
-              });
-
-        bindShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_O,
-              InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
-              ACTION_OPEN_FILE, new AbstractAction() {
-                  @Override public void actionPerformed(ActionEvent e) { doOpenFile(); }
-              });
-
+        // No Swing bindings for Format, Copy Output or Open: the IDE's keymap
+        // runs first, and its Load Context (Alt+Shift+L), Recent Changes
+        // (Alt+Shift+C) and Load Gradle Changes (Ctrl+Shift+O) took those keys,
+        // so they never reached this panel. The registered actions take any
+        // shortcut in Settings | Keymap.
         bindShortcut(KeyStroke.getKeyStroke(KeyEvent.VK_S,
               InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
               ACTION_SAVE_FILE, new AbstractAction() {
@@ -479,7 +493,7 @@ public class ConverterPanel implements Disposable {
                     if (detected == null) return;
                     // The delimiter is part of what "CSV" means for a paste, so
                     // it is set even when the format itself is already right.
-                    String note = FMT_CSV.equals(detected) ? options.applyDetectedDelimiter(head) : "";
+                    String note = FMT_CSV.equals(detected) ? options.applyDetectedDelimiter(head, null) : "";
                     if (detected.equals(inputCombo.getSelectedItem())) {
                         if (!note.isEmpty()) setStatus("Detected " + detected + " input" + note, true);
                         return;
@@ -749,7 +763,9 @@ public class ConverterPanel implements Disposable {
         if (disposed) return false;
         AtomicBoolean proceed = new AtomicBoolean(false);
         try {
-            SwingUtilities.invokeAndWait(() -> proceed.set(confirmWarning(title, message)));
+            // Asked again on the EDT: the project can close between the check
+            // above and this running, and the dialog then had no panel.
+            SwingUtilities.invokeAndWait(() -> proceed.set(!disposed && confirmWarning(title, message)));
         } catch (Exception dialogFailure) {
             LOG.warn("Confirmation dialog failed; treating the answer as Cancel", dialogFailure);
         }
@@ -761,6 +777,9 @@ public class ConverterPanel implements Disposable {
         final String input = inputArea.getText();
         final String fmt   = (String) inputCombo.getSelectedItem();
         if (input.isBlank()) { setStatus("Input is empty", false); return; }
+        if (formatting) { setStatusWarn("Format is already running"); return; }
+        formatting = true;
+        setStatus("Formatting\u2026", true);
         final ConversionOptions opts = options.currentOptions();
         // Where the user was: the whole document is replaced, which put the
         // caret at the top and scrolled a long file away from the line being
@@ -783,7 +802,7 @@ public class ConverterPanel implements Disposable {
             } catch (Exception ex) {
                 throw new java.util.concurrent.CompletionException(ex);
             }
-        }, currentCompletion(false, "Input changed while formatting; the result was discarded",
+        }, whenFormatDone(currentCompletion(false, "Input changed while formatting; the result was discarded",
               (formatted, failure) -> {
             if (failure instanceof CancellationException) {
                 setStatusWarn("Format cancelled");
@@ -803,7 +822,16 @@ public class ConverterPanel implements Disposable {
             setInputTextQuietly(formatted);
             moveCaretToLine(caretLine);
             setStatus("\u2713  Input formatted", true);
-        }));
+        })));
+    }
+
+    /** A Format completion that first marks Format as no longer running, whichever way it ended. */
+    private <T> java.util.function.BiConsumer<T, Throwable> whenFormatDone(
+          java.util.function.BiConsumer<T, Throwable> completion) {
+        return (result, failure) -> {
+            formatting = false;
+            completion.accept(result, failure);
+        };
     }
 
     /** Puts the input caret at the start of {@code line}, or the last line when the document is shorter. */
@@ -981,6 +1009,14 @@ public class ConverterPanel implements Disposable {
 
     private RSyntaxTextArea buildEditor() {
         RSyntaxTextArea area = new RSyntaxTextArea();
+        // Ctrl+D (Cmd+D on macOS) deletes the line in RSyntaxTextArea and
+        // duplicates it everywhere else in the IDE, whose own action is off
+        // outside its editors: the keystroke reached this one and deleted the
+        // line the user meant to copy.
+        javax.swing.InputMap keys = area.getInputMap();
+        for (KeyStroke key : keys.allKeys())
+            if (org.fife.ui.rtextarea.RTextAreaEditorKit.rtaDeleteLineAction.equals(keys.get(key)))
+                keys.put(key, "none");
         area.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JSON);
         area.setCodeFoldingEnabled(true);
         area.setAntiAliasingEnabled(true);
@@ -992,12 +1028,13 @@ public class ConverterPanel implements Disposable {
         return area;
     }
 
-    /** The user's configured IDE editor font, falling back outside a full IDE. */
+    /** The IDE's editor font at the size Zoom IDE gives it, falling back outside a full IDE. */
     private static Font editorFont() {
         try {
             var scheme = com.intellij.openapi.editor.colors.EditorColorsManager
                   .getInstance().getGlobalScheme();
-            return new Font(scheme.getEditorFontName(), Font.PLAIN, scheme.getEditorFontSize());
+            float size = com.intellij.ide.ui.UISettingsUtils.getInstance().getScaledEditorFontSize();
+            return new Font(scheme.getEditorFontName(), Font.PLAIN, 1).deriveFont(size);
         } catch (Throwable t) {
             return new Font("JetBrains Mono", Font.PLAIN, 13);
         }
@@ -1008,7 +1045,10 @@ public class ConverterPanel implements Disposable {
               ? "/org/fife/ui/rsyntaxtextarea/themes/default.xml"
               : "/org/fife/ui/rsyntaxtextarea/themes/dark.xml";
         try (InputStream is = getClass().getResourceAsStream(path)) {
-            if (is != null) Theme.load(is).apply(area);
+            // With the editor font as the theme's base: Theme.apply sets the
+            // font, and a theme loaded without one put RSyntaxTextArea's own
+            // 13 pt default over the IDE's editor font.
+            if (is != null) Theme.load(is, editorFont()).apply(area);
         } catch (IOException ignored) {}
     }
 

@@ -26,8 +26,8 @@ import org.jetbrains.annotations.NotNull;
  * Registered IDE actions that drive the Be Water converter panel. Registering
  * them (rather than only binding Swing keystrokes) makes the operations
  * visible in Find Action and lets users assign their own shortcuts in the
- * Keymap settings. No default shortcuts are declared to avoid conflicts; the
- * panel's built-in Swing bindings remain the out-of-the-box defaults.
+ * Keymap settings. No default shortcuts are declared to avoid conflicts; in
+ * the panel itself Ctrl+Enter converts and Ctrl+Shift+S saves.
  */
 public final class ConverterActions {
 

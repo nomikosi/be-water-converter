@@ -87,9 +87,9 @@
                 icon="/icons/beWater.svg">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
-        <!-- Keymap-visible panel actions. No default shortcuts (the panel's own
-             Swing bindings are the defaults); users can assign shortcuts in
-             Settings > Keymap. -->
+        <!-- Keymap-visible panel actions. No default shortcuts, which the IDE's
+             keymap would take first (in the panel itself Ctrl+Enter converts and
+             Ctrl+Shift+S saves); users can assign shortcuts in Settings > Keymap. -->
         <action id="BeWaterConverter.Convert"
                 class="com.converter.ConverterActions$Convert"
                 text="Be Water: Convert"

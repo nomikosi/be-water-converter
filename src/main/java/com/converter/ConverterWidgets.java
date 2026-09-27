@@ -59,9 +59,38 @@ final class ConverterWidgets {
 
     private static final int BUTTON_ARC = 8;
 
+    /**
+     * The keyboard focus, drawn by buttons that paint themselves. They turned
+     * focus painting off, so tabbing through the toolbar showed nothing.
+     */
+    private static void paintFocus(JButton button, Graphics g) {
+        if (!button.hasFocus()) return;
+        Graphics2D g2 = (Graphics2D) g.create();
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setColor(JBUI.CurrentTheme.Focus.focusColor());
+        g2.setStroke(new java.awt.BasicStroke(JBUI.scale(2)));
+        int inset = JBUI.scale(1);
+        g2.drawRoundRect(inset, inset, button.getWidth() - 2 * inset - 1, button.getHeight() - 2 * inset - 1,
+              BUTTON_ARC, BUTTON_ARC);
+        g2.dispose();
+    }
+
+    private static void repaintOnFocus(JButton button) {
+        button.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override public void focusGained(java.awt.event.FocusEvent e) { button.repaint(); }
+            @Override public void focusLost(java.awt.event.FocusEvent e) { button.repaint(); }
+        });
+    }
+
     /** Flat icon button with a hover highlight. */
     static JButton iconButton(Icon icon, String tooltip) {
-        JButton btn = new JButton(icon);
+        JButton btn = new JButton(icon) {
+            @Override protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                paintFocus(this, g);
+            }
+        };
+        repaintOnFocus(btn);
         btn.setToolTipText(tooltip);
         btn.setOpaque(false);
         btn.setContentAreaFilled(false);
@@ -101,10 +130,12 @@ final class ConverterWidgets {
                 int y = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
                 g2.drawString(getText(), x, y);
                 g2.dispose();
+                paintFocus(this, g);
             }
 
             @Override protected void paintBorder(Graphics g) { /* rounded rect is the border */ }
         };
+        repaintOnFocus(btn);
         btn.setFont(JBFont.medium());
         btn.setForeground(utilStyle ? UTIL_TEXT : BTN_TEXT);
         btn.setBackground(bg);

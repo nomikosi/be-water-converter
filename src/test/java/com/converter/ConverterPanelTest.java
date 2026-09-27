@@ -32,11 +32,51 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ConverterPanelTest {
+    // Every panel is disposed after its test: a panel left undisposed kept its
+    // listeners registered and, with RSyntaxTextArea 4, its caret timers running.
+    private final List<ConverterPanel> panels = new ArrayList<>();
+
+    private ConverterPanel track(ConverterPanel panel) {
+        synchronized (panels) { panels.add(panel); }
+        return panel;
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void disposePanels() throws Exception {
+        runOnEdt(() -> { synchronized (panels) { panels.forEach(ConverterPanel::dispose); } });
+    }
+
+    @Test
+    void theIdesKeysAreLeftToTheIde() throws Exception {
+        runOnEdt(() -> {
+            ConverterPanel panel = track(new ConverterPanel());
+            JPanel content = panel.getContent();
+            // Ctrl+D duplicates a line in the IDE; RSyntaxTextArea deleted it.
+            for (RSyntaxTextArea editor : findComponents(content, RSyntaxTextArea.class)) {
+                javax.swing.InputMap keys = editor.getInputMap();
+                for (KeyStroke key : keys.allKeys())
+                    assertThat(keys.get(key)).as(key.toString())
+                          .isNotEqualTo(org.fife.ui.rtextarea.RTextAreaEditorKit.rtaDeleteLineAction);
+            }
+            // Keys the IDE's keymap takes first are not bound here, where they never arrived.
+            for (KeyStroke taken : List.of(
+                  KeyStroke.getKeyStroke(KeyEvent.VK_L, InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+                  KeyStroke.getKeyStroke(KeyEvent.VK_C, InputEvent.ALT_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+                  KeyStroke.getKeyStroke(KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK)))
+                assertThat(content.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).get(taken))
+                      .as(taken.toString()).isNull();
+            // The tool window focuses the input editor, which is named for screen readers.
+            RSyntaxTextArea input = field(panel, "inputArea", RSyntaxTextArea.class);
+            assertThat(panel.preferredFocusComponent()).isSameAs(input);
+            assertThat(input.getAccessibleContext().getAccessibleName()).isEqualTo("Input");
+        });
+    }
+
 
     @Test
     void documentedShortcutsAreBoundToPanelAndEditors() throws Exception {
         runOnEdt(() -> {
-            ConverterPanel panel = new ConverterPanel();
+            ConverterPanel panel = track(new ConverterPanel());
             JPanel content = panel.getContent();
 
             List<RSyntaxTextArea> editors = findComponents(content, RSyntaxTextArea.class);
@@ -55,7 +95,7 @@ class ConverterPanelTest {
     @Test
     void swapRefusesJavaPojoOutputBecauseItIsNotAValidInputFormat() throws Exception {
         runOnEdt(() -> {
-            ConverterPanel panel = new ConverterPanel();
+            ConverterPanel panel = track(new ConverterPanel());
             RSyntaxTextArea inputArea = field(panel, "inputArea", RSyntaxTextArea.class);
             RSyntaxTextArea outputArea = field(panel, "outputArea", RSyntaxTextArea.class);
             JLabel inputFormatLabel = field(panel, "inputFormatLabel", JLabel.class);
@@ -83,7 +123,7 @@ class ConverterPanelTest {
     void pasteSizedInsertSwitchesTheInputFormat() throws Exception {
         AtomicReference<ConverterPanel> ref = new AtomicReference<>();
         runOnEdt(() -> {
-            ConverterPanel panel = new ConverterPanel();
+            ConverterPanel panel = track(new ConverterPanel());
             ref.set(panel);
             field(panel, "inputArea", RSyntaxTextArea.class).setText("name: Ada\nage: 36\n");
         });
@@ -95,7 +135,7 @@ class ConverterPanelTest {
     void typingSizedInsertDoesNotSwitchTheInputFormat() throws Exception {
         AtomicReference<ConverterPanel> ref = new AtomicReference<>();
         runOnEdt(() -> {
-            ConverterPanel panel = new ConverterPanel();
+            ConverterPanel panel = track(new ConverterPanel());
             ref.set(panel);
             // Below the paste threshold: detection must not fight the user as a
             // document takes shape keystroke by keystroke.
@@ -109,7 +149,7 @@ class ConverterPanelTest {
     void setInputTextQuietlyDoesNotTriggerDetection() throws Exception {
         AtomicReference<ConverterPanel> ref = new AtomicReference<>();
         runOnEdt(() -> {
-            ConverterPanel panel = new ConverterPanel();
+            ConverterPanel panel = track(new ConverterPanel());
             ref.set(panel);
             // The panel already knows the format here (file load, history
             // restore, swap); detection must not second-guess it.
@@ -124,7 +164,7 @@ class ConverterPanelTest {
     @Test
     void currentOptionsReflectsTheOptionControls() throws Exception {
         runOnEdt(() -> {
-            ConverterPanel panel = new ConverterPanel();
+            ConverterPanel panel = track(new ConverterPanel());
             OptionsBar options = field(panel, "options", OptionsBar.class);
             field(options, "sortKeysCheck", JCheckBox.class).setSelected(true);
             field(options, "inferTypesCheck", JCheckBox.class).setSelected(false);
@@ -144,9 +184,26 @@ class ConverterPanelTest {
     }
 
     @Test
+    void aSavedOptionReachesOtherPanelsButDoesNotReloadItsOwn() throws Exception {
+        runOnEdt(() -> {
+            OptionsBar saving = field(track(new ConverterPanel()), "options", OptionsBar.class);
+            OptionsBar following = field(track(new ConverterPanel()), "options", OptionsBar.class);
+            // Set without saving, as a history restore sets controls before its one save.
+            field(saving, "sortKeysCheck", JCheckBox.class).setSelected(true);
+            field(following, "sortKeysCheck", JCheckBox.class).setSelected(true);
+
+            field(saving, "csvDelimiterCombo", JComboBox.class).setSelectedIndex(1);   // saves semicolon
+
+            // Outside the IDE nothing is stored, so the follower shows the defaults.
+            assertThat(saving.currentOptions().sortKeys()).as("the panel that saved").isTrue();
+            assertThat(following.currentOptions().sortKeys()).as("the panel that followed").isFalse();
+        });
+    }
+
+    @Test
     void theToolbarWrapsOntoMoreRowsWhenNarrow() throws Exception {
         runOnEdt(() -> {
-            JPanel content = new ConverterPanel().getContent();
+            JPanel content = track(new ConverterPanel()).getContent();
             JPanel toolbar = findComponents(content, JPanel.class).stream()
                   .filter(p -> p.getLayout() instanceof com.intellij.util.ui.WrapLayout)
                   .findFirst().orElseThrow();

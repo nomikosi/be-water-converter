@@ -160,6 +160,8 @@ tasks.register('unitTest', Test) {
     // Exclude before JUnit discovery: tags are evaluated only after loading
     // classes, and these tests require the platform-aware test class loader.
     exclude 'com/converter/ConverterPanel*Test.class'
+    exclude 'com/converter/ConverterActionsTest.class'
+    exclude 'com/converter/FindBarTest.class'
 
     testLogging {
         events 'passed', 'skipped', 'failed'
