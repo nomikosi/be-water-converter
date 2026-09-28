@@ -491,6 +491,43 @@ class DocumentFormatterTest {
                   .isEqualTo("<r>\n  <a/>\n  <b/>\n</r>\n");
         }
 
+        @Test @DisplayName("XHTML5 is recognised by its namespace, prefixed or not")
+        void xhtml5() throws Exception {
+            // A bare <!DOCTYPE html> has no public id, so EPUB 3 content still had
+            // every empty element minimized, <script> and <div> included.
+            assertThat(pipeline.formatInput("<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\"><head>"
+                  + "<script src=\"a.js\"></script></head><body><div></div><br/></body></html>", Formats.FMT_XML, opts))
+                  .contains("<script src=\"a.js\"></script>").contains("<div></div>").contains("<br />");
+            assertThat(pipeline.formatInput("<h:html xmlns:h=\"http://www.w3.org/1999/xhtml\"><h:body><h:p/><h:br/>"
+                  + "</h:body></h:html>", Formats.FMT_XML, opts))
+                  .contains("<h:p></h:p>").contains("<h:br />");
+            // Another vocabulary that merely declares the XHTML prefix stays XML.
+            assertThat(pipeline.formatInput("<svg xmlns=\"http://www.w3.org/2000/svg\" "
+                  + "xmlns:xhtml=\"http://www.w3.org/1999/xhtml\"><g/></svg>", Formats.FMT_XML, opts))
+                  .contains("<g/>");
+        }
+
+        @Test @DisplayName("an undeclared entity inside an attribute value is refused, not dropped")
+        void entityInAttribute() throws Exception {
+            // The parser drops it from an attribute without a trace, where it keeps
+            // one in text: title="&copy; 2024 ACME" came back as title=" 2024 ACME".
+            String xhtml = "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" "
+                  + "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\n"
+                  + "<html><body><p title=\"&copy; 2024 ACME\">&nbsp;x</p></body></html>";
+            assertThatThrownBy(() -> pipeline.formatInput(xhtml, Formats.FMT_XML, opts))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessageContaining("&copy;").hasMessageContaining("left as it is");
+            // XML's own entities and character references are values the parser keeps,
+            // and a reference in text, a comment, CDATA or an instruction is no attribute's.
+            String kept = "<r a=\"x &amp; &lt;y&gt; &quot;z&quot; &apos; &#169; &#xA9; > b\">"
+                  + "<!-- t=\"&copy;\" --><![CDATA[ q=\"&copy;\" ]]><?pi v=\"&copy;\"?><b c='&amp;'/></r>";
+            String formatted = pipeline.formatInput(kept, Formats.FMT_XML, opts);
+            assertThat(pipeline.normalizeToJson(formatted, Formats.FMT_XML, opts))
+                  .isEqualTo(pipeline.normalizeToJson(kept, Formats.FMT_XML, opts));
+            assertThat(DocumentFormatter.entityInAttribute(xhtml)).isEqualTo("&copy;");
+            assertThat(DocumentFormatter.entityInAttribute(kept)).isNull();
+        }
+
         @Test @DisplayName("the prolog keeps standalone, a line per node, and no invented declaration")
         void prologAsWritten() throws Exception {
             assertThat(pipeline.formatInput(

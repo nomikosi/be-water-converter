@@ -254,10 +254,11 @@ final class DocumentFormatter {
      * {@code xml:space="preserve"} covers — is written exactly as it was.
      *
      * <p>A DOCTYPE is kept, not fetched: external DTDs and entities are never
-     * loaded, and a reference to an entity the DTD declares is written back as
-     * the reference. What is still refused is an internal subset, which the DOM
-     * cannot hand back as written. Attributes come back in alphabetical order,
-     * the order the DOM holds them in.
+     * loaded, and a reference in text to an entity the DTD declares is written
+     * back as the reference. What is still refused is an internal subset, which
+     * the DOM cannot hand back as written, and such a reference inside an
+     * attribute value, which the parser drops. Attributes come back in
+     * alphabetical order, the order the DOM holds them in.
      */
     static String prettyXml(String xml) throws Exception {
         javax.xml.parsers.DocumentBuilderFactory dbf =
@@ -280,14 +281,19 @@ final class DocumentFormatter {
                   "Format cannot keep the declarations inside this document's <!DOCTYPE "
                   + doctype.getName() + " [...]>, and the entities they define would be lost "
                   + "with them. The document is left as it is.");
+        String dropped = entityInAttribute(xml);
+        if (dropped != null)
+            throw new IllegalArgumentException(
+                  "Format would drop " + dropped + " from an attribute value: an entity from an external "
+                  + "DTD, which is never fetched, is kept in text but lost inside an attribute. "
+                  + "The document is left as it is.");
         rejectDeepNesting(doc.getDocumentElement());
         doc.getDocumentElement().normalize();
 
         StringBuilder out = new StringBuilder(xml.length() + xml.length() / 4 + 64);
         String declaration = declaration(xml);
         if (declaration != null) out.append(declaration).append('\n');
-        XmlWriter writer = new XmlWriter(out, doctype != null && doctype.getPublicId() != null
-              && doctype.getPublicId().contains("XHTML"), "1.1".equals(doc.getXmlVersion()));
+        XmlWriter writer = new XmlWriter(out, isXhtml(doc, doctype), "1.1".equals(doc.getXmlVersion()));
         for (org.w3c.dom.Node child = doc.getFirstChild(); child != null; child = child.getNextSibling()) {
             switch (child.getNodeType()) {
                 case org.w3c.dom.Node.DOCUMENT_TYPE_NODE -> writer.doctype((org.w3c.dom.DocumentType) child);
@@ -299,6 +305,77 @@ final class DocumentFormatter {
             out.append('\n');
         }
         return out.toString();
+    }
+
+    private static final java.util.Set<String> PREDEFINED_ENTITIES = java.util.Set.of("amp", "lt", "gt", "quot", "apos");
+
+    /**
+     * The first reference inside an attribute value to an entity other than
+     * XML's five, or null. The parser keeps such a reference in text as a node
+     * of its own, but drops it from an attribute value without a trace, so the
+     * writer could only lose it: an XHTML page's {@code title="&copy; 2024"}
+     * came back as {@code title=" 2024"}. The document has parsed by the time
+     * this runs, and its internal subset was refused, so the markup scanned
+     * here is well-formed.
+     */
+    static String entityInAttribute(String xml) {
+        int n = xml.length();
+        for (int i = 0; ; ) {
+            int lt = xml.indexOf('<', i);
+            if (lt < 0 || lt + 1 >= n) return null;
+            if (xml.startsWith("!--", lt + 1)) { i = after(xml, "-->", lt + 4); continue; }
+            if (xml.startsWith("![CDATA[", lt + 1)) { i = after(xml, "]]>", lt + 9); continue; }
+            if (xml.charAt(lt + 1) == '?') { i = after(xml, "?>", lt + 2); continue; }
+            // A tag, or the DOCTYPE, whose quoted identifiers are no attribute
+            // values. A quoted value may hold '>', so it is skipped whole.
+            boolean doctype = xml.charAt(lt + 1) == '!';
+            int j = lt + 1;
+            while (j < n && xml.charAt(j) != '>') {
+                char c = xml.charAt(j);
+                if (c != '"' && c != '\'') {
+                    j++;
+                    continue;
+                }
+                int close = xml.indexOf(c, j + 1);
+                if (close < 0) return null;
+                String reference = doctype ? null : entityReference(xml, j + 1, close);
+                if (reference != null) return reference;
+                j = close + 1;
+            }
+            i = j + 1;
+        }
+    }
+
+    private static int after(String xml, String end, int from) {
+        int at = xml.indexOf(end, from);
+        return at < 0 ? xml.length() : at + end.length();
+    }
+
+    /** The first {@code &name;} in {@code xml[from, to)} that is no character reference or predefined entity. */
+    private static String entityReference(String xml, int from, int to) {
+        for (int amp = xml.indexOf('&', from); amp >= 0 && amp < to; amp = xml.indexOf('&', amp + 1)) {
+            int semicolon = xml.indexOf(';', amp);
+            if (semicolon < 0 || semicolon > to) return null;
+            String name = xml.substring(amp + 1, semicolon);
+            if (!name.startsWith("#") && !PREDEFINED_ENTITIES.contains(name)) return "&" + name + ";";
+        }
+        return null;
+    }
+
+    private static final String XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
+
+    /**
+     * Whether a document is XHTML: by an XHTML 1.x public identifier or, as
+     * XHTML5 and EPUB 3 write it under a bare {@code <!DOCTYPE html>}, by the
+     * namespace of its root element.
+     */
+    private static boolean isXhtml(org.w3c.dom.Document doc, org.w3c.dom.DocumentType doctype) {
+        if (doctype != null && doctype.getPublicId() != null && doctype.getPublicId().contains("XHTML")) return true;
+        // The parser is not namespace-aware, so xmlns is an attribute like any other.
+        org.w3c.dom.Element root = doc.getDocumentElement();
+        String tag = root.getTagName();
+        int colon = tag.indexOf(':');
+        return XHTML_NAMESPACE.equals(root.getAttribute(colon < 0 ? "xmlns" : "xmlns:" + tag.substring(0, colon)));
     }
 
     /** Reports parse problems through the exception alone, never on stderr. */
