@@ -287,7 +287,7 @@ final class DocumentFormatter {
         String declaration = declaration(xml);
         if (declaration != null) out.append(declaration).append('\n');
         XmlWriter writer = new XmlWriter(out, doctype != null && doctype.getPublicId() != null
-              && doctype.getPublicId().contains("XHTML"));
+              && doctype.getPublicId().contains("XHTML"), "1.1".equals(doc.getXmlVersion()));
         for (org.w3c.dom.Node child = doc.getFirstChild(); child != null; child = child.getNextSibling()) {
             switch (child.getNodeType()) {
                 case org.w3c.dom.Node.DOCUMENT_TYPE_NODE -> writer.doctype((org.w3c.dom.DocumentType) child);
@@ -366,10 +366,12 @@ final class DocumentFormatter {
 
         private final StringBuilder out;
         private final boolean xhtml;
+        private final boolean xml11;
 
-        XmlWriter(StringBuilder out, boolean xhtml) {
+        XmlWriter(StringBuilder out, boolean xhtml, boolean xml11) {
             this.out = out;
             this.xhtml = xhtml;
+            this.xml11 = xml11;
         }
 
         void element(org.w3c.dom.Element element, int depth, boolean verbatim) {
@@ -419,12 +421,21 @@ final class DocumentFormatter {
                     case org.w3c.dom.Node.ELEMENT_NODE -> elements = true;
                     case org.w3c.dom.Node.COMMENT_NODE, org.w3c.dom.Node.PROCESSING_INSTRUCTION_NODE -> { }
                     case org.w3c.dom.Node.TEXT_NODE -> {
-                        if (!child.getNodeValue().isBlank()) return false;
+                        if (!xmlWhitespace(child.getNodeValue())) return false;
                     }
                     default -> { return false; }   // CDATA and entity references are content
                 }
             }
             return elements;
+        }
+
+        /** XML whitespace only: Java also calls significant characters such as U+2028 whitespace. */
+        private static boolean xmlWhitespace(String text) {
+            for (int i = 0; i < text.length(); i++) {
+                char c = text.charAt(i);
+                if (c != ' ' && c != '\t' && c != '\r' && c != '\n') return false;
+            }
+            return true;
         }
 
         /** A node exactly as it was, and everything inside it. */
@@ -468,6 +479,14 @@ final class DocumentFormatter {
         private void escape(String text, boolean attribute) {
             for (int i = 0; i < text.length(); i++) {
                 char c = text.charAt(i);
+                // XML 1.1 permits restricted controls only as references. Its
+                // NEL and line separator must also stay references: literal
+                // characters normalize to LF on the next parse (XML 1.1 sections 2.2, 2.11).
+                if (xml11 && ((c < 0x20 && c != '\t' && c != '\n' && c != '\r')
+                      || (c >= 0x7F && c <= 0x9F) || c == 0x2028)) {
+                    out.append("&#").append((int) c).append(';');
+                    continue;
+                }
                 switch (c) {
                     case '&' -> out.append("&amp;");
                     case '<' -> out.append("&lt;");

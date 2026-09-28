@@ -524,6 +524,33 @@ class DocumentFormatterTest {
                   .isEqualTo(pipeline.normalizeToJson(input, Formats.FMT_XML, opts));
         }
 
+        @ParameterizedTest
+        @ValueSource(ints = {0x1, 0x8, 0xB, 0xC, 0xE, 0x1C, 0x1F, 0x7F, 0x84, 0x85, 0x86, 0x9F, 0x2028})
+        @DisplayName("XML 1.1 character references survive in attributes and text beside child elements")
+        void xml11CharacterReferences(int codePoint) throws Exception {
+            String reference = "&#x" + Integer.toHexString(codePoint) + ";";
+            String input = "<?xml version=\"1.1\"?><r a=\"" + reference + "\">" + reference + "<child/></r>";
+            String formatted = pipeline.formatInput(input, Formats.FMT_XML, opts);
+            var document = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                  .parse(new org.xml.sax.InputSource(new java.io.StringReader(formatted)));
+            String expected = Character.toString(codePoint);
+            assertThat(document.getXmlVersion()).isEqualTo("1.1");
+            assertThat(document.getDocumentElement().getAttribute("a")).isEqualTo(expected);
+            assertThat(document.getDocumentElement().getTextContent()).isEqualTo(expected);
+            assertThat(pipeline.formatInput(formatted, Formats.FMT_XML, opts)).isEqualTo(formatted);
+        }
+
+        @Test @DisplayName("XML 1.0 keeps Unicode text that Java considers whitespace")
+        void xml10UnicodeWhitespace() throws Exception {
+            String input = "<?xml version=\"1.0\"?><r a=\"&#x85;&#x2028;\">&#x2028;<child/></r>";
+            String formatted = pipeline.formatInput(input, Formats.FMT_XML, opts);
+            var document = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                  .parse(new org.xml.sax.InputSource(new java.io.StringReader(formatted)));
+            assertThat(document.getXmlVersion()).isEqualTo("1.0");
+            assertThat(document.getDocumentElement().getAttribute("a")).isEqualTo("\u0085\u2028");
+            assertThat(document.getDocumentElement().getTextContent()).isEqualTo("\u2028");
+        }
+
         @Test @DisplayName("a document deeper than conversion reads is refused, not a stack overflow")
         void deepDocumentsAreRefused() {
             String deep = "<a>".repeat(5_000) + "</a>".repeat(5_000);
