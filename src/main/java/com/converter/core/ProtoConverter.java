@@ -684,11 +684,27 @@ public class ProtoConverter {
 
     // ── Validation ────────────────────────────────────────────────────────
 
+    /**
+     * How deep blocks may nest, as XML, JSON and TOML may. Messages are read
+     * recursively, a level of stack each: 5,000 nested messages overflowed a
+     * worker thread's stack, and 50,000, copying each body for the level
+     * inside it, exhausted a 2 GB heap.
+     */
+    static final int MAX_NESTING_DEPTH = 1_000;
+
     private void validateBraces(String schema) {
-        int open = 0, close = 0;
+        int open = 0, close = 0, depth = 0;
         for (char c : schema.toCharArray()) {
-            if (c == '{') open++;
-            else if (c == '}') close++;
+            if (c == '{') {
+                open++;
+                if (++depth > MAX_NESTING_DEPTH)
+                    throw new IllegalArgumentException(String.format(Locale.ROOT,
+                          "Conversion stops at %,d levels of nesting, as it does for XML, JSON and TOML, "
+                          + "and this schema goes deeper.", MAX_NESTING_DEPTH));
+            } else if (c == '}') {
+                close++;
+                depth--;
+            }
         }
         if (open != close)
             throw new IllegalArgumentException(

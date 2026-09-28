@@ -1197,6 +1197,31 @@ class ProtoConverterTest {
             assertThat(parse("message A { B x = 1; B y = 2; }\nmessage B { C x = 1; C y = 2; }\nmessage C { int32 v = 1; }")
                   .get("A").get("y").get("x").get("v").asInt()).isZero();
         }
+
+        @Test @DisplayName("a schema nested deeper than conversion reads is refused, not a stack overflow")
+        void nestingIsBounded() throws Exception {
+            // 5,000 nested messages overflowed a worker's stack; 50,000 exhausted a 2 GB heap.
+            assertThatThrownBy(() -> parse(nested(ProtoConverter.MAX_NESTING_DEPTH + 1)))
+                  .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("1,000 levels");
+            // As deep as allowed still converts, on the 1 MB stack a pooled worker has.
+            java.util.concurrent.atomic.AtomicReference<Object> result = new java.util.concurrent.atomic.AtomicReference<>();
+            Thread worker = new Thread(null, () -> {
+                try {
+                    result.set(parse(nested(ProtoConverter.MAX_NESTING_DEPTH)));
+                } catch (Throwable failure) {
+                    result.set(failure);
+                }
+            }, "proto-depth", 1024 * 1024);
+            worker.start();
+            worker.join();
+            assertThat(result.get()).isInstanceOf(JsonNode.class);
+        }
+
+        private static String nested(int depth) {
+            StringBuilder proto = new StringBuilder("syntax = \"proto3\";\n");
+            for (int i = 0; i < depth; i++) proto.append("message M").append(i).append(" {\n");
+            return proto.append("int32 x = 1;\n").append("}\n".repeat(depth)).toString();
+        }
     }
 
     /** Generated schemas have to get past protoc, old and new. */
