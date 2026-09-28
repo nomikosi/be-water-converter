@@ -63,7 +63,7 @@ dependencies {
     // isolated class loader: a class that compiles can still fail to read its JSON.
     kotlinJackson platform(jacksonBom)
     kotlinJackson 'com.fasterxml.jackson.module:jackson-module-kotlin'
-    testImplementation platform('org.junit:junit-bom:5.14.4')
+    testImplementation platform('org.junit:junit-bom:6.1.3')
     testImplementation 'org.junit.jupiter:junit-jupiter-api'
     // Parameterised tests: routing tables are covered per-format rather than by
     // one test per arm, which is what let several arms go untested.
