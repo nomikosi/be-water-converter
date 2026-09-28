@@ -57,9 +57,10 @@ class ContextDecisionsTest {
 
     @Test @DisplayName("the IDE's file types are sorted by name into data, plain text and other languages")
     void kinds() {
-        for (String data : new String[]{"JSON", "JSON5", "XML", "YAML", "TOML", "CSV", "TSV", "protobuf"})
+        for (String data : new String[]{"JSON", "JSON5", "XML", "YAML", "TOML", "CSV", "TSV", "protobuf", "SVG", "XHTML"})
             assertThat(ContextDecisions.kindOf(data, false)).as(data).isEqualTo(Kind.DATA);
-        for (String other : new String[]{"JAVA", "Python", "Markdown", "Properties", "Shell Script"})
+        // HTML is rarely well-formed XML: it gets the actions only for a selection that reads as a format.
+        for (String other : new String[]{"JAVA", "Python", "Markdown", "Properties", "Shell Script", "HTML"})
             assertThat(ContextDecisions.kindOf(other, false)).as(other).isEqualTo(Kind.OTHER);
         assertThat(ContextDecisions.kindOf("PLAIN_TEXT", true)).isEqualTo(Kind.PLAIN);
         assertThat(ContextDecisions.kindOf(null, false)).isEqualTo(Kind.PLAIN);
@@ -68,6 +69,11 @@ class ContextDecisionsTest {
     @Test @DisplayName("formats and delimiters come from the extension first, then from the start of the text")
     void formatsAndDelimiters() {
         assertThat(ContextDecisions.formatFor("x.yaml", "{\"a\":1}")).isEqualTo(Formats.FMT_YAML);
+        // No extension of theirs is mapped: the content says XML.
+        assertThat(ContextDecisions.formatFor("icon.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\"><g/></svg>"))
+              .isEqualTo(Formats.FMT_XML);
+        assertThat(ContextDecisions.formatFor("page.xhtml",
+              "<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\"><body/></html>")).isEqualTo(Formats.FMT_XML);
         String large = "{\"a\": \"" + "x".repeat(200_000) + "\"}";
         assertThat(ContextDecisions.formatFor(null, large)).isEqualTo(Formats.FMT_JSON);
         assertThat(ContextDecisions.delimiterFor(null, "a;b\n1;2\n")).isEqualTo(';');

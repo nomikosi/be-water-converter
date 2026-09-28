@@ -49,8 +49,13 @@ final class ContextDecisions {
         OTHER
     }
 
-    /** Words in the names of the IDE file types that hold the formats converted here. */
-    private static final Set<String> DATA_TYPE_WORDS = Set.of("json", "xml", "yaml", "toml", "csv", "tsv", "proto");
+    /**
+     * Words in the names of the IDE file types that hold the formats converted
+     * here. SVG and XHTML are XML under file types of their own, and lost the
+     * actions when the content stopped being sniffed for every file.
+     */
+    private static final Set<String> DATA_TYPE_WORDS =
+          Set.of("json", "xml", "yaml", "toml", "csv", "tsv", "proto", "svg", "xhtml");
 
     /**
      * The kind of an IDE file type, by its name.
