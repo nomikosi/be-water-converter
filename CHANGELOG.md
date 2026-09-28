@@ -15,12 +15,15 @@ fails until the version in `build.gradle` has a section here.
   `xml:space="preserve"` elements, CDATA sections and elements holding only a comment are
   written as they are, instead of being refused or re-indented into a different value, and
   entity references an external DTD declares, such as XHTML's `&nbsp;` and `&copy;`, are no
-  longer deleted. The declaration keeps its `standalone`, a document without one gets none,
-  each comment or processing instruction before the root keeps its own line, and a document
-  nested more than 1,000 levels deep is refused, as conversion refuses it. Under an XHTML
-  DOCTYPE only HTML's void elements, such as `<br />`, are minimized: an empty
-  `<script src="a.js"></script>` was written as `<script src="a.js" />`, which an HTML parser
-  reads as an opening tag.
+  longer deleted from text; the parser drops one inside an attribute value, so Format refuses
+  such a document instead. The declaration keeps its `standalone`, a document without one gets
+  none, each comment or processing instruction before the root keeps its own line, and a
+  document nested more than 1,000 levels deep is refused, as conversion refuses it. XML 1.1
+  keeps its control characters, NEL and line separator as character references, and text of
+  Unicode spaces between elements is no longer taken for indentation. In XHTML, told by its
+  DOCTYPE or by its namespace as XHTML5 writes it, only HTML's void elements, such as `<br />`,
+  are minimized: an empty `<script src="a.js"></script>` was written as
+  `<script src="a.js" />`, which an HTML parser reads as an opening tag.
 - **XML keeps text, names, nulls and whitespace** — a document that declares a non-UTF-8
   encoding is no longer decoded twice (`José` read as `JosÃ©`, and UTF-16 failed). JSON `null`
   is written as `xsi:nil="true"` and reads back as `null` rather than `""`. Element names
@@ -65,8 +68,9 @@ fails until the version in `build.gradle` has a section here.
   the values the fields start with, `extensions` ranges and an `edition` line are declarations
   rather than errors, and an aggregate option may separate its fields with `;`. An escape such
   as `\303\251` reads as the UTF-8 bytes it spells, `é`. A schema that would expand to more
-  than two million values is refused instead of exhausting memory, and Format no longer stalls
-  on a line with a long run of spaces.
+  than two million values, or that nests more than 1,000 levels deep, is refused instead of
+  exhausting memory or the stack, and Format no longer stalls on a line with a long run of
+  spaces.
 - **Generated Protobuf is accepted by `protoc`** — keys such as `user_id` and `userId`, or
   `name` and `Name`, become distinct field names, and a field whose JSON name would clash
   carries its key as `json_name`, so every key still reads back as itself. Values of mixed
@@ -86,7 +90,8 @@ fails until the version in `build.gradle` has a section here.
   `3E+1` and `1.2E+4`, and equal values still compare equal however they are spelled.
 - **Output uses LF line breaks on every system, and Format keeps CRLF** — on Windows, JSON, XML
   and JSON Schema output took the system's CRLF. Every output now uses LF, and Format keeps the
-  line breaks of the document it formats.
+  line breaks of the document it formats. Line breaks inside quoted CSV cells are data, and
+  Format and Save leave them as written.
 - **Save keeps a file's permissions, symbolic links, line breaks and encoding** — on Linux and
   macOS a saved file keeps its permissions instead of becoming readable by its owner only, and
   saving through a symbolic link updates the file it points to instead of replacing the link. A
@@ -96,11 +101,12 @@ fails until the version in `build.gradle` has a section here.
   are written as UTF-8, the encoding their tools read. On Windows, a save retries for a moment
   when another program, such as a virus scanner, holds the file.
 - **Context-menu actions appear where they can work** — *Open in Be Water Converter* and
-  *Convert with Be Water* are offered on JSON, XML, YAML, TOML, CSV, TSV and Protobuf files, on
-  plain-text files whose start reads as one of them, and on any selection that does. They no
-  longer appear on Java classes, scripts, READMEs or `gradle.properties` because a line looked
-  like `key = value`. The menu reads only the start of a large selection, so it opens at once,
-  and Cancel stops a conversion under way, not only the read before it.
+  *Convert with Be Water* are offered on JSON, XML (SVG and XHTML included), YAML, TOML, CSV,
+  TSV and Protobuf files, on plain-text files whose start reads as one of them, and on any
+  selection that does. They no longer appear on Java classes, scripts, READMEs or
+  `gradle.properties` because a line looked like `key = value`. The menu reads only the start
+  of a large selection, so it opens at once, and Cancel stops a conversion under way, not only
+  the read before it.
 - **Options follow across projects** — each open project has its own panel, and a choice made
   in one (CSV mode and delimiter, row warning, Lombok, dates, type inference, sort keys) now
   shows in the others. A panel saves only the option that changed, so it no longer writes its

@@ -142,12 +142,13 @@ file keeps the permissions of the file it replaces, and saving to a symbolic lin
 file the link points to rather than replacing the link. On Windows, a save retries for a
 moment when another program, such as a virus scanner, holds the file.
 
-A save keeps the style of the file it replaces: its CRLF or LF line breaks and, for CSV,
-Java and Kotlin, its encoding and byte-order mark, so Excel still reads a Windows-1252 or
-"CSV UTF-8" file correctly after a save. JSON, XML, YAML, TOML and Protobuf are written as
-UTF-8, the encoding their tools read, and so is text that the file's encoding cannot hold,
-which the status bar then says. A new file is UTF-8, with the project's line separator
-(**Settings → Editor → Code Style → Line separator**).
+A save keeps the style of the file it replaces: its CRLF or LF line breaks (leaving those
+inside quoted CSV cells as written) and, for CSV, Java and Kotlin, its encoding and
+byte-order mark, so Excel still reads a Windows-1252 or "CSV UTF-8" file correctly after a
+save. JSON, XML, YAML, TOML and Protobuf are written as UTF-8, the encoding their tools
+read, and so is text that the file's encoding cannot hold, which the status bar then says. A
+new file is UTF-8, with the project's line separator (**Settings → Editor → Code Style →
+Line separator**).
 
 You can also **drag and drop** a file directly onto the input editor. The file is loaded
 and the source format is auto-detected from the extension, just like the Open action.
@@ -158,7 +159,7 @@ The **Format** action pretty-prints or canonicalizes the current input for JSON,
 TOML and CSV, and removes trailing blanks and extra blank lines from Protobuf. JSON
 formatting also applies the lenient auto-close logic, which helps recover truncated input
 during interactive editing. Format keeps the document's line breaks: a CRLF document stays
-CRLF.
+CRLF, and line breaks inside quoted CSV cells, which are data, stay as written.
 
 Format is a layout action and is held to that. CSV is rewritten row by row without ever
 being parsed into objects, so headers, ragged rows and cell text come back exactly as
@@ -173,24 +174,30 @@ cancellation are also discarded; Compare discards its result when either editor 
 
 XML is re-indented only where an element holds nothing but other elements. Everything else
 is written exactly as it was — text mixed with elements, `xml:space="preserve"` elements,
-CDATA sections, entity references such as `&nbsp;`, whitespace that is an element's whole
-value (`<sep> </sep>`), and elements holding only a comment — so the formatted document
-converts exactly as the original did. The declaration keeps its version and `standalone`,
-with `encoding="UTF-8"` since the editor holds text rather than bytes; a document without a
-declaration gets none; and each comment or processing instruction before the root keeps its
-own line. Under an XHTML DOCTYPE only HTML's void elements are written minimized (`<br />`);
-any other empty element keeps its end tag (`<script src="a.js"></script>`), which an HTML
-parser needs.
+CDATA sections, entity references in text such as `&nbsp;`, whitespace that is an element's
+whole value (`<sep> </sep>`), and elements holding only a comment — so the formatted
+document converts exactly as the original did. Only XML's own whitespace counts as
+indentation, so text of other Unicode spaces between elements is kept, and an XML 1.1
+document keeps its control characters, NEL and line separator as character references:
+written literally, they are ill-formed or read back as line feeds. The declaration keeps its
+version and `standalone`, with `encoding="UTF-8"` since the editor holds text rather than
+bytes; a document without a declaration gets none; and each comment or processing
+instruction before the root keeps its own line. In XHTML, told by an XHTML DOCTYPE or by the
+namespace of the root element as XHTML5 and EPUB 3 write it, only HTML's void elements are
+written minimized (`<br />`); any other empty element keeps its end tag
+(`<script src="a.js"></script>`), which an HTML parser needs.
 
 Where a re-layout could only be done by changing what the document says, Format refuses and
 leaves the editor alone: TOML dates, hex/octal/binary and underscore-separated numbers and
 `inf`/`nan` (the JSON step in between cannot spell them); YAML `.inf`/`.nan`, non-string
 mapping keys, timestamps and other tags the JSON step cannot preserve; in YAML and TOML, any
 number that step would write back differently, such as `1.5e1` as `15` or YAML's `0x1F` as
-`31`, with the message saying what it would become; and XML nested more than 1,000 levels
-deep, as conversion refuses it. Formats that pass through the JSON tree keep only the data,
-so before YAML, TOML or JSON-with-comments is rewritten, Format says how many comments (and
-YAML anchors) would be dropped and asks first.
+`31`, with the message saying what it would become; XML nested more than 1,000 levels deep,
+as conversion refuses it; and an XML entity from an external DTD inside an attribute value
+(`title="&copy; 2024"`), which the parser drops there while it keeps one in text. Formats
+that pass through the JSON tree keep only the data, so before YAML, TOML or
+JSON-with-comments is rewritten, Format says how many comments (and YAML anchors) would be
+dropped and asks first.
 
 ### Conversion-specific options bar
 
@@ -256,12 +263,12 @@ Right-click a file in the Project view, or a selection in any editor:
   result as a scratch file, so it lands in a real IDE editor rather than the plugin's pane.
 
 The entries appear on files of the formats the plugin reads — by the IDE's file type or by
-extension, `.tsv` included — on plain-text and unknown files whose start reads as one of
-them, and on a selection in any file that does. Files in other languages (Java, Python,
-shell scripts, Markdown, `.properties`) get them only for such a selection: nearly all of
-them hold a line that looks like TOML's `key = value` or YAML's `key: value`. The menu reads
-at most the first 4,096 characters of a selection, so it opens at once, and a conversion
-tells the format from the first 64 KB.
+extension, `.tsv`, SVG and XHTML included — on plain-text and unknown files whose start
+reads as one of them, and on a selection in any file that does. Files in other languages
+(Java, Python, shell scripts, Markdown, `.properties`) get them only for such a selection:
+nearly all of them hold a line that looks like TOML's `key = value` or YAML's `key: value`.
+The menu reads at most the first 4,096 characters of a selection, so it opens at once, and a
+conversion tells the format from the first 64 KB.
 
 Files are read and converted on a background task with a cancellable progress indicator, so
 a large file never blocks the UI, and Cancel stops the conversion itself, not only the read.
@@ -477,12 +484,13 @@ The Protobuf converter works structurally in both directions without invoking `p
   does, and field numbers may be written in hex or octal, as `protoc` reads them. Fields
   declared in an `extend` block extend another message, so they are not listed as fields of
   the message that contains the block. A schema whose nested message fields would expand to
-  more than two million values is refused rather than exhausting memory. proto2 schemas read
-  as well: a group becomes a nested message and a field named after it in lower case, as
-  `protoc` names it; `[default = …]` values are the values the fields start with;
-  `extensions` ranges and an `edition` line are declarations rather than errors; and an
-  aggregate option may separate its fields with `;`. String escapes such as `\303\251` read
-  as the UTF-8 bytes they spell.
+  more than two million values is refused rather than exhausting memory, and one nested more
+  than 1,000 levels deep rather than overflowing the stack. proto2 schemas read as well: a
+  group becomes a nested message and a field named after it in lower case, as `protoc` names
+  it; `[default = …]` values are the values the fields start with; `extensions` ranges and
+  an `edition` line are declarations rather than errors; and an aggregate option may
+  separate its fields with `;`. String escapes such as `\303\251` read as the UTF-8 bytes
+  they spell.
 - **`jsonToProto`** walks a JSON tree and emits a proto3 schema with inline nested messages
   and repeated fields. A repeated message is typed from every element of the array. A key
   the field name cannot spell (`first-name`, `1st`, or two keys that sanitize to the same
@@ -723,15 +731,18 @@ its SHA-256, and this version's notes as built into it, as an HTML page.
   `FLAT_FIRST` for general use.
 - JSON has no infinity or NaN, so YAML `.inf`/`.nan` and TOML `inf`/`nan` convert to the
   strings `"Infinity"` and `"NaN"`; Format refuses to write those back.
-- YAML nested more than 500 levels deep is refused: its parser builds a document
-  recursively, and deeper input would exhaust the stack of the thread converting it.
+- YAML nested more than 500 levels deep is refused, and Protobuf nested more than 1,000:
+  both are read recursively, and deeper input would exhaust the stack of the thread
+  converting it.
 - Formats that pass through the JSON tree (YAML, TOML, JSON with comments) keep only the
   data: Format drops comments, and expands YAML anchors and merge keys in place. It asks
   before doing so.
 - XML Format writes attributes in alphabetical order, which XML treats as insignificant but
   which does change the text of an element that listed them differently. A DOCTYPE is kept
   but never fetched; one with an internal subset (`<!DOCTYPE x [...]>`) is refused, because
-  the entities it declares could not be carried through.
+  the entities it declares could not be carried through. An entity from the external DTD is
+  kept in text, but one inside an attribute value makes Format refuse the document, as the
+  parser drops it there.
 - XML has no way to write an empty list: an empty JSON array produces no element at all, so
   `{"a": [], "b": 1}` becomes `<root><b>1</b></root>` and the key `a` is not in the output.
 
