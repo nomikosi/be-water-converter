@@ -36,4 +36,35 @@ public final class LineBreaks {
         String lf = text.replace("\r\n", "\n");
         return "\n".equals(separator) ? lf : lf.replace("\n", separator);
     }
+
+    /** The first CSV row separator, ignoring line breaks inside quoted cells (including headers). */
+    static String ofCsv(CharSequence text, char quote) {
+        int at = nextCsvLineBreak(text, 0, quote);
+        if (at < 0) return null;
+        if (text.charAt(at) == '\n') return "\n";
+        return at + 1 < text.length() && text.charAt(at + 1) == '\n' ? "\r\n" : "\r";
+    }
+
+    /** Converts only CSV row separators; every character inside quoted cells stays as written. */
+    static String convertCsv(String text, String separator, char quote) {
+        StringBuilder out = new StringBuilder(text.length());
+        int start = 0;
+        for (int at; (at = nextCsvLineBreak(text, start, quote)) >= 0; ) {
+            out.append(text, start, at).append(separator);
+            start = at + 1;
+            if (text.charAt(at) == '\r' && start < text.length() && text.charAt(start) == '\n') start++;
+        }
+        return out.append(text, start, text.length()).toString();
+    }
+
+    /** Scans from a row's start. Doubled quotes toggle twice, keeping a quoted cell open. */
+    private static int nextCsvLineBreak(CharSequence text, int start, char quote) {
+        boolean quoted = false;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == quote) quoted = !quoted;
+            else if (!quoted && (c == '\r' || c == '\n')) return i;
+        }
+        return -1;
+    }
 }

@@ -18,6 +18,8 @@ package com.converter.core;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -43,6 +45,40 @@ class TextEncoderTest {
         assertThat(saved.bytes()).isEqualTo("a,b\r\nCafé,1\r\n".getBytes(StandardCharsets.UTF_8));
         assertThat(saved.charset()).isEqualTo(StandardCharsets.UTF_8);
         assertThat(saved.refused()).isNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"\n", "\r\n", "\r"})
+    @DisplayName("CSV saves change row separators without rewriting quoted cells or headers")
+    void csvCellLineBreaks(String separator) throws Exception {
+        CsvConverter csv = new CsvConverter();
+        for (CsvConverter.CsvFormat format : new CsvConverter.CsvFormat[]{
+              CsvConverter.CsvFormat.DEFAULT, CsvConverter.CsvFormat.SEMICOLON, CsvConverter.CsvFormat.TAB}) {
+            String header = "\"head\nline\"" + format.delimiter() + "note";
+            String row = "\"say \"\"hi\"\"\"" + format.delimiter() + "\"one\ntwo\r\nthree\rfour\"";
+            String input = header + "\n" + row + "\n";
+            String expected = header + separator + row + separator;
+            byte[] head = expected.getBytes(StandardCharsets.UTF_8);
+            // Both a new file and an existing file whose first newline is inside its header.
+            for (byte[] existing : new byte[][]{null, head}) {
+                String fallback = existing == null ? separator : "\n";
+                TextEncoder.Encoded saved = TextEncoder.forSave(input, Formats.FMT_CSV, existing,
+                      StandardCharsets.UTF_8, fallback);
+                String text = new String(saved.bytes(), saved.charset());
+                assertThat(text).isEqualTo(expected);
+                assertThat(csv.csvToJson(text, false, format)).isEqualTo(csv.csvToJson(input, false, format));
+            }
+        }
+    }
+
+    @Test @DisplayName("a CSV saved over UTF-16 preserves cell line breaks as well as encoding and BOM")
+    void csvCellLineBreaksInUtf16() {
+        byte[] mark = {(byte) 0xFF, (byte) 0xFE};
+        byte[] head = withMark(mark, "\"head\nline\"\r\nold\r\n".getBytes(StandardCharsets.UTF_16LE));
+        TextEncoder.Encoded saved = TextEncoder.forSave("note\n\"one\ntwo\"\n", Formats.FMT_CSV,
+              head, null, "\n");
+        assertThat(saved.bytes()).isEqualTo(withMark(mark,
+              "note\r\n\"one\ntwo\"\r\n".getBytes(StandardCharsets.UTF_16LE)));
     }
 
     @Test @DisplayName("a CSV saved over a Windows-1252 file stays Windows-1252, with its CRLF")

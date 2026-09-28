@@ -62,14 +62,16 @@ public final class TextEncoder {
      */
     public static Encoded forSave(String text, String format, byte[] head, Charset ideCharset,
           String newFileSeparator) {
-        if (head == null) return utf8(LineBreaks.convert(text, newFileSeparator), null);
+        boolean csv = Formats.FMT_CSV.equals(format);
+        if (head == null) return utf8(convertLineBreaks(text, newFileSeparator, csv), null);
         TextDecoder.Mark mark = TextDecoder.markOf(head);
         int skip = mark == null ? 0 : mark.length();
         Charset existing = mark != null ? mark.charset() : ideCharset != null ? ideCharset : StandardCharsets.UTF_8;
         // Read in the file's own encoding: as bytes, UTF-16's CRLF is \r\0\n\0,
         // whose \n follows a \0 rather than the \r.
-        String separator = LineBreaks.of(new String(head, skip, head.length - skip, existing));
-        String converted = LineBreaks.convert(text, separator != null ? separator : newFileSeparator);
+        String previous = new String(head, skip, head.length - skip, existing);
+        String separator = csv ? LineBreaks.ofCsv(previous, '"') : LineBreaks.of(previous);
+        String converted = convertLineBreaks(text, separator != null ? separator : newFileSeparator, csv);
         if (!KEEP_FILE_ENCODING.contains(format)) return utf8(converted, null);
         if (!existing.canEncode() || !existing.newEncoder().canEncode(converted)) return utf8(converted, existing);
         byte[] body = converted.getBytes(existing);
@@ -77,6 +79,11 @@ public final class TextEncoder {
         byte[] bytes = Arrays.copyOf(head, skip + body.length);
         System.arraycopy(body, 0, bytes, skip, body.length);
         return new Encoded(bytes, existing, null);
+    }
+
+    private static String convertLineBreaks(String text, String separator, boolean csv) {
+        // Saved CSV is generated with double quotes for every delimiter the panel offers.
+        return csv ? LineBreaks.convertCsv(text, separator, '"') : LineBreaks.convert(text, separator);
     }
 
     private static Encoded utf8(String text, Charset refused) {

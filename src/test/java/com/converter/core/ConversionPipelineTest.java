@@ -213,6 +213,32 @@ class ConversionPipelineTest {
     class LineBreaks {
         private final ConversionPipeline pipeline = new ConversionPipeline();
 
+        @ParameterizedTest
+        @ValueSource(strings = {"\n", "\r\n", "\r"})
+        @DisplayName("CSV Format preserves cell line breaks while keeping row separators")
+        void csvCellLineBreaks(String separator) throws Exception {
+            for (CsvConverter.CsvFormat format : new CsvConverter.CsvFormat[]{
+                  CsvConverter.CsvFormat.DEFAULT, CsvConverter.CsvFormat.SEMICOLON,
+                  CsvConverter.CsvFormat.TAB, new CsvConverter.CsvFormat('|', '\'')}) {
+                String quote = String.valueOf(format.quote());
+                String header = quote + "head\nline" + quote + format.delimiter() + "note" + separator;
+                String input = header + quote + "say " + quote + quote + "hi" + quote + quote + quote
+                      + format.delimiter() + quote + "one\ntwo\r\nthree\rfour" + quote + separator;
+                ConversionOptions options = opts.withCsvFormat(format);
+                String formatted = pipeline.formatInput(input, Formats.FMT_CSV, options);
+                assertThat(pipeline.normalizeToJson(formatted, Formats.FMT_CSV, options))
+                      .isEqualTo(pipeline.normalizeToJson(input, Formats.FMT_CSV, options));
+                assertThat(formatted).startsWith(header).endsWith(quote + separator);
+                assertThat(pipeline.formatInput(formatted, Formats.FMT_CSV, options)).isEqualTo(formatted);
+            }
+        }
+
+        @Test @DisplayName("CSV Format keeps line breaks in a quoted whitespace-only cell")
+        void csvBlankCellLineBreaks() throws Exception {
+            String input = "note\r\n\"\n\r\n\r\"\r\n";
+            assertThat(pipeline.formatInput(input, Formats.FMT_CSV, opts)).isEqualTo(input);
+        }
+
         @ParameterizedTest(name = "{0}")
         @ValueSource(strings = {"JSON", "XML", "YAML", "CSV", "TOML", "Protobuf", "Java POJO", "Kotlin", "JSON Schema"})
         @DisplayName("every output writes LF, whatever the platform's separator")

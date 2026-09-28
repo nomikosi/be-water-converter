@@ -120,10 +120,17 @@ public class ConversionPipeline {
     /**
      * Pretty-prints or canonicalizes input in its own format (the Format
      * action), keeping the document's line breaks: CRLF when its first line
-     * ends in one, as a file from Windows does, else LF.
+     * ends in one, as a file from Windows does, else LF. CSV follows its first
+     * row separator (also allowing CR), leaving line breaks inside cells alone.
      */
     public String formatInput(String input, String fmt, ConversionOptions opts) throws Exception {
-        return withLineBreaksOf(input, formatter.format(input, fmt, opts));
+        String formatted = formatter.format(input, fmt, opts);
+        if (FMT_CSV.equals(fmt)) {
+            char quote = opts.csvFormat().quote();
+            String separator = LineBreaks.ofCsv(input, quote);
+            return LineBreaks.convertCsv(formatted, separator == null ? "\n" : separator, quote);
+        }
+        return withLineBreaksOf(input, formatted);
     }
 
     static String withLineBreaksOf(String original, String text) {
