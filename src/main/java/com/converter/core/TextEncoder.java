@@ -70,7 +70,7 @@ public final class TextEncoder {
         // Read in the file's own encoding: as bytes, UTF-16's CRLF is \r\0\n\0,
         // whose \n follows a \0 rather than the \r.
         String previous = new String(head, skip, head.length - skip, existing);
-        String separator = csv ? LineBreaks.ofCsv(previous, '"') : LineBreaks.of(previous);
+        String separator = csv ? LineBreaks.ofCsv(previous, CSV_DELIMITERS, '"') : LineBreaks.of(previous);
         String converted = convertLineBreaks(text, separator != null ? separator : newFileSeparator, csv);
         if (!KEEP_FILE_ENCODING.contains(format)) return utf8(converted, null);
         if (!existing.canEncode() || !existing.newEncoder().canEncode(converted)) return utf8(converted, existing);
@@ -81,9 +81,15 @@ public final class TextEncoder {
         return new Encoded(bytes, existing, null);
     }
 
+    /**
+     * The delimiters the panel writes CSV with. The saved text, and the file it
+     * replaces, may use any of them, and a quote opens a cell only after one.
+     */
+    private static final String CSV_DELIMITERS = ",;\t";
+
     private static String convertLineBreaks(String text, String separator, boolean csv) {
         // Saved CSV is generated with double quotes for every delimiter the panel offers.
-        return csv ? LineBreaks.convertCsv(text, separator, '"') : LineBreaks.convert(text, separator);
+        return csv ? LineBreaks.convertCsv(text, separator, CSV_DELIMITERS, '"') : LineBreaks.convert(text, separator);
     }
 
     private static Encoded utf8(String text, Charset refused) {

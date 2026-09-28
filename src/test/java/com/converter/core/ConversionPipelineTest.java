@@ -239,6 +239,17 @@ class ConversionPipelineTest {
             assertThat(pipeline.formatInput(input, Formats.FMT_CSV, opts)).isEqualTo(input);
         }
 
+        @Test @DisplayName("a quote inside an unquoted CSV cell does not hide the row breaks")
+        void csvLiteralQuotes() throws Exception {
+            // Read as an opening quote, the " of the inch mark hid every row break,
+            // and the CRLF file came back with LF.
+            assertThat(pipeline.formatInput("size (\"),name\r\n12,pizza\r\n14,calzone\r\n", Formats.FMT_CSV, opts))
+                  .isEqualTo("\"size (\"\")\",name\r\n12,pizza\r\n14,calzone\r\n");
+            assertThat(pipeline.formatInput("name;height\r\nBob;5'11\"\r\nAnn;6'0\"\r\n", Formats.FMT_CSV,
+                  opts.withCsvFormat(CsvConverter.CsvFormat.SEMICOLON)))
+                  .isEqualTo("name;height\r\nBob;\"5'11\"\"\"\r\nAnn;\"6'0\"\"\"\r\n");
+        }
+
         @ParameterizedTest(name = "{0}")
         @ValueSource(strings = {"JSON", "XML", "YAML", "CSV", "TOML", "Protobuf", "Java POJO", "Kotlin", "JSON Schema"})
         @DisplayName("every output writes LF, whatever the platform's separator")

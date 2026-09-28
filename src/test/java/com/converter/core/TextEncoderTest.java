@@ -71,6 +71,13 @@ class TextEncoderTest {
         }
     }
 
+    @Test @DisplayName("a quote inside an unquoted cell of the replaced file does not hide its CRLF")
+    void literalQuoteInReplacedFile() {
+        byte[] head = "size (\"),name\r\n12,pizza\r\n".getBytes(StandardCharsets.UTF_8);
+        TextEncoder.Encoded saved = TextEncoder.forSave("a,b\n1,2\n", Formats.FMT_CSV, head, StandardCharsets.UTF_8, "\n");
+        assertThat(new String(saved.bytes(), StandardCharsets.UTF_8)).isEqualTo("a,b\r\n1,2\r\n");
+    }
+
     @Test @DisplayName("a CSV saved over UTF-16 preserves cell line breaks as well as encoding and BOM")
     void csvCellLineBreaksInUtf16() {
         byte[] mark = {(byte) 0xFF, (byte) 0xFE};

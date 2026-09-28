@@ -127,8 +127,9 @@ public class ConversionPipeline {
         String formatted = formatter.format(input, fmt, opts);
         if (FMT_CSV.equals(fmt)) {
             char quote = opts.csvFormat().quote();
-            String separator = LineBreaks.ofCsv(input, quote);
-            return LineBreaks.convertCsv(formatted, separator == null ? "\n" : separator, quote);
+            String delimiter = String.valueOf(opts.csvFormat().delimiter());
+            String separator = LineBreaks.ofCsv(input, delimiter, quote);
+            return LineBreaks.convertCsv(formatted, separator == null ? "\n" : separator, delimiter, quote);
         }
         return withLineBreaksOf(input, formatted);
     }
