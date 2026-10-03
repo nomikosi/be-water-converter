@@ -65,6 +65,32 @@ class SourcePositionTest {
               .isNotNull();
     }
 
+    @Test @DisplayName("a parser's message reads as one line ending with the position, without its location text")
+    void describe() {
+        // On a second line, Jackson's location text opened a balloon of parser
+        // internals for every syntax error.
+        String json = SourcePosition.describe(catchThrowable(() ->
+              pipeline.normalizeToJson("{\"a\": 1,, }", Formats.FMT_JSON, ConversionOptions.DEFAULTS)));
+        assertThat(json).startsWith("Unexpected character").endsWith("(line 1, column 9)")
+              .doesNotContain("\n").doesNotContain("Source").doesNotContain("REDACTED");
+        assertThat(SourcePosition.describe(catchThrowable(() ->
+              pipeline.normalizeToJson("a,b\n1,\"open\n", Formats.FMT_CSV, ConversionOptions.DEFAULTS))))
+              .isEqualTo("Missing closing quote for value (line 3, column 1)");
+        assertThat(SourcePosition.describe(catchThrowable(() ->
+              pipeline.normalizeToJson("<a><b></a>", Formats.FMT_XML, ConversionOptions.DEFAULTS))))
+              .startsWith("Unexpected close tag </a>; expected </b>. (line 1, column")
+              .doesNotContain("\n").doesNotContain("row,col");
+        assertThat(SourcePosition.describe(catchThrowable(() ->
+              pipeline.normalizeToJson("a = = 1\n", Formats.FMT_TOML, ConversionOptions.DEFAULTS))))
+              .matches("[^\\n]+ \\(line \\d+, column \\d+\\)").doesNotContain("Source");
+        // YAML quotes the offending line, and the plugin's own messages are already words.
+        Throwable yaml = catchThrowable(() ->
+              pipeline.normalizeToJson("a: 1\nb: [1, 2\n", Formats.FMT_YAML, ConversionOptions.DEFAULTS));
+        assertThat(SourcePosition.describe(yaml)).isEqualTo(yaml.getMessage());
+        assertThat(SourcePosition.describe(new IllegalArgumentException("Input is empty"))).isEqualTo("Input is empty");
+        assertThat(SourcePosition.describe(new IllegalStateException())).isEqualTo("IllegalStateException");
+    }
+
     @Test @DisplayName("failures without a location, and cyclic causes, report none")
     void none() {
         assertThat(SourcePosition.of(new IllegalArgumentException("no position"))).isNull();

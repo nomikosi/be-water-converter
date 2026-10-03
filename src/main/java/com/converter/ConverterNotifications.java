@@ -62,9 +62,10 @@ final class ConverterNotifications {
     /**
      * A failure's message, or its class name when it carries none. "null" and
      * "Unknown error" told the user nothing about what had actually gone wrong.
+     * A parser's message comes without its own location text, ending with the
+     * line and column instead.
      */
     static String describe(Throwable failure) {
-        String message = failure.getMessage();
-        return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
+        return com.converter.core.SourcePosition.describe(failure);
     }
 }
