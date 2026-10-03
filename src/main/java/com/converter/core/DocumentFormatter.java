@@ -173,8 +173,18 @@ final class DocumentFormatter {
                       + "underscore-separated numbers come back as plain decimals, and inf and nan "
                       + "as text, because the JSON step this uses has no other way to write them. "
                       + "The document is left as it is.");
-            if (TOML_DECIMAL_NUMBER.matcher(token).matches())
-                rejectRewrittenNumber(token, new BigDecimal(token.startsWith("+") ? token.substring(1) : token));
+            if (TOML_DECIMAL_NUMBER.matcher(token).matches()) {
+                BigDecimal value;
+                try {
+                    value = new BigDecimal(token.startsWith("+") ? token.substring(1) : token);
+                } catch (NumberFormatException unreadable) {
+                    // An exponent past what BigDecimal holds, as in 1e99999999999999.
+                    // The parser below refuses it too, naming the value and its line,
+                    // where this said only "Too many nonzero exponent digits."
+                    return;
+                }
+                rejectRewrittenNumber(token, value);
+            }
         });
         String pivot = toml.tomlToJson(input);
         // jsonToToml renders an empty table as the literal "# empty document",

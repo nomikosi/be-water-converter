@@ -192,6 +192,14 @@ class DocumentFormatterTest {
     @Nested @DisplayName("TOML")
     class Toml {
 
+        @Test @DisplayName("a number past what can be read is refused by the parser, which names it and its line")
+        void unreadableNumber() {
+            // Format's own number check failed first, saying only "Too many nonzero exponent digits."
+            assertThatThrownBy(() -> pipeline.formatInput("a = 1\nx = 1e99999999999999\n", Formats.FMT_TOML, opts))
+                  .satisfies(failure -> assertThat(SourcePosition.describe(failure))
+                        .contains("1e99999999999999").containsPattern("\\(line \\d+, column \\d+\\)$"));
+        }
+
         @Test @DisplayName("Format keeps TOML floats as written, and refuses literals JSON cannot spell")
         void tomlFormatKeepsNumbers() throws Exception {
             assertThat(pipeline.formatInput("a = 1.10\n", Formats.FMT_TOML, opts))
