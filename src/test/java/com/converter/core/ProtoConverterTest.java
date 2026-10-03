@@ -1316,6 +1316,18 @@ class ProtoConverterTest {
                   .hasMessageContaining("Duplicate field number 1");
         }
 
+        @Test @DisplayName("a oneof, message or enum declared in a group is the group's own")
+        void groupDeclarations() throws Exception {
+            // The parent's field 4 and the group's are apart: a oneof inside the
+            // group was read as the parent's, and refused as a duplicate.
+            assertThat(converter.protoToJson("syntax = \"proto2\";\nmessage Outer {\n  optional int32 code = 4;\n"
+                  + "  optional group Result = 1 {\n    oneof kind {\n      int32 code = 4;\n      Detail detail = 5;\n"
+                  + "    }\n    message Detail { optional string why = 6; }\n"
+                  + "    enum Level { LOW = 0; HIGH = 1; }\n    optional Level level = 7;\n  }\n}\n"))
+                  .isEqualTo("{\"Outer\":{\"code\":0,\"result\":{\"level\":\"LOW\",\"code\":0,"
+                        + "\"detail\":{\"why\":\"\"}}}}");
+        }
+
         @Test @DisplayName("proto2 defaults are the values the fields start with")
         void explicitDefaults() throws Exception {
             assertThat(converter.protoToJson("syntax = \"proto2\";\nmessage SearchRequest {\n"

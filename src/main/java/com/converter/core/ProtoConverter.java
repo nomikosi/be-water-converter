@@ -234,16 +234,27 @@ public class ProtoConverter {
         Scope own = new Scope(enclosing);
         msg.inner = own;
         enclosing.messages.put(msg.name, msg);
+        // A group is a nested message too, named as written: its fields are
+        // its own, and they were read as fields of the message around it. What
+        // it declares is its own as well, so the groups are blanked before
+        // this message's own types are searched for.
+        msg.groups = groups(ownBody(msg), msg.body, msg.bodyOffset);
+        String body = withoutGroups(msg.body, msg.groups);
         // Enums of the nested messages belong to those messages, so they are
         // stripped before the search; the nested messages themselves are found
         // with depth tracking and register their own contents recursively.
-        for (Block en : findNamedBlocks(stripBlocks(msg.body, "message"), "enum"))
+        for (Block en : findNamedBlocks(stripBlocks(body, "message"), "enum"))
             own.enumDefaults.put(en.name, firstEnumValue(en));
-        for (Block nested : findNamedBlocks(msg.body, "message", msg.bodyOffset)) register(nested, own);
-        // A group is a nested message too, named as written: its fields are
-        // its own, and they were read as fields of the message around it.
-        msg.groups = groups(ownBody(msg), msg.bodyOffset);
+        for (Block nested : findNamedBlocks(body, "message", msg.bodyOffset)) register(nested, own);
         for (Group group : msg.groups) register(group.block(), own);
+    }
+
+    /**
+     * This message's own oneofs: not those of the messages nested in it, nor
+     * those of its groups, which are the groups' own.
+     */
+    private List<Block> ownOneofs(Block msg) {
+        return findNamedBlocks(withoutGroups(stripBlocks(msg.body, "message"), msg.groups), "oneof", msg.bodyOffset);
     }
 
     /** A message's body without the blocks of what it declares, offsets kept. */
@@ -251,16 +262,20 @@ public class ProtoConverter {
         return stripBlocks(msg.body, "message", "oneof", "enum", "extend");
     }
 
-    /** The groups written directly in {@code body}, in order. */
-    private List<Group> groups(String body, int offset) {
+    /**
+     * The groups written directly in a message: found in {@code own}, its body
+     * with what it declares blanked, and read from {@code body}, the same text
+     * whole, since a group declares oneofs and types of its own.
+     */
+    private List<Group> groups(String own, String body, int offset) {
         List<Group> groups = new ArrayList<>();
-        Matcher m = GROUP_HEADER.matcher(body);
+        Matcher m = GROUP_HEADER.matcher(own);
         int from = 0;
         while (m.find(from)) {
             int bodyStart = m.end();
             int depth = 1, pos = bodyStart;
-            while (pos < body.length() && depth > 0) {
-                char c = body.charAt(pos);
+            while (pos < own.length() && depth > 0) {
+                char c = own.charAt(pos);
                 if (c == '{') depth++;
                 else if (c == '}') depth--;
                 pos++;
@@ -342,8 +357,7 @@ public class ProtoConverter {
             // left two paths that could disagree about which error a user sees.
             addFields(flatBody, msg.groups, node, msg.inner, resolving, source, msg.bodyOffset, expanded);
 
-            // This message's own oneofs, not those of the messages nested in it.
-            for (Block oneof : findNamedBlocks(stripBlocks(msg.body, "message"), "oneof", msg.bodyOffset))
+            for (Block oneof : ownOneofs(msg))
                 addFields(oneof.body, List.of(), node, msg.inner, resolving, source, oneof.bodyOffset, expanded);
         } finally {
             resolving.remove(msg);
@@ -723,7 +737,7 @@ public class ProtoConverter {
         // Only this message's own oneofs: searched over the raw body, a oneof
         // inside a nested message was validated against THIS message's numbers,
         // so an inner "int32 x = 1" was reported as a duplicate of the outer one.
-        List<Block> oneofs = findNamedBlocks(stripBlocks(msg.body, "message"), "oneof");
+        List<Block> oneofs = ownOneofs(msg);
         Set<Long> seenNumbers = new HashSet<>();
         validateMessageBody(msg.name, withoutGroups(ownBody(msg), msg.groups), seenNumbers);
         // A group's number is this message's; the fields inside it are the
