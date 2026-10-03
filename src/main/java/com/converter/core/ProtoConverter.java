@@ -160,6 +160,8 @@ public class ProtoConverter {
         final Map<String, Scope> packages = new LinkedHashMap<>();
         final Map<String, Block> messages = new LinkedHashMap<>();
         final Map<String, String> enumDefaults = new LinkedHashMap<>();
+        /** The enums whose defaults are above, for decoding payloads by name. */
+        final Map<String, Block> enums = new LinkedHashMap<>();
 
         Scope(Scope parent) { this.parent = parent; }
 
@@ -179,6 +181,20 @@ public class ProtoConverter {
             throw new IllegalArgumentException(
                 "Protobuf input is empty. Paste a proto3 schema containing at least one 'message' block.");
 
+        Parsed parsed = parse(protoSchema);
+        ObjectNode root = jsonMapper.createObjectNode();
+        long[] expanded = {0};
+        for (Block msg : parsed.topMessages()) {
+            root.set(msg.name, buildMessageNode(msg, new HashSet<>(), protoSchema, expanded));
+        }
+
+        return jsonMapper.writeValueAsString(root);
+    }
+
+    /** A schema as both readers start from it: masked, its types registered, every message validated. */
+    private record Parsed(List<Block> topMessages, Scope fileScope, String packageName, String clean) {}
+
+    private Parsed parse(String protoSchema) {
         String clean = flattenOptionAggregates(flattenOptionGroups(maskCommentsAndStrings(protoSchema)));
         validateBraces(clean);
 
@@ -196,10 +212,12 @@ public class ProtoConverter {
         }
 
         Scope fileScope = new Scope(null);
-        Matcher packageName = Pattern.compile("\\bpackage\\s+([\\w.]+)\\s*;")
+        String packageName = "";
+        Matcher packageMatch = Pattern.compile("\\bpackage\\s+([\\w.]+)\\s*;")
               .matcher(stripBlocks(clean, "message", "enum", "service"));
-        if (packageName.find()) {
-            for (String part : packageName.group(1).split("\\.")) {
+        if (packageMatch.find()) {
+            packageName = packageMatch.group(1);
+            for (String part : packageName.split("\\.")) {
                 Scope child = new Scope(fileScope);
                 fileScope.packages.put(part, child);
                 fileScope = child;
@@ -208,8 +226,10 @@ public class ProtoConverter {
         // Top-level enums are what is left once every message block is removed.
         // Searching the whole text found the nested ones too and registered
         // them at file level, where any message could see them.
-        for (Block en : findNamedBlocks(stripBlocks(clean, "message"), "enum"))
+        for (Block en : findNamedBlocks(stripBlocks(clean, "message"), "enum")) {
             fileScope.enumDefaults.put(en.name, firstEnumValue(en));
+            fileScope.enums.put(en.name, en);
+        }
         for (Block msg : topMessages) register(msg, fileScope);
 
         // Every message is validated, not only the ones a field happens to
@@ -217,14 +237,205 @@ public class ProtoConverter {
         // message nothing pointed at was never checked at all — its javadoc
         // said each message body is validated, and it was not.
         for (Block msg : topMessages) validateTree(msg);
+        return new Parsed(topMessages, fileScope, packageName, clean);
+    }
 
-        ObjectNode root = jsonMapper.createObjectNode();
-        long[] expanded = {0};
-        for (Block msg : topMessages) {
-            root.set(msg.name, buildMessageNode(msg, new HashSet<>(), protoSchema, expanded));
+    // ── Schema model, for decoding payloads ───────────────────────────────
+
+    private static final Pattern MAP_TYPE = Pattern.compile("map\\s*<\\s*(\\w+)\\s*,\\s*([\\w.]+)\\s*>");
+
+    private static final Pattern ENUM_VALUE_NUMBER = Pattern.compile(
+        "(\\w+)\\s*=\\s*(-?(?:" + FIELD_NUMBER + "))" + FIELD_OPTIONS, Pattern.DOTALL);
+
+    /** {@code syntax = "proto3";} or {@code edition = "2023";}, its literal masked to spaces. */
+    private static final Pattern SYNTAX_STATEMENT = Pattern.compile("(?<![\\w.])(syntax|edition)\\s*=(?=\\s*;)");
+
+    /** An editions file's {@code option features.field_presence = IMPLICIT;}. */
+    private static final Pattern PRESENCE_OPTION = Pattern.compile(
+        "(?<![\\w.])option\\s+features\\.field_presence\\s*=\\s*(\\w+)\\s*;");
+
+    /** The same feature, set on one field among its options. */
+    private static final Pattern PRESENCE_FIELD_OPTION = Pattern.compile(
+        "(?:\\[|,)\\s*features\\.field_presence\\s*=\\s*(\\w+)");
+
+    /**
+     * Reads a schema to decode payloads against: every message and enum, fully
+     * qualified, with each field's type resolved the way {@link #protoToJson}
+     * resolves it. A type from another file, which this one imports, stays
+     * unresolved, and a payload's field of that type is decoded raw.
+     */
+    public ProtoSchema readSchema(String protoSchema) {
+        if (protoSchema == null || protoSchema.isBlank())
+            throw new IllegalArgumentException(
+                  "The schema is empty. Choose a .proto file that declares the message the payload holds.");
+        Parsed parsed = parse(protoSchema);
+        String prefix = parsed.packageName().isEmpty() ? "" : parsed.packageName() + ".";
+        java.util.IdentityHashMap<Block, String> names = new java.util.IdentityHashMap<>();
+        List<Block> messages = new ArrayList<>();
+        List<Block> enums = new ArrayList<>();
+        for (Block en : parsed.fileScope().enums.values()) {
+            names.put(en, prefix + en.name);
+            enums.add(en);
         }
+        for (Block msg : parsed.topMessages()) nameTree(msg, prefix + msg.name, names, messages, enums);
+        Set<Block> messageBlocks = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        messageBlocks.addAll(messages);
+        boolean implicitPresence = implicitPresenceByDefault(protoSchema, parsed.clean());
 
-        return jsonMapper.writeValueAsString(root);
+        Map<String, ProtoSchema.Message> messageModels = new LinkedHashMap<>();
+        for (Block msg : messages)
+            messageModels.put(names.get(msg), messageModel(msg, names, messageBlocks, protoSchema, implicitPresence));
+        Map<String, ProtoSchema.EnumType> enumModels = new LinkedHashMap<>();
+        for (Block en : enums) enumModels.put(names.get(en), enumModel(en, names.get(en)));
+        return new ProtoSchema(messageModels, enumModels);
+    }
+
+    /** Names a message, and what it declares, by the full names protoc gives them. */
+    private static void nameTree(Block msg, String fullName, java.util.IdentityHashMap<Block, String> names,
+          List<Block> messages, List<Block> enums) {
+        names.put(msg, fullName);
+        messages.add(msg);
+        for (Block en : msg.inner.enums.values()) {
+            names.put(en, fullName + "." + en.name);
+            enums.add(en);
+        }
+        // Groups are registered here too: each is a message named as written.
+        for (Block nested : msg.inner.messages.values())
+            nameTree(nested, fullName + "." + nested.name, names, messages, enums);
+    }
+
+    /**
+     * Whether a singular field has implicit presence unless it says otherwise:
+     * in proto3, yes; in proto2, which a file without a syntax statement is,
+     * no; in an editions file, only when the file sets
+     * {@code features.field_presence = IMPLICIT}, the one place besides a
+     * field that the feature can be set.
+     */
+    private boolean implicitPresenceByDefault(String source, String clean) {
+        Matcher syntax = SYNTAX_STATEMENT.matcher(clean);
+        if (!syntax.find()) return false;
+        if (syntax.group(1).equals("syntax")) {
+            try {
+                return ProtoStringLiteral.readStatement(source, syntax.end()).equals("proto3");
+            } catch (IllegalArgumentException notALiteral) {
+                throw new IllegalArgumentException(
+                      "The syntax statement needs a quoted value, such as syntax = \"proto3\";");
+            }
+        }
+        Matcher option = PRESENCE_OPTION.matcher(stripBlocks(clean, "message", "enum", "service"));
+        return option.find() && option.group(1).equals("IMPLICIT");
+    }
+
+    private ProtoSchema.Message messageModel(Block msg, java.util.IdentityHashMap<Block, String> names,
+          Set<Block> messageBlocks, String source, boolean implicitPresence) {
+        // Keyed by position in the source, so fields, oneof members and groups
+        // come out in the order they were declared.
+        java.util.TreeMap<Integer, ProtoSchema.Field> declared = new java.util.TreeMap<>();
+        addModelFields(withoutGroups(ownBody(msg), msg.groups), msg.bodyOffset, msg.inner, names, messageBlocks,
+              source, declared, implicitPresence, null);
+        // A oneof's members have presence: setting one to its default still sets it.
+        for (Block oneof : ownOneofs(msg))
+            addModelFields(oneof.body, oneof.bodyOffset, msg.inner, names, messageBlocks, source, declared, false,
+                  oneof.name);
+        for (Group group : msg.groups) {
+            int number = (int) fieldNumber(msg.name, "group " + group.block().name, group.number());
+            declared.put(msg.bodyOffset + group.start(), new ProtoSchema.Field(group.fieldName(), group.fieldName(),
+                  number, group.repeated(), ProtoSchema.Kind.GROUP, names.get(group.block()), null, null, null, false));
+        }
+        Map<Integer, ProtoSchema.Field> fields = new LinkedHashMap<>();
+        for (ProtoSchema.Field field : declared.values()) fields.put(field.number(), field);
+        return new ProtoSchema.Message(names.get(msg), fields);
+    }
+
+    private void addModelFields(String body, int bodyOffset, Scope scope, java.util.IdentityHashMap<Block, String> names,
+          Set<Block> messageBlocks, String source, java.util.TreeMap<Integer, ProtoSchema.Field> declared,
+          boolean implicitPresence, String oneof) {
+        Matcher fm = FIELD_PATTERN.matcher(body);
+        while (fm.find()) {
+            String label = fm.group(1) == null ? "" : fm.group(1).trim();
+            boolean repeated = label.equals("repeated");
+            String type = fm.group(2).trim();
+            String name = fm.group(3);
+            int number = (int) fieldNumber(name, fm.group(), fm.group(4));
+            String jsonKey = name;
+            Matcher jsonName = JSON_NAME_OPTION.matcher(fm.group());
+            if (jsonName.find()) jsonKey = ProtoStringLiteral.read(source, bodyOffset + fm.start() + jsonName.end());
+            // proto3's optional gives a field presence; an editions field may say either way.
+            boolean implicit = implicitPresence && label.isEmpty();
+            Matcher presence = PRESENCE_FIELD_OPTION.matcher(fm.group());
+            if (presence.find()) implicit = presence.group(1).equals("IMPLICIT");
+            Matcher map = MAP_TYPE.matcher(type);
+            ProtoSchema.Field field = map.matches()
+                  ? new ProtoSchema.Field(name, jsonKey, number, true, ProtoSchema.Kind.MAP, type, map.group(1),
+                        typedField("value", "value", 2, false, map.group(2), scope, names, messageBlocks, null, false),
+                        null, false)
+                  : typedField(name, jsonKey, number, repeated, type, scope, names, messageBlocks, oneof,
+                        implicit && !repeated);
+            declared.put(bodyOffset + fm.start(), field);
+        }
+    }
+
+    private static ProtoSchema.Field typedField(String name, String jsonKey, int number, boolean repeated,
+          String type, Scope scope, java.util.IdentityHashMap<Block, String> names, Set<Block> messageBlocks,
+          String oneof, boolean implicitPresence) {
+        if (SCALAR_TYPES.contains(type))
+            return new ProtoSchema.Field(name, jsonKey, number, repeated, ProtoSchema.Kind.SCALAR, type, null, null,
+                  oneof, implicitPresence);
+        Object resolved = resolveModelType(scope, type);
+        if (resolved instanceof Block block && names.containsKey(block)) {
+            // A message field always has presence.
+            boolean message = messageBlocks.contains(block);
+            return new ProtoSchema.Field(name, jsonKey, number, repeated,
+                  message ? ProtoSchema.Kind.MESSAGE : ProtoSchema.Kind.ENUM, names.get(block), null, null, oneof,
+                  implicitPresence && !message);
+        }
+        // From another file, a message or an enum: which cannot be told, so what the payload holds is shown.
+        return new ProtoSchema.Field(name, jsonKey, number, repeated, ProtoSchema.Kind.UNRESOLVED, type, null, null,
+              oneof, false);
+    }
+
+    /** {@link #resolveType}, finding enums as the blocks that declare them rather than their defaults. */
+    private static Object resolveModelType(Scope scope, String type) {
+        boolean absolute = type.startsWith(".");
+        String[] parts = (absolute ? type.substring(1) : type).split("\\.");
+        if (absolute) {
+            while (scope.parent != null) scope = scope.parent;
+            return descendModel(modelMember(scope, parts[0]), parts);
+        }
+        for (Scope current = scope; current != null; current = current.parent) {
+            Object first = modelMember(current, parts[0]);
+            if (first != null) return descendModel(first, parts);
+        }
+        return null;
+    }
+
+    private static Object modelMember(Scope scope, String name) {
+        Scope pkg = scope.packages.get(name);
+        if (pkg != null) return pkg;
+        Block message = scope.messages.get(name);
+        return message != null ? message : scope.enums.get(name);
+    }
+
+    private static Object descendModel(Object current, String[] parts) {
+        for (int i = 1; i < parts.length; i++) {
+            Scope inner = current instanceof Block owner ? owner.inner
+                  : current instanceof Scope pkg ? pkg : null;
+            if (inner == null) return null;
+            current = modelMember(inner, parts[i]);
+        }
+        return current;
+    }
+
+    private static ProtoSchema.EnumType enumModel(Block en, String fullName) {
+        Map<Integer, String> values = new LinkedHashMap<>();
+        for (String raw : en.body.split(";")) {
+            String stmt = raw.trim();
+            if (stmt.isEmpty() || IGNORED_STATEMENT.matcher(stmt).matches()) continue;
+            Matcher m = ENUM_VALUE_NUMBER.matcher(stmt);
+            // With allow_alias, protoc's JSON printer writes the first name declared.
+            if (m.matches()) values.putIfAbsent(integerLiteral(m.group(2)).intValue(), m.group(1));
+        }
+        return new ProtoSchema.EnumType(fullName, values);
     }
 
     // ── Registration ──────────────────────────────────────────────────────
@@ -243,8 +454,10 @@ public class ProtoConverter {
         // Enums of the nested messages belong to those messages, so they are
         // stripped before the search; the nested messages themselves are found
         // with depth tracking and register their own contents recursively.
-        for (Block en : findNamedBlocks(stripBlocks(body, "message"), "enum"))
+        for (Block en : findNamedBlocks(stripBlocks(body, "message"), "enum")) {
             own.enumDefaults.put(en.name, firstEnumValue(en));
+            own.enums.put(en.name, en);
+        }
         for (Block nested : findNamedBlocks(body, "message", msg.bodyOffset)) register(nested, own);
         for (Group group : msg.groups) register(group.block(), own);
     }

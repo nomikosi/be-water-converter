@@ -29,7 +29,9 @@ public record ConversionOptions(
       boolean detectDates,
       boolean inferTypes,
       boolean sortKeys,
-      String filterPath) {
+      String filterPath,
+      String protoSchema,
+      String protoMessage) {
 
     public static final ConversionOptions DEFAULTS = new ConversionOptions(
           CsvConverter.CsvMode.FLAT_FIRST,
@@ -38,7 +40,18 @@ public record ConversionOptions(
           true,    // detectDates
           true,    // inferTypes
           false,   // sortKeys
-          "");     // filterPath: empty means the whole document
+          "",      // filterPath: empty means the whole document
+          "",      // protoSchema: the .proto text a payload is decoded against, empty for none
+          "");     // protoMessage: the message type a payload holds, empty to decode it raw
+
+    /**
+     * Normalises the two Protobuf payload settings: null reads as empty, so a
+     * record built from a settings store without them still compares equal.
+     */
+    public ConversionOptions {
+        protoSchema = protoSchema == null ? "" : protoSchema;
+        protoMessage = protoMessage == null ? "" : protoMessage;
+    }
 
     /** True when a subtree filter is actually set. */
     public boolean hasFilter() {
@@ -47,36 +60,50 @@ public record ConversionOptions(
 
     public ConversionOptions withCsvMode(CsvConverter.CsvMode mode) {
         return new ConversionOptions(mode, csvFormat, useLombok, detectDates, inferTypes,
-              sortKeys, filterPath);
+              sortKeys, filterPath, protoSchema, protoMessage);
     }
 
     public ConversionOptions withCsvFormat(CsvConverter.CsvFormat format) {
         return new ConversionOptions(csvMode, format, useLombok, detectDates, inferTypes,
-              sortKeys, filterPath);
+              sortKeys, filterPath, protoSchema, protoMessage);
     }
 
     public ConversionOptions withLombok(boolean lombok) {
         return new ConversionOptions(csvMode, csvFormat, lombok, detectDates, inferTypes,
-              sortKeys, filterPath);
+              sortKeys, filterPath, protoSchema, protoMessage);
     }
 
     public ConversionOptions withDetectDates(boolean detect) {
         return new ConversionOptions(csvMode, csvFormat, useLombok, detect, inferTypes,
-              sortKeys, filterPath);
+              sortKeys, filterPath, protoSchema, protoMessage);
     }
 
     public ConversionOptions withInferTypes(boolean infer) {
         return new ConversionOptions(csvMode, csvFormat, useLombok, detectDates, infer,
-              sortKeys, filterPath);
+              sortKeys, filterPath, protoSchema, protoMessage);
     }
 
     public ConversionOptions withSortKeys(boolean sort) {
         return new ConversionOptions(csvMode, csvFormat, useLombok, detectDates, inferTypes,
-              sort, filterPath);
+              sort, filterPath, protoSchema, protoMessage);
     }
 
     public ConversionOptions withFilterPath(String path) {
         return new ConversionOptions(csvMode, csvFormat, useLombok, detectDates, inferTypes,
-              sortKeys, path == null ? "" : path);
+              sortKeys, path == null ? "" : path, protoSchema, protoMessage);
+    }
+
+    /**
+     * The schema a Protobuf payload is decoded against, and the message type it
+     * holds; empty strings decode the payload raw.
+     */
+    public ConversionOptions withProtoSchema(String schema, String message) {
+        return new ConversionOptions(csvMode, csvFormat, useLombok, detectDates, inferTypes,
+              sortKeys, filterPath, schema, message);
+    }
+
+    /** True when a payload is decoded with a schema rather than raw. */
+    public boolean hasProtoMessage() {
+        return !protoSchema.isBlank() && !protoMessage.isBlank();
     }
 }

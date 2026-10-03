@@ -28,6 +28,11 @@ final class ProtoStringLiteral {
         return utf8(readBytes(source, start));
     }
 
+    /** A literal that ends a statement, as {@code syntax = "proto3";} does. */
+    static String readStatement(String source, int start) {
+        return utf8(readBytes(source, start, ";"));
+    }
+
     /** The literal's text, which has to be UTF-8. */
     static String utf8(byte[] bytes) {
         try {
@@ -39,6 +44,11 @@ final class ProtoStringLiteral {
 
     /** The bytes a string literal spells, for a bytes field's default as much as a name. */
     static byte[] readBytes(String source, int start) {
+        return readBytes(source, start, ",]");
+    }
+
+    /** The bytes of a literal followed by one of {@code ends}. */
+    private static byte[] readBytes(String source, int start, String ends) {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         int i = trivia(source, start);
         boolean found = false;
@@ -106,7 +116,7 @@ final class ProtoStringLiteral {
             if (!closed) throw invalid();
             i = trivia(source, i);
         }
-        if (!found || i == source.length() || source.charAt(i) != ',' && source.charAt(i) != ']')
+        if (!found || i == source.length() || ends.indexOf(source.charAt(i)) < 0)
             throw invalid();
         return bytes.toByteArray();
     }

@@ -172,7 +172,8 @@ public class ConverterPanel implements Disposable {
         outputCombo.getAccessibleContext().setAccessibleName("Output format");
         outputCombo.setSelectedItem(FMT_XML);
 
-        options = new OptionsBar(this::doConvert);   // Enter in the filter re-runs the conversion
+        // Enter in the filter re-runs the conversion; the schema button picks a payload's .proto.
+        options = new OptionsBar(this::doConvert, this::chooseProtoSchema);
 
         inputCombo.addActionListener(e -> {
             String fmt = (String) inputCombo.getSelectedItem();
@@ -491,6 +492,10 @@ public class ConverterPanel implements Disposable {
                           ? text.substring(0, DETECT_SAMPLE_CHARS) : text;
                     String detected = FormatDetector.detectFormat(head);
                     if (detected == null) return;
+                    // Bytes pasted for a payload stay one: a C array of hex
+                    // bytes, a line of them at a time, reads as CSV.
+                    if (FMT_PROTO_PAYLOAD.equals(inputCombo.getSelectedItem())
+                          && ProtoPayloadText.readsAsPayload(head)) return;
                     // The delimiter is part of what "CSV" means for a paste, so
                     // it is set even when the format itself is already right.
                     String note = FMT_CSV.equals(detected) ? options.applyDetectedDelimiter(head, null) : "";
@@ -970,11 +975,25 @@ public class ConverterPanel implements Disposable {
             setStatusWarn(newInputFmt + " output cannot be used as input");
             return;
         }
+        // A payload is decoded, never written.
+        if (!Formats.isOutput(newOutputFmt)) {
+            setStatusWarn(newOutputFmt + " input cannot be used as output");
+            return;
+        }
 
         editors.apply(editors.snapshot().swapped());
         inputCombo.setSelectedItem(newInputFmt);
         outputCombo.setSelectedItem(newOutputFmt);
         setStatus("Swapped input and output", true);
+    }
+
+    /** Lets the user pick the .proto file payloads are decoded against. */
+    private void chooseProtoSchema() {
+        fileOps.chooseProtoSchema(schema -> {
+            options.useProtoSchema(schema.name(), schema.text(), schema.messages());
+            setStatus(String.format(java.util.Locale.ROOT, "Schema %s: %d message types",
+                  schema.name(), schema.messages().size()), true);
+        });
     }
 
     private boolean isValidInputFormat(String format) {

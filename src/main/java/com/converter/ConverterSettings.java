@@ -58,7 +58,7 @@ final class ConverterSettings {
               enumOr(CsvConverter.CsvMode.class, load(CSV_MODE), CsvConverter.CsvMode.FLAT_FIRST);
         return new ConversionOptions(mode, delimiter.format,
               flag(LOMBOK, false), flag(DETECT_DATES, true), flag(INFER_TYPES, true),
-              flag(SORT_KEYS, false), "");
+              flag(SORT_KEYS, false), "", "", "");
     }
 
     /** Every option at once, as restoring a history entry sets them. */

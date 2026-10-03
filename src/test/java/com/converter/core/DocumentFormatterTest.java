@@ -468,6 +468,13 @@ class DocumentFormatterTest {
                   "message A {\n  string x = 1;   \n\n\n\n}", Formats.FMT_PROTO, ConversionOptions.DEFAULTS.withInferTypes(true));
             assertThat(result).doesNotContain("\n\n\n");
         }
+
+        @Test @DisplayName("a payload's bytes have no layout to tidy: Format says to convert it instead")
+        void payloadIsNotFormatted() {
+            assertThatThrownBy(() -> pipeline.formatInput("08 96 01", Formats.FMT_PROTO_PAYLOAD, opts))
+                  .isInstanceOf(IllegalArgumentException.class)
+                  .hasMessage("Format does not apply to a Protobuf payload. Convert it to JSON to read what it holds.");
+        }
     }
 
     @Nested @DisplayName("XML as written")

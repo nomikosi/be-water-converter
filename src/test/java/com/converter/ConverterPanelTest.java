@@ -117,7 +117,87 @@ class ConverterPanelTest {
         });
     }
 
+    @Test
+    void swapRefusesAPayloadInputBecauseAPayloadIsNeverWritten() throws Exception {
+        runOnEdt(() -> {
+            ConverterPanel panel = track(new ConverterPanel());
+            RSyntaxTextArea inputArea = field(panel, "inputArea", RSyntaxTextArea.class);
+            RSyntaxTextArea outputArea = field(panel, "outputArea", RSyntaxTextArea.class);
+            JLabel inputFormatLabel = field(panel, "inputFormatLabel", JLabel.class);
+            JLabel outputFormatLabel = field(panel, "outputFormatLabel", JLabel.class);
+
+            inputArea.setText("08 96 01");
+            outputArea.setText("{\"1\": 150}");
+            inputFormatLabel.setText("Protobuf payload");
+            outputFormatLabel.setText("JSON");
+
+            invoke(panel, "doSwap");
+
+            assertThat(inputArea.getText()).isEqualTo("08 96 01");
+            assertThat(outputArea.getText()).isEqualTo("{\"1\": 150}");
+            assertThat(inputFormatLabel.getText()).isEqualTo("Protobuf payload");
+            assertThat(field(panel, "statusLabel", JLabel.class).getText())
+                  .contains("Protobuf payload input cannot be used as output");
+        });
+    }
+
+    @Test
+    void aPayloadsSchemaAndMessageTypeShowForPayloadsAndReachTheOptions() throws Exception {
+        runOnEdt(() -> {
+            ConverterPanel panel = track(new ConverterPanel());
+            OptionsBar options = field(panel, "options", OptionsBar.class);
+            JPanel payloadOptions = field(options, "payloadOptions", JPanel.class);
+            JComboBox<?> inputCombo = field(panel, "inputCombo", JComboBox.class);
+            assertThat(payloadOptions.isVisible()).isFalse();
+
+            inputCombo.setSelectedItem("Protobuf payload");
+            assertThat(payloadOptions.isVisible()).isTrue();
+            // A payload is decoded, never written: it is no output to choose.
+            JComboBox<?> outputCombo = field(panel, "outputCombo", JComboBox.class);
+            for (int i = 0; i < outputCombo.getItemCount(); i++)
+                assertThat(outputCombo.getItemAt(i)).isNotEqualTo("Protobuf payload");
+            // No schema yet: decoded raw.
+            assertThat(options.currentOptions().protoSchema()).isEmpty();
+            assertThat(options.currentOptions().protoMessage()).isEmpty();
+
+            String schema = "syntax = \"proto3\";\npackage demo;\nmessage A { int32 a = 1; }\nmessage B { string b = 1; }\n";
+            options.useProtoSchema("demo.proto", schema, List.of("demo.A", "demo.B"));
+            assertThat(field(options, "schemaLabel", JLabel.class).getText()).isEqualTo("demo.proto");
+            JComboBox<?> messages = field(options, "messageCombo", JComboBox.class);
+            assertThat(messages.getItemCount()).isEqualTo(3);
+            // The first message type is chosen, (raw) still on offer.
+            assertThat(options.currentOptions().protoSchema()).isEqualTo(schema);
+            assertThat(options.currentOptions().protoMessage()).isEqualTo("demo.A");
+            messages.setSelectedItem("demo.B");
+            assertThat(options.currentOptions().protoMessage()).isEqualTo("demo.B");
+            messages.setSelectedItem(OptionsBar.RAW_MESSAGE);
+            assertThat(options.currentOptions().protoMessage()).isEmpty();
+            assertThat(options.currentOptions().protoSchema()).isEqualTo(schema);
+
+            inputCombo.setSelectedItem("JSON");
+            assertThat(payloadOptions.isVisible()).isFalse();
+        });
+    }
+
     // ── Paste detection ───────────────────────────────────────────────────
+
+    @Test
+    void bytesPastedForAPayloadStayAPayload() throws Exception {
+        AtomicReference<ConverterPanel> ref = new AtomicReference<>();
+        runOnEdt(() -> {
+            ConverterPanel panel = track(new ConverterPanel());
+            ref.set(panel);
+            field(panel, "inputCombo", JComboBox.class).setSelectedItem("Protobuf payload");
+            // A C array of the bytes, which alone is detected as CSV.
+            field(panel, "inputArea", RSyntaxTextArea.class).setText("0x08, 0x96, 0x01,\n0x12, 0x07, 0x74,\n");
+        });
+        flushEdt();
+        runOnEdt(() -> assertThat(comboSelection(ref.get(), "inputCombo")).isEqualTo("Protobuf payload"));
+        // What is not bytes still switches it.
+        runOnEdt(() -> field(ref.get(), "inputArea", RSyntaxTextArea.class).setText("name: Ada\nage: 36\n"));
+        flushEdt();
+        runOnEdt(() -> assertThat(comboSelection(ref.get(), "inputCombo")).isEqualTo("YAML"));
+    }
 
     @Test
     void pasteSizedInsertSwitchesTheInputFormat() throws Exception {

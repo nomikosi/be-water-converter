@@ -263,6 +263,48 @@ class ConverterPanelAsyncTest {
         });
     }
 
+    @Test void aPayloadDecodesByItsSchemaAndTheSchemaReturnsWithHistory() throws Exception {
+        String schema = "syntax = \"proto3\";\nmessage Test { int32 a = 1; string b = 2; }\n";
+        onEdt(() -> {
+            panel.loadContent("08 96 01 12 02 68 69", "Protobuf payload");
+            field(panel, "options", OptionsBar.class).useProtoSchema("test.proto", schema, java.util.List.of("Test"));
+            field(panel, "outputCombo", JComboBox.class).setSelectedItem("JSON");
+            panel.convert();
+        });
+        tasks.completeNext();
+        onEdt(() -> {
+            assertThat(new com.fasterxml.jackson.databind.ObjectMapper().readTree(output().getText()))
+                  .isEqualTo(new com.fasterxml.jackson.databind.ObjectMapper().readTree("{\"a\":150,\"b\":\"hi\"}"));
+            ConversionHistory.Entry entry = history().entries().getFirst();
+            assertThat(entry.inputFormat()).isEqualTo("Protobuf payload");
+            assertThat(entry.options().protoSchema()).isEqualTo(schema);
+            assertThat(entry.options().protoMessage()).isEqualTo("Test");
+
+            // Another schema chosen since: restoring the entry brings its own back.
+            OptionsBar options = field(panel, "options", OptionsBar.class);
+            options.useProtoSchema("other.proto", "message Other { int32 x = 1; }", java.util.List.of("Other"));
+            Method restore = ConverterPanel.class.getDeclaredMethod("restoreFromHistory", ConversionHistory.Entry.class);
+            restore.setAccessible(true);
+            restore.invoke(panel, entry);
+            assertThat(options.currentOptions().protoSchema()).isEqualTo(schema);
+            assertThat(options.currentOptions().protoMessage()).isEqualTo("Test");
+            assertThat(field(options, "schemaLabel", JLabel.class).getText()).isEqualTo("from history");
+        });
+    }
+
+    @Test void aMalformedPayloadIsReportedWithTheByteItBreaksAt() throws Exception {
+        onEdt(() -> {
+            panel.loadContent("08 96", "Protobuf payload");
+            output().setText("previous output");
+            panel.convert();
+        });
+        tasks.completeNext();
+        onEdt(() -> {
+            assertThat(status()).contains("The payload ends inside a varint at byte 1.");
+            assertThat(history().entries()).isEmpty();
+        });
+    }
+
     @ParameterizedTest
     @org.junit.jupiter.params.provider.CsvSource({
           "clear,true", "clear,false", "swap,true", "swap,false",

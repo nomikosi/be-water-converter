@@ -35,29 +35,35 @@ public final class Formats {
     public static final String FMT_JAVA = "Java POJO";
     public static final String FMT_KOTLIN = "Kotlin";
     public static final String FMT_SCHEMA = "JSON Schema";
+    /** A binary Protobuf message, pasted as hex or base64: decoded, never written. */
+    public static final String FMT_PROTO_PAYLOAD = "Protobuf payload";
 
     /**
+     * @param output            false for a format the plugin only reads
      * @param rootType          the class name a generated source file declares, or null
      * @param fileMustMatchRoot true when a file holding the output must be named after it
      */
-    public record Format(String name, List<String> extensions, boolean input,
+    public record Format(String name, List<String> extensions, boolean input, boolean output,
                          String rootType, boolean fileMustMatchRoot) {
         public Format { extensions = List.copyOf(extensions); }
-        public String extension() { return extensions.getFirst(); }
+        /** The extension a file of this format is saved with, or "txt" for one with none. */
+        public String extension() { return extensions.isEmpty() ? "txt" : extensions.getFirst(); }
     }
 
     private static final List<Format> ALL = List.of(
-          new Format(FMT_JSON, List.of("json"), true, null, false),
-          new Format(FMT_XML, List.of("xml"), true, null, false),
-          new Format(FMT_YAML, List.of("yaml", "yml"), true, null, false),
-          new Format(FMT_CSV, List.of("csv", "tsv"), true, null, false),
-          new Format(FMT_TOML, List.of("toml"), true, null, false),
-          new Format(FMT_PROTO, List.of("proto"), true, null, false),
-          new Format(FMT_JAVA, List.of("java"), false,
+          new Format(FMT_JSON, List.of("json"), true, true, null, false),
+          new Format(FMT_XML, List.of("xml"), true, true, null, false),
+          new Format(FMT_YAML, List.of("yaml", "yml"), true, true, null, false),
+          new Format(FMT_CSV, List.of("csv", "tsv"), true, true, null, false),
+          new Format(FMT_TOML, List.of("toml"), true, true, null, false),
+          new Format(FMT_PROTO, List.of("proto"), true, true, null, false),
+          // Pasted as text; a payload has no file extension of its own.
+          new Format(FMT_PROTO_PAYLOAD, List.of(), true, false, null, false),
+          new Format(FMT_JAVA, List.of("java"), false, true,
                 JavaPojoGenerator.ROOT_CLASS_NAME, true),
-          new Format(FMT_KOTLIN, List.of("kt"), false,
+          new Format(FMT_KOTLIN, List.of("kt"), false, true,
                 KotlinDataClassGenerator.ROOT_CLASS_NAME, false),
-          new Format(FMT_SCHEMA, List.of("json"), false, null, false));
+          new Format(FMT_SCHEMA, List.of("json"), false, true, null, false));
 
     public static Format named(String name) {
         return ALL.stream().filter(f -> f.name().equals(name)).findFirst().orElse(null);
@@ -66,6 +72,11 @@ public final class Formats {
     public static boolean isInput(String name) {
         Format format = named(name);
         return format != null && format.input();
+    }
+
+    public static boolean isOutput(String name) {
+        Format format = named(name);
+        return format != null && format.output();
     }
 
     public static String inputForFileName(String fileName) {
@@ -82,11 +93,12 @@ public final class Formats {
     }
 
     public static String[] outputNames() {
-        return ALL.stream().map(Format::name).toArray(String[]::new);
+        return ALL.stream().filter(Format::output).map(Format::name).toArray(String[]::new);
     }
 
     public static String[] outputsFor(String input) {
         if (!isInput(input)) return new String[0];
-        return ALL.stream().map(Format::name).filter(name -> !name.equals(input)).toArray(String[]::new);
+        return ALL.stream().filter(Format::output).map(Format::name)
+              .filter(name -> !name.equals(input)).toArray(String[]::new);
     }
 }

@@ -11,7 +11,7 @@ plugins {
 }
 
 group = 'com.converter'
-version = '1.5.3'
+version = '1.6.0'
 
 // Declared before anything else in the script: the IntelliJ Platform plugin
 // reads the toolchain while it configures tasks, and a value once read can
@@ -35,6 +35,10 @@ configurations {
     kotlinCompiler
     lombokProcessor
     kotlinJackson
+    // The IDE bundles protobuf-java 3.24 as lib/protobuf.jar, which comes first
+    // on the test classpaths and would shadow the 4.x the payload tests check
+    // the decoder against. These two jars go ahead of it: see compileTestJava.
+    protobufOracle { transitive = false }
 }
 
 def jacksonBom = 'com.fasterxml.jackson:jackson-bom:2.22.3'
@@ -72,6 +76,13 @@ dependencies {
     // Generated classes type dates as java.time, which plain Jackson refuses
     // to bind; the tests read them the way a user of that output has to.
     testImplementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+    // Google's own Protobuf runtime, to check the payload decoder against: it
+    // encodes the payloads the tests decode, and its JsonFormat prints what a
+    // payload holds from a descriptor built in the test. Never bundled.
+    testImplementation 'com.google.protobuf:protobuf-java:4.36.2'
+    testImplementation 'com.google.protobuf:protobuf-java-util:4.36.2'
+    protobufOracle 'com.google.protobuf:protobuf-java:4.36.2'
+    protobufOracle 'com.google.protobuf:protobuf-java-util:4.36.2'
     // JUnit 4 is required at runtime by the IntelliJ platform test executor,
     // even though every test is a JUnit Jupiter test.
     testRuntimeOnly 'junit:junit:4.13.2'
@@ -79,10 +90,18 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+tasks.named('compileTestJava') {
+    classpath = configurations.protobufOracle + classpath
+}
+
 test {
     useJUnitPlatform()
     jvmArgs '-Dfile.encoding=UTF-8'
     include '**/*Test.class'
+    // These check the decoder against protobuf-java 4, which the IDE's own
+    // protobuf 3 shadows on this JVM; unitTest runs them, with 4 first.
+    exclude 'com/converter/core/ProtoPayloadDecoderTest*'
+    exclude 'com/converter/core/ProtoPayloadCrossCheckTest*'
     // No coverage agent on the IntelliJ-platform test JVM; coverage comes
     // from the plain-JVM unitTest task instead.
     jacoco { enabled = false }
@@ -152,7 +171,7 @@ tasks.register('unitTest', Test) {
     group       = 'verification'
 
     testClassesDirs = sourceSets.test.output.classesDirs
-    classpath       = sourceSets.test.runtimeClasspath
+    classpath       = configurations.protobufOracle + sourceSets.test.runtimeClasspath
 
     useJUnitPlatform()
     jvmArgs '-Dfile.encoding=UTF-8'
@@ -189,7 +208,8 @@ tasks.register('jacocoUnitTestReport', JacocoReport) {
 tasks.named('unitTest') { finalizedBy tasks.named('jacocoUnitTestReport') }
 
 // NOTE: 'check' deliberately does NOT depend on unitTest — the 'test' task
-// already runs a superset of it. CI explicitly runs both JVM environments.
+// already runs a superset of it, but for the protobuf-java cross-checks, which
+// need the plain JVM. CI explicitly runs both JVM environments.
 
 // Make 'build' produce the installable plugin ZIP as well as the Java artifacts.
 tasks.named('build') { dependsOn tasks.named('buildPlugin') }

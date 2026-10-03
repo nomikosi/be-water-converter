@@ -134,6 +134,26 @@ class ConversionPipelineTest {
                   ConversionOptions.DEFAULTS)).isInstanceOf(UnsupportedOperationException.class);
         }
 
+        @Test @DisplayName("a Protobuf payload decodes raw, or by the schema and message type the options carry")
+        void protobufPayloadRoutes() throws Exception {
+            assertThat(pipeline.normalizeToJson("08 96 01", Formats.FMT_PROTO_PAYLOAD, ConversionOptions.DEFAULTS))
+                  .isEqualTo("{\"1\":150}");
+            ConversionOptions typed = ConversionOptions.DEFAULTS.withProtoSchema(
+                  "syntax = \"proto3\";\nmessage Test { int32 a = 1; string b = 2; }", "Test");
+            assertThat(pipeline.normalizeToJson("CJYBEgJoaQ==", Formats.FMT_PROTO_PAYLOAD, typed))
+                  .isEqualTo("{\"a\":150,\"b\":\"hi\"}");
+            // A schema with no message type chosen decodes raw.
+            assertThat(pipeline.normalizeToJson("08 96 01", Formats.FMT_PROTO_PAYLOAD,
+                  ConversionOptions.DEFAULTS.withProtoSchema("message Test { int32 a = 1; }", "")))
+                  .isEqualTo("{\"1\":150}");
+            // On from there like any other input: filtered, sorted, rendered.
+            ConversionOptions filtered = typed.withFilterPath("$.b").withSortKeys(true);
+            assertThat(pipeline.renderFromJson(pipeline.normalizeToJson("08 96 01 12 02 68 69",
+                  Formats.FMT_PROTO_PAYLOAD, filtered), Formats.FMT_YAML, filtered)).contains("hi");
+            assertThat(pipeline.canonicalJson("08 96 01", Formats.FMT_PROTO_PAYLOAD, typed))
+                  .isEqualTo(pipeline.canonicalJson("{\"a\": 150}", Formats.FMT_JSON, typed));
+        }
+
         // ── The two same-typed booleans on the Java arm ───────────────────────
 
         @Test @DisplayName("useLombok reaches the generator")

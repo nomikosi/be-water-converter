@@ -58,6 +58,11 @@ final class OptionsBar {
     private final JPanel csvInputOptions;
     private final JPanel csvDelimiterOptions;
     private final JPanel javaOptions;
+    private final JPanel payloadOptions;
+    private final JLabel schemaLabel;
+    private final JComboBox<String> messageCombo;
+    /** The .proto text a payload is decoded against; empty until one is chosen. */
+    private String protoSchema = "";
     /**
      * True while the controls are set from, or saved to, the remembered
      * settings: the panel then neither saves a change it is following nor
@@ -66,8 +71,14 @@ final class OptionsBar {
     private boolean following;
     private final Runnable follow = this::followSettings;
 
-    /** @param onFilterEnter what Enter in the filter box does: re-run the conversion */
-    OptionsBar(Runnable onFilterEnter) {
+    /** The message choice that decodes a payload without its schema. */
+    static final String RAW_MESSAGE = "(raw)";
+
+    /**
+     * @param onFilterEnter  what Enter in the filter box does: re-run the conversion
+     * @param onChooseSchema what the schema button does: let the user pick a .proto file
+     */
+    OptionsBar(Runnable onFilterEnter, Runnable onChooseSchema) {
         csvModeCombo = ConverterWidgets.combo(CsvConverter.CsvMode.values());
         csvModeCombo.setToolTipText("How arrays of objects are expanded into CSV rows");
         csvModeCombo.getAccessibleContext().setAccessibleName("CSV mode");
@@ -126,6 +137,18 @@ final class OptionsBar {
         filterField.addActionListener(e -> onFilterEnter.run());
         filterField.getAccessibleContext().setAccessibleName("Subtree filter");
 
+        schemaLabel = ConverterWidgets.toolbarLabel("none");
+        schemaLabel.setToolTipText("The .proto file the payload is decoded against");
+        javax.swing.JButton chooseSchema = ConverterWidgets.button("Choose .proto…", UTIL_BG, UTIL_HOVER, true);
+        chooseSchema.setToolTipText("Choose the .proto file that declares the payload's message type");
+        chooseSchema.getAccessibleContext().setAccessibleName("Choose schema");
+        chooseSchema.addActionListener(e -> onChooseSchema.run());
+        messageCombo = ConverterWidgets.combo(new String[]{RAW_MESSAGE});
+        messageCombo.setToolTipText("<html>The message type the payload holds.<br>"
+              + "(raw) decodes field numbers and wire types, as protoc --decode_raw does.</html>");
+        messageCombo.getAccessibleContext().setAccessibleName("Payload message type");
+        payloadOptions = group("Schema:", schemaLabel, chooseSchema, ConverterWidgets.toolbarLabel("Message:"), messageCombo);
+
         // Sort keys and the filter apply to every conversion, so they always show.
         JPanel generalOptions = group(null, sortKeysCheck, ConverterWidgets.toolbarLabel("Filter:"), filterField);
 
@@ -138,6 +161,7 @@ final class OptionsBar {
         bar.add(csvDelimiterOptions);
         bar.add(csvOptions);
         bar.add(javaOptions);
+        bar.add(payloadOptions);
     }
 
     private static JPanel group(String caption, JComponent... controls) {
@@ -226,6 +250,7 @@ final class OptionsBar {
         csvInputOptions.setVisible(csvIn || Formats.FMT_XML.equals(inputFormat));
         csvDelimiterOptions.setVisible(csvIn || csvOut);
         javaOptions.setVisible(Formats.FMT_JAVA.equals(outputFormat) || Formats.FMT_KOTLIN.equals(outputFormat));
+        payloadOptions.setVisible(Formats.FMT_PROTO_PAYLOAD.equals(inputFormat));
         // Lombok is a Java-only concept; offering it for Kotlin output would be
         // a toggle that silently does nothing.
         lombokCheck.setVisible(Formats.FMT_JAVA.equals(outputFormat));
@@ -244,7 +269,48 @@ final class OptionsBar {
               detectDatesCheck.isSelected(),
               inferTypesCheck.isSelected(),
               sortKeysCheck.isSelected(),
-              filterField.getText());
+              filterField.getText(),
+              protoSchema,
+              selectedMessage());
+    }
+
+    /** The message type chosen for a payload, or "" to decode it raw. */
+    private String selectedMessage() {
+        Object chosen = messageCombo.getSelectedItem();
+        return chosen == null || RAW_MESSAGE.equals(chosen) ? "" : chosen.toString();
+    }
+
+    /**
+     * Decodes payloads against a schema from here on: its text, and the message
+     * types it declares to choose from. The first is chosen, being the usual
+     * top-level message; (raw) stays on offer.
+     */
+    void useProtoSchema(String fileName, String text, java.util.List<String> messages) {
+        protoSchema = text;
+        schemaLabel.setText(fileName);
+        messageCombo.removeAllItems();
+        messageCombo.addItem(RAW_MESSAGE);
+        for (String message : messages) messageCombo.addItem(message);
+        messageCombo.setSelectedItem(messages.isEmpty() ? RAW_MESSAGE : messages.getFirst());
+    }
+
+    /**
+     * The schema and message a history entry was decoded with. The file it
+     * came from is not part of the entry, so the label says where it is from.
+     */
+    private void restoreProtoSchema(String text, String message) {
+        if (!text.equals(protoSchema)) {
+            java.util.List<String> messages = java.util.List.of();
+            if (!text.isBlank()) {
+                try {
+                    messages = new com.converter.core.ProtoConverter().readSchema(text).messageNames();
+                } catch (RuntimeException unreadable) {
+                    // It was read when the entry was made; keep (raw) on offer regardless.
+                }
+            }
+            useProtoSchema(text.isBlank() ? "none" : "from history", text, messages);
+        }
+        messageCombo.setSelectedItem(message.isBlank() ? RAW_MESSAGE : message);
     }
 
     /** Sets every control to {@code options} and remembers them, as history restores them. */
@@ -259,6 +325,7 @@ final class OptionsBar {
             inferTypesCheck.setSelected(options.inferTypes());
             sortKeysCheck.setSelected(options.sortKeys());
             filterField.setText(options.filterPath());
+            restoreProtoSchema(options.protoSchema(), options.protoMessage());
             // setSelected fires no ActionListener either: remember the restored
             // choices explicitly, so context-menu conversions and the next IDE
             // session agree.

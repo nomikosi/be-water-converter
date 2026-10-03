@@ -82,6 +82,45 @@ final class ConverterFileOps {
         this.tasks    = tasks;
     }
 
+    /** A .proto file read to decode payloads against: its name, its text and the message types it declares. */
+    record ProtoSchemaFile(String name, String text, List<String> messages) {}
+
+    /**
+     * Lets the user pick the .proto file a payload was written with, then reads
+     * it off the EDT as Open reads files: as an editor holding unsaved changes
+     * has it, else in the encoding the IDE has for it. A schema that does not
+     * parse is reported, and the one in use stays.
+     */
+    void chooseProtoSchema(java.util.function.Consumer<ProtoSchemaFile> onRead) {
+        FileChooserDescriptor descriptor =
+              new FileChooserDescriptor(true, false, false, false, false, false)
+                    .withTitle("Choose the Payload's Schema")
+                    .withFileFilter(vf -> "proto".equalsIgnoreCase(vf.getExtension()));
+        VirtualFile chosen = FileChooser.chooseFile(descriptor, project, null);
+        if (chosen == null) return;
+        File file = new File(chosen.getPath());
+        String unsaved = unsavedEditorText(file);
+        java.nio.charset.Charset ideCharset = ideCharset(file);
+        host.status("Reading " + file.getName() + "…", true);
+        runOffEdt(() -> {
+            try {
+                String text = unsaved != null ? unsaved
+                      : com.converter.core.TextDecoder.decode(Files.readAllBytes(file.toPath()), ideCharset).text();
+                return new ProtoSchemaFile(file.getName(), text,
+                      new com.converter.core.ProtoConverter().readSchema(text).messageNames());
+            } catch (IOException ex) {
+                throw new java.util.concurrent.CompletionException(ex);
+            }
+        }, (schema, cause) -> {
+            if (cause != null) {
+                host.status("Could not read the schema " + file.getName() + ": "
+                      + ConverterNotifications.describe(cause), false);
+                return;
+            }
+            onRead.accept(schema);
+        });
+    }
+
     void openFile() {
         FileChooserDescriptor descriptor =
               new FileChooserDescriptor(true, false, false, false, false, false)

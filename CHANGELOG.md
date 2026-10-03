@@ -4,6 +4,23 @@ What changed in each release of Be Water Converter, newest first. The change not
 JetBrains Marketplace and in the IDE's plugin manager are built from this file, so the build
 fails until the version in `build.gradle` has a section here.
 
+## [1.6.0]
+
+- **Protobuf payload decoding** — a new input format, Protobuf payload, reads a binary
+  Protobuf message pasted as hex, however it is spaced, prefixed or separated, or as base64,
+  and converts it to JSON or any other output. Without a schema it is decoded as
+  `protoc --decode_raw` decodes it, by field number. With the `.proto` file it was written
+  with, chosen in the options bar, and its message type, it is decoded to what protobuf's own
+  JSON printer writes for it: field names, enums by name, bytes in base64, maps as objects,
+  and no proto3 field that holds its default. It is read as protobuf parses it, keeping a
+  field's last value, merging a message or group set twice, and keeping a oneof's last member.
+  A payload that breaks the wire format is refused with the byte it breaks at, and one that
+  contradicts the schema with the field it contradicts. The decoder is tested against
+  Google's protobuf-java on random proto2, proto3 and editions schemas and payloads.
+- **Groups keep what they declare** — a oneof, message or enum declared inside a proto2 group
+  is the group's own. Protobuf to JSON took a oneof there for the enclosing message's fields,
+  and refused the schema when one of their numbers met another of that message's.
+
 ## [1.5.3]
 
 - **Format keeps numbers as written** — JSON Format keeps each number's spelling, so `1.5e1`,

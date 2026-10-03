@@ -48,9 +48,24 @@ class FormatsTest {
                   .endsWith("." + Formats.named(target).extension());
         }
         for (String input : Formats.inputNames()) {
+            // Every output but the input itself, when the input is one.
             assertThat(Formats.outputsFor(input)).doesNotContain(input)
-                  .hasSize(Formats.outputNames().length - 1);
+                  .hasSize(Formats.outputNames().length - (Formats.isOutput(input) ? 1 : 0));
         }
+    }
+
+    @Test void aProtobufPayloadIsReadButNeverWritten() {
+        String payload = Formats.FMT_PROTO_PAYLOAD;
+        assertThat(Formats.isInput(payload)).isTrue();
+        assertThat(Formats.isOutput(payload)).isFalse();
+        assertThat(Formats.inputNames()).contains(payload);
+        assertThat(Formats.outputNames()).doesNotContain(payload);
+        assertThat(Formats.outputsFor(payload)).containsExactly(Formats.outputNames());
+        // Pasted as text, never opened as a file: no extension leads to it.
+        assertThat(Formats.named(payload).extensions()).isEmpty();
+        assertThat(Formats.named(payload).extension()).isEqualTo("txt");
+        assertThat(Formats.inputForFileName("message.bin")).isNull();
+        assertThat(Formats.inputForFileName("payload.txt")).isNull();
     }
 
     @Test void unknownNamesHaveNoInputCapability() {

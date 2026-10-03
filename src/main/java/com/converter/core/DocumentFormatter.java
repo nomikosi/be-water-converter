@@ -74,6 +74,10 @@ final class DocumentFormatter {
             // returned untouched, trailing blanks and all.
             case FMT_PROTO -> withoutTrailingBlanks(input)
                                    .replaceAll("(\r?\n)(?:\r?\n){2,}", "$1$1").trim();
+            // Bytes have no layout of their own to tidy: what they hold reads as
+            // a conversion.
+            case Formats.FMT_PROTO_PAYLOAD -> throw new IllegalArgumentException(
+                  "Format does not apply to a Protobuf payload. Convert it to JSON to read what it holds.");
             default        -> input;
         };
         // JSON, YAML and TOML sort inside their own formatters above, because

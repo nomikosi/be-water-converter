@@ -21,6 +21,7 @@ import static com.converter.core.Formats.FMT_JAVA;
 import static com.converter.core.Formats.FMT_JSON;
 import static com.converter.core.Formats.FMT_KOTLIN;
 import static com.converter.core.Formats.FMT_PROTO;
+import static com.converter.core.Formats.FMT_PROTO_PAYLOAD;
 import static com.converter.core.Formats.FMT_SCHEMA;
 import static com.converter.core.Formats.FMT_TOML;
 import static com.converter.core.Formats.FMT_XML;
@@ -41,6 +42,7 @@ public class ConversionPipeline {
     private final CsvConverter      csv      = new CsvConverter();
     private final TomlConverter     toml     = new TomlConverter();
     private final ProtoConverter    proto    = new ProtoConverter();
+    private final ProtoPayloadDecoder payload = new ProtoPayloadDecoder(proto);
     private final JavaPojoGenerator pojo     = new JavaPojoGenerator();
     private final JsonSchemaGenerator schema = new JsonSchemaGenerator();
     private final KotlinDataClassGenerator kotlin = new KotlinDataClassGenerator();
@@ -65,6 +67,7 @@ public class ConversionPipeline {
             case FMT_CSV   -> csv.csvToJson(input, inferTypes, opts.csvFormat());
             case FMT_TOML  -> toml.tomlToJson(input);
             case FMT_PROTO -> proto.protoToJson(input);
+            case FMT_PROTO_PAYLOAD -> payload.decode(input, opts.protoSchema(), opts.protoMessage());
             default -> throw new UnsupportedOperationException("Unknown input: " + inFmt);
         };
         // One parse and one serialise however many options are on: applying them
