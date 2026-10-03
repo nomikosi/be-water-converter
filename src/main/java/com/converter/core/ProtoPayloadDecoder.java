@@ -568,6 +568,8 @@ public final class ProtoPayloadDecoder {
         JsonNode key = null;
         JsonNode value = null;
         ProtoSchema.Field valueField = field.mapValue();
+        // A message value set twice in one entry is merged, as any message field is.
+        List<Range> messageValue = new ArrayList<>();
         while (!entry.atEnd()) {
             Tag tag = tag(entry);
             if (tag.number() == 1) {
@@ -575,16 +577,13 @@ public final class ProtoPayloadDecoder {
                     throw mismatch(tag, new ProtoSchema.Field("key", "key", 1, false, ProtoSchema.Kind.SCALAR,
                           field.mapKey(), null, null, null, false), mapEntryType(field));
                 key = scalar(entry, field.mapKey(), field, null);
+            } else if (tag.number() == 2 && valueField.kind() == ProtoSchema.Kind.MESSAGE) {
+                if (tag.wireType() != LEN) throw mismatch(tag, valueField, mapEntryType(field));
+                int length = entry.length();
+                messageValue.add(new Range(entry.pos, entry.pos + length));
+                entry.pos += length;
             } else if (tag.number() == 2) {
                 value = switch (valueField.kind()) {
-                    case MESSAGE -> {
-                        if (tag.wireType() != LEN) throw mismatch(tag, valueField, mapEntryType(field));
-                        int length = entry.length();
-                        ObjectNode decoded = typed(entry.slice(entry.pos, entry.pos + length),
-                              messageType(schema, valueField.type()), schema, depth + 2, -1);
-                        entry.pos += length;
-                        yield decoded;
-                    }
                     case UNRESOLVED -> rawValue(entry, tag, depth + 1);
                     default -> {
                         String type = valueField.kind() == ProtoSchema.Kind.ENUM ? "enum" : valueField.type();
@@ -596,6 +595,8 @@ public final class ProtoPayloadDecoder {
                 rawValue(entry, tag, depth + 1);   // not part of a map entry: skipped
             }
         }
+        if (!messageValue.isEmpty())
+            value = mergedMessage(entry, messageValue, messageType(schema, valueField.type()), schema, depth + 1);
         into.set(key == null ? defaultKey(field.mapKey()) : key.asText(),
               value != null ? value : defaultValue(valueField, schema));
     }

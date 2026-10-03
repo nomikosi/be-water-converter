@@ -20,7 +20,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.CodedOutputStream;
+import com.google.protobuf.DescriptorProtos;
+import com.google.protobuf.Descriptors;
+import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.WireFormat;
+import com.google.protobuf.util.JsonFormat;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -659,6 +663,72 @@ class ProtoPayloadDecoderTest {
                   "{\"result\":{\"ids\":[1,2],\"url\":\"first\",\"detail\":{\"why\":\"because\"}}}"));
             assertThat(new ProtoConverter().readSchema(schema).messageNames())
                   .containsExactly("Outer", "Outer.Result", "Outer.Result.Detail");
+        }
+
+        @Test @DisplayName("in one map entry, a message value set twice is merged and a key set twice is the last")
+        void mapEntryMerges() throws Exception {
+            String schema = """
+                  syntax = "proto3";
+                  message M {
+                    map<string, V> m = 1;
+                  }
+                  message V {
+                    int32 x = 1;
+                    int32 y = 2;
+                    repeated int32 z = 3;
+                  }
+                  """;
+            String payload = hex(out -> {
+                message(out, 1, entry -> {
+                    entry.writeString(1, "a");
+                    message(entry, 2, v -> {
+                        v.writeInt32(1, 1);
+                        v.writeInt32(3, 1);
+                    });
+                    message(entry, 2, v -> {
+                        v.writeInt32(2, 2);
+                        v.writeInt32(3, 2);
+                    });
+                });
+                message(out, 1, entry -> {
+                    entry.writeString(1, "b");
+                    message(entry, 2, v -> v.writeInt32(1, 4));
+                    entry.writeString(1, "c");
+                });
+            });
+            String expected = "{\"m\":{\"a\":{\"x\":1,\"y\":2,\"z\":[1,2]},\"c\":{\"x\":4}}}";
+            assertThat(typed(payload, schema, "M")).isEqualTo(json(expected));
+
+            // As protobuf-java parses the same bytes, from a descriptor built by hand.
+            DescriptorProtos.FieldDescriptorProto.Builder value = DescriptorProtos.FieldDescriptorProto.newBuilder()
+                  .setName("value").setNumber(2).setLabel(DescriptorProtos.FieldDescriptorProto.Label.LABEL_OPTIONAL)
+                  .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_MESSAGE).setTypeName(".V");
+            DescriptorProtos.FileDescriptorProto file = DescriptorProtos.FileDescriptorProto.newBuilder()
+                  .setName("m.proto").setSyntax("proto3")
+                  .addMessageType(DescriptorProtos.DescriptorProto.newBuilder().setName("M")
+                        .addNestedType(DescriptorProtos.DescriptorProto.newBuilder().setName("MEntry")
+                              .setOptions(DescriptorProtos.MessageOptions.newBuilder().setMapEntry(true))
+                              .addField(scalarField("key", 1, DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING, false))
+                              .addField(value))
+                        .addField(DescriptorProtos.FieldDescriptorProto.newBuilder().setName("m").setNumber(1)
+                              .setLabel(DescriptorProtos.FieldDescriptorProto.Label.LABEL_REPEATED)
+                              .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_MESSAGE).setTypeName(".M.MEntry")))
+                  .addMessageType(DescriptorProtos.DescriptorProto.newBuilder().setName("V")
+                        .addField(scalarField("x", 1, DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT32, false))
+                        .addField(scalarField("y", 2, DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT32, false))
+                        .addField(scalarField("z", 3, DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT32, true)))
+                  .build();
+            Descriptors.Descriptor m = Descriptors.FileDescriptor.buildFrom(file, new Descriptors.FileDescriptor[0])
+                  .findMessageTypeByName("M");
+            assertThat(json(JsonFormat.printer().preservingProtoFieldNames()
+                  .print(DynamicMessage.parseFrom(m, HexFormat.of().parseHex(payload))))).isEqualTo(json(expected));
+        }
+
+        private static DescriptorProtos.FieldDescriptorProto.Builder scalarField(String name, int number,
+              DescriptorProtos.FieldDescriptorProto.Type type, boolean repeated) {
+            return DescriptorProtos.FieldDescriptorProto.newBuilder().setName(name).setNumber(number).setType(type)
+                  .setLabel(repeated ? DescriptorProtos.FieldDescriptorProto.Label.LABEL_REPEATED
+                        : DescriptorProtos.FieldDescriptorProto.Label.LABEL_OPTIONAL);
         }
 
         @Test @DisplayName("an error in a message set twice names its byte in the payload, not in the merge")
