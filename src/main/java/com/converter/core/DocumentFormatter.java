@@ -281,7 +281,9 @@ final class DocumentFormatter {
                   "Format cannot keep the declarations inside this document's <!DOCTYPE "
                   + doctype.getName() + " [...]>, and the entities they define would be lost "
                   + "with them. The document is left as it is.");
-        String dropped = entityInAttribute(xml);
+        // Without a DOCTYPE a reference to an undeclared entity does not parse
+        // at all, so only a document with one can hold such a reference.
+        String dropped = doctype == null ? null : entityInAttribute(xml);
         if (dropped != null)
             throw new IllegalArgumentException(
                   "Format would drop " + dropped + " from an attribute value: an entity from an external "
@@ -353,9 +355,12 @@ final class DocumentFormatter {
 
     /** The first {@code &name;} in {@code xml[from, to)} that is no character reference or predefined entity. */
     private static String entityReference(String xml, int from, int to) {
-        for (int amp = xml.indexOf('&', from); amp >= 0 && amp < to; amp = xml.indexOf('&', amp + 1)) {
-            int semicolon = xml.indexOf(';', amp);
-            if (semicolon < 0 || semicolon > to) return null;
+        // Searched within the value only. Unbounded, each search ran on to the
+        // next '&' in the document, or its end, for every attribute value, and
+        // checking a 6.5 MB file of attributes took over a minute.
+        for (int amp = xml.indexOf('&', from, to); amp >= 0; amp = xml.indexOf('&', amp + 1, to)) {
+            int semicolon = xml.indexOf(';', amp, to);
+            if (semicolon < 0) return null;
             String name = xml.substring(amp + 1, semicolon);
             if (!name.startsWith("#") && !PREDEFINED_ENTITIES.contains(name)) return "&" + name + ";";
         }

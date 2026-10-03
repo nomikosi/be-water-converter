@@ -528,6 +528,18 @@ class DocumentFormatterTest {
             assertThat(DocumentFormatter.entityInAttribute(kept)).isNull();
         }
 
+        @Test @DisplayName("checking attribute values for entities takes linear time")
+        void entityCheckIsLinear() {
+            // Each value's search for '&' ran on to the end of the document: the
+            // attributes of a 3.2 MB file took 16 seconds to check, 6.5 MB over a minute.
+            StringBuilder rows = new StringBuilder("<!DOCTYPE rows SYSTEM \"rows.dtd\">\n<rows>");
+            for (int i = 0; i < 80_000; i++)
+                rows.append("<row id=\"").append(i).append("\" name=\"n").append(i).append("\" kind=\"k\"/>");
+            String xml = rows.append("<row note=\"&nbsp;\"/></rows>").toString();
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(5),
+                  () -> assertThat(DocumentFormatter.entityInAttribute(xml)).isEqualTo("&nbsp;"));
+        }
+
         @Test @DisplayName("the prolog keeps standalone, a line per node, and no invented declaration")
         void prologAsWritten() throws Exception {
             assertThat(pipeline.formatInput(
