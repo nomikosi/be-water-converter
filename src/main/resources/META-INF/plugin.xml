@@ -49,6 +49,9 @@
             <li>Full structural parsing of nested <code>message</code>, <code>oneof</code>, and <code>enum</code> blocks</li>
             <li>Field types that reference known messages are resolved to nested JSON objects</li>
             <li>JSON-to-Proto generates idiomatic inline nested messages</li>
+            <li><b>Payload decoding</b>: paste a binary message as hex or base64 and read it as JSON,
+                by field number as <code>protoc --decode_raw</code> does, or by name against its
+                <code>.proto</code> file</li>
         </ul>
 
         <h3>CSV &amp; XML</h3>

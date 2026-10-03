@@ -6,8 +6,8 @@
   *Be water, my friend — let your data flow between formats.*
 
   An IntelliJ IDEA plugin that converts data between JSON, XML, YAML, CSV, TOML and
-  Protobuf, and generates Java POJOs, Kotlin data classes and JSON Schema — all inside a
-  syntax-highlighted tool window.
+  Protobuf, decodes binary Protobuf messages, and generates Java POJOs, Kotlin data classes
+  and JSON Schema — all inside a syntax-highlighted tool window.
 
   [![Build](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml/badge.svg)](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml)
   [![JetBrains Marketplace](https://img.shields.io/jetbrains/plugin/v/com.converter.be-water-converter)](https://plugins.jetbrains.com/plugin/32279-be-water-converter)
@@ -53,9 +53,12 @@ Once installed, open the **Be Water** tool window from the right side bar, or vi
 | CSV | JSON, XML, YAML, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
 | TOML | JSON, XML, YAML, CSV, Protobuf, Java POJO, Kotlin, JSON Schema |
 | Protobuf | JSON, XML, YAML, CSV, TOML, Java POJO, Kotlin, JSON Schema |
+| Protobuf payload | JSON, XML, YAML, CSV, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
 
 `Java POJO`, `Kotlin` and `JSON Schema` are output-only: none is accepted as an input
-format, so **Swap** refuses to move them to the input side.
+format, so **Swap** refuses to move them to the input side. `Protobuf payload`, a binary
+Protobuf message pasted as hex or base64, is input-only: it is decoded, never written, so
+**Swap** refuses to move it to the output side.
 
 Most conversions follow a two-step flow: input is first normalized to JSON, then JSON is
 rendered to the requested target format. JSON input is parsed leniently — comments, trailing
@@ -214,11 +217,12 @@ An options bar sits below the toolbar. **Sort keys** applies to every conversion
 always shown; the format-specific groups appear only when they are relevant. CSV output
 shows a mode selector with a live hint; CSV on either side shows a **Delimiter** selector;
 CSV or XML input shows an **Infer types** toggle; Java POJO output shows Lombok and date
-toggles. The row-warning threshold applies to both CSV modes. All option values (CSV mode,
-delimiter, row-warning threshold, Lombok, type inference, date detection, sort keys, split
-orientation) are persisted across IDE restarts. Each open project has its own panel, and an
-option changed in one shows in the others at once; the split orientation and soft wrap stay
-each panel's own.
+toggles; Protobuf payload input shows the payload's **Schema** and **Message** type. The
+row-warning threshold applies to both CSV modes. All option values (CSV mode, delimiter,
+row-warning threshold, Lombok, type inference, date detection, sort keys, split orientation)
+are persisted across IDE restarts. Each open project has its own panel, and an option changed
+in one shows in the others at once; the split orientation and soft wrap stay each panel's
+own, as do the subtree filter and a payload's schema.
 
 ### CSV delimiter
 
@@ -249,6 +253,10 @@ lines as one cell, so a tab-separated file whose values contain commas stays tab
 and the **Delimiter** option is switched to match, both on paste and when a `.csv` or `.tsv`
 file is opened. Context-menu conversions sniff the delimiter the same way, so a semicolon
 file is never read as one wide column because the option still said comma.
+
+A Protobuf payload is never detected on its own, since hex and base64 are text that any
+format may hold. Bytes pasted while **Protobuf payload** is selected keep it selected, even a
+C array of `0x08,` bytes over several lines, which on its own reads as CSV.
 
 ### Sort keys
 
@@ -470,6 +478,57 @@ with a property whose accessor Jackson would read as another name (`xAxis`, or b
 generated classes with the Kotlin compiler and reads each sample through them with that
 module.
 
+### Protobuf payload decoding
+
+**Protobuf payload** reads a binary Protobuf message pasted as text: hex, however it is
+spaced, prefixed or separated (`08 96 01`, `089601`, `0x08 0x96 0x01`, `\x08\x96\x01`,
+`08:96:01`, or a C array of `0x08,` bytes), or base64, standard or URL-safe, padded or not.
+Text made only of hex digits is read as hex. The message is decoded to JSON, and from there
+to any output; **Format** does not apply to it and says to convert it instead.
+
+Without a schema it is decoded as `protoc --decode_raw` decodes it: keys are field numbers,
+varints are unsigned numbers, 64- and 32-bit values are hex since what they hold is unknown,
+a length-delimited value is a nested message when its bytes read as one, else text when they
+are UTF-8, else base64, groups are objects, and a field seen more than once is a list. With
+the `.proto` file the message was written with, chosen with **Choose .proto…** in the options
+bar, and its type chosen under **Message** (the first one declared is selected; **(raw)**
+stays on offer), it is decoded to what protobuf's own JSON printer writes for it: fields
+under their names or `json_name`, enums by name and a number the enum does not name as the
+number, bytes in base64, NaN and the infinities as strings, maps as objects, packed and
+unpacked repeated fields alike, and no field without presence that holds its default — a
+proto3 field neither marked `optional` nor in a `oneof`, or an editions field with
+`features.field_presence = IMPLICIT`. 64-bit integers are exact JSON numbers rather than the
+strings the JSON mapping allows.
+
+```text
+08 96 01 12 07 74 65 73 74 69 6e 67
+```
+
+decodes raw to `{"1": 150, "2": "testing"}`, and against
+
+```protobuf
+syntax = "proto3";
+message Test {
+  int32 a = 1;
+  string b = 2;
+}
+```
+
+to `{"a": 150, "b": "testing"}`.
+
+The payload is read as protobuf parses it: a field set twice keeps its last value, a message
+or proto2 group set twice is merged, and of a `oneof`'s members only the one set last is
+kept. A field the schema does not declare is kept under its number, decoded raw, and so is a
+field whose type comes from a file the schema imports, such as `google.protobuf.Timestamp`.
+The schema is read as an editor holding unsaved changes has it, else in the IDE's encoding
+for the file, and **History** restores the schema and message type a decode used.
+
+A payload that does not follow the wire format is refused with the byte it breaks at (`The
+payload ends inside a varint at byte 1.`), and a field whose wire type contradicts the
+schema is refused with the field's name and the question it usually means: is the message
+type the right one? A `string` field whose bytes are not UTF-8, and messages nested deeper
+than protobuf's own limit of 100, are refused too.
+
 ### Protobuf schema generation
 
 The Protobuf converter works structurally in both directions without invoking `protoc`:
@@ -605,7 +664,7 @@ integration built on it.
 | Class | Responsibility |
 |---|---|
 | `ConversionPipeline` | Conversion routing: normalize any input to the JSON pivot, render the pivot to any output. |
-| `ConversionOptions` | Immutable per-conversion settings: CSV mode and delimiter, Lombok, date detection, type inference, key sorting, subtree filter. |
+| `ConversionOptions` | Immutable per-conversion settings: CSV mode and delimiter, Lombok, date detection, type inference, key sorting, subtree filter, and a payload's schema and message type. |
 | `FormatDetector` | Tells a pasted document's format, and a CSV document's delimiter, from its content. |
 | `DocumentFormatter` | The Format action per format, its refusals, the losses it asks about, and XML pretty-printing. |
 | `FormatLosses` | What a Format would drop: comments and YAML anchors. |
@@ -618,13 +677,16 @@ integration built on it.
 | `TextDecoder` | File bytes to text: by byte-order mark, the IDE's encoding for the file, UTF-8, then Windows-1252. |
 | `TextEncoder` | Saved text to bytes in the style of the file it replaces: its line breaks and, for CSV, Java and Kotlin, its encoding and byte-order mark. |
 | `LineBreaks` | A document's line separator, and converting between LF and CRLF. |
-| `Formats` | Shared format names, extensions, input capabilities and generated-file naming constraints. |
+| `Formats` | Shared format names, extensions, input and output capabilities and generated-file naming constraints. |
 | `ConversionFileNames` | Extension and file-name rules for conversion results. |
 | `JsonXmlConverter` | JSON ↔ XML conversion, element-name sanitization, `xsi:nil` nulls, optional type inference. |
 | `JsonYamlConverter` | JSON ↔ YAML conversion, multi-document support, exact floats, resolver-aware quoting. |
 | `CsvConverter` | CSV ↔ JSON conversion, positional re-layout, flattening logic, row estimation. |
 | `TomlConverter` | TOML ↔ JSON conversion and shared value-token scanning for conversion and formatting guards. |
-| `ProtoConverter` | Protobuf schema ↔ JSON structural conversion with scoped type resolution and identifier sanitization. |
+| `ProtoConverter` | Protobuf schema ↔ JSON structural conversion with scoped type resolution and identifier sanitization, and the schema payloads are decoded against. |
+| `ProtoSchema` | A schema as payloads are decoded against it: each message's fields by number, their resolved types, oneofs and presence, and each enum's names. |
+| `ProtoPayloadText` | A pasted payload's bytes, from hex in its common spellings or from base64. |
+| `ProtoPayloadDecoder` | The Protobuf wire format to JSON: raw, as `protoc --decode_raw` reads it, or against a schema, as protobuf's JSON printer writes it. |
 | `ProtoStringLiteral` | Protobuf string literals as `protoc` reads them, escapes included. |
 | `JavaPojoGenerator` | Java class generation from structured JSON, with date detection. |
 | `KotlinDataClassGenerator` | Kotlin data class generation from structured JSON. |
@@ -671,6 +733,16 @@ type inference, Protobuf validation, scoping and sanitization, POJO generation v
 numeric and format fidelity, XXE hardening, and end-to-end cross-format pipeline tests. In
 the `test` task, `PluginDescriptorTest` resolves every class `plugin.xml` names, so a
 renamed action fails the build instead of the plugin.
+
+The Protobuf payload decoder is checked against Google's protobuf-java, a test dependency
+that is never bundled. Random proto2, proto3 and editions schemas are built both as `.proto`
+text and as descriptors; random messages that protobuf-java encodes, merged two at a time or
+followed by fields set to their defaults, decode to what its `JsonFormat` prints; and random
+and corrupted wire data is read or refused as its parser reads or refuses it. The decoder
+refuses three things protobuf-java reads, as upb, protobuf's C parser, does: a tag or a
+length with bits set past the 32nd, which protobuf-java drops, and a varint whose tenth byte
+says another follows. The IDE bundles an older protobuf-java of its own, so these tests run
+in `unitTest`, with the version they check against first on the classpath.
 
 ### Building a distribution
 
