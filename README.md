@@ -78,8 +78,13 @@ surrogate pair, which is no character, is refused.
 
 JSON keys that are not valid XML element names or Protobuf identifiers (spaces, kebab-case,
 leading digits, or characters such as `µ` that XML names cannot hold) are sanitized when
-rendering to those formats, so the output is always well-formed. A key that is already a
-valid name keeps it, and a renamed key that would take a name in use is numbered:
+rendering to those formats, so the output is always well-formed. XML names follow the rules
+XML readers apply, Java's among them, which take fewer characters than XML 1.0's fifth
+edition: Ethiopic, Cherokee or Sinhala letters, and letters beyond the Basic Multilingual
+Plane, become underscores, so the output reads back everywhere. A value holding a character
+XML cannot hold (a control character other than tab and the line breaks, U+FFFE, U+FFFF, or
+half a surrogate pair) is refused with a message naming it. A key that is already a valid
+name keeps it, and a renamed key that would take a name in use is numbered:
 `{"first name": "Ann", "first_name": "Bob"}` gives `<first_name>Bob</first_name>` and
 `<first_name_2>Ann</first_name_2>`. JSON `null` becomes an XML element marked
 `xsi:nil="true"`, which reads back as `null` rather than as an empty string. Every output

@@ -27,11 +27,13 @@ fails until the version in `build.gradle` has a section here.
 - **XML keeps text, names, nulls and whitespace** — a document that declares a non-UTF-8
   encoding is no longer decoded twice (`José` read as `JosÃ©`, and UTF-16 failed). JSON `null`
   is written as `xsi:nil="true"` and reads back as `null` rather than `""`. Element names
-  follow XML's naming rules, so a key such as `latency_µs` no longer produces XML the plugin
-  then refused to read, and letters beyond the Basic Multilingual Plane are kept. A key that is
-  already a valid name keeps it and only renamed keys are numbered, so `first_name` is no
-  longer written as `first_name_2` because `first name` came first. Format keeps whitespace
-  that is an element's whole value.
+  follow the name rules XML readers apply, so a key such as `latency_µs`, or one in Ethiopic,
+  Cherokee or Sinhala, no longer produces XML the plugin then refused to read; characters a
+  name cannot hold become underscores. A value holding a character XML cannot hold, such as a
+  control character or U+FFFE, is refused with a message naming it. A key that is already a
+  valid name keeps it and only renamed keys are numbered, so `first_name` is no longer written
+  as `first_name_2` because `first name` came first. Format keeps whitespace that is an
+  element's whole value.
 - **CSV keeps cells and rows as written** — the first cell of each row keeps its leading
   spaces, as the other cells always did: Format no longer strips them, and type inference no
   longer reads a space-padded first cell as a number. A row whose only cell is empty is written
