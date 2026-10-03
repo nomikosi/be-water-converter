@@ -61,12 +61,62 @@ public class JsonXmlConverter {
             node = jsonMapper.createObjectNode().set("items", node);
         }
 
+        rejectCharactersXmlCannotHold(node);
+
         // JSON keys are arbitrary; XML element names are not. Sanitize keys so
         // the output is always well-formed XML ({"first name":1} would
         // otherwise emit the unparseable <first name>1</first name>).
         node = sanitizeKeysForXml(node);
 
         return xmlMapper.writer().withRootName("root").writeValueAsString(node);
+    }
+
+    /**
+     * Refuses a value holding a character XML 1.0 cannot: a control character
+     * other than tab and the line breaks, U+FFFE, U+FFFF, or half a surrogate
+     * pair. The writer wrote U+FFFE as &amp;#xfffe;, which every parser
+     * refuses, this plugin's included, and half a pair as it was; it refused
+     * a control character itself, as "Invalid white space character (0x1b) in
+     * text to output".
+     */
+    private static void rejectCharactersXmlCannotHold(JsonNode root) {
+        java.util.ArrayDeque<JsonNode> nodes = new java.util.ArrayDeque<>();
+        java.util.ArrayDeque<String> keys = new java.util.ArrayDeque<>();
+        nodes.push(root);
+        keys.push("root");
+        while (!nodes.isEmpty()) {
+            JsonNode node = nodes.pop();
+            String key = keys.pop();
+            if (node.isTextual()) {
+                int character = firstCharacterXmlCannotHold(node.textValue());
+                if (character >= 0)
+                    throw new IllegalArgumentException(String.format(java.util.Locale.ROOT,
+                          "XML cannot hold the character U+%04X, found in the value of \"%s\". "
+                          + "Remove it, or convert to another format.", character, key));
+            } else if (node.isObject()) {
+                for (Map.Entry<String, JsonNode> property : node.properties()) {
+                    nodes.push(property.getValue());
+                    keys.push(property.getKey());
+                }
+            } else if (node.isArray()) {
+                for (JsonNode item : node) {
+                    nodes.push(item);
+                    keys.push(key);
+                }
+            }
+        }
+    }
+
+    /** The first code point outside XML 1.0's Char production, or -1. Half a surrogate pair counts as one. */
+    static int firstCharacterXmlCannotHold(String text) {
+        for (int i = 0; i < text.length(); ) {
+            int c = text.codePointAt(i);
+            boolean character = c == 0x9 || c == 0xA || c == 0xD || (c >= 0x20 && c <= 0xD7FF)
+                  || (c >= 0xE000 && c <= 0xFFFD) || (c >= 0x10000 && c <= 0x10FFFF);
+            if (!character) return c;
+            i += Character.charCount(c);
+        }
+        return -1;
     }
 
     public String xmlToJson(String xml) throws Exception {
@@ -260,11 +310,19 @@ public class JsonXmlConverter {
     /**
      * Maps an arbitrary JSON key to a well-formed XML element name.
      *
-     * <p>By XML's own name rules rather than Java's idea of a letter: µ, ª and º
-     * are letters to {@link Character#isLetter} and not name characters to XML,
-     * so {@code {"latency_µs": 12}} wrote an element this plugin's own reader
-     * then refused. The colon is excluded too, because in a name it declares a
-     * namespace prefix nobody bound.
+     * <p>By the name rules XML readers apply rather than Java's idea of a
+     * letter: µ, ª and º are letters to {@link Character#isLetter} and not name
+     * characters to XML, so {@code {"latency_µs": 12}} wrote an element this
+     * plugin's own reader then refused. The colon is excluded too, because in a
+     * name it declares a namespace prefix nobody bound.
+     *
+     * <p>The readers are Woodstox, behind conversion, and the JDK's parser,
+     * behind XML Format. Both take names by XML 1.0's older character tables,
+     * and accept exactly the same characters. XML 1.0's fifth edition names
+     * more, Ethiopic, Cherokee and Sinhala letters and letters beyond the Basic
+     * Multilingual Plane among them, but names written by those rules made a
+     * document that neither reader would take, from the plugin's own output.
+     * Such characters become underscores, as spaces do.
      */
     static String xmlElementName(String key) {
         if (key == null || key.isEmpty()) return "_";
@@ -277,21 +335,20 @@ public class JsonXmlConverter {
         return sb.toString();
     }
 
-    /** XML 1.0 (fifth edition) NameStartChar, which is what the parsers enforce. */
+    /**
+     * A character an element name may start with, by the readers' rules. Past
+     * ASCII they are Woodstox's own tables, which the JDK's parser matches
+     * character for character; neither takes a character beyond the BMP.
+     */
     static boolean isXmlNameStartChar(int c) {
-        return c == ':' || c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-              || (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) || (c >= 0xF8 && c <= 0x2FF)
-              || (c >= 0x370 && c <= 0x37D) || (c >= 0x37F && c <= 0x1FFF)
-              || (c >= 0x200C && c <= 0x200D) || (c >= 0x2070 && c <= 0x218F)
-              || (c >= 0x2C00 && c <= 0x2FEF) || (c >= 0x3001 && c <= 0xD7FF)
-              || (c >= 0xF900 && c <= 0xFDCF) || (c >= 0xFDF0 && c <= 0xFFFD)
-              || (c >= 0x10000 && c <= 0xEFFFF);
+        if (c < 0x80) return c == ':' || c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        return c <= 0xFFFF && com.ctc.wstx.util.XmlChars.is10NameStartChar((char) c);
     }
 
-    /** XML 1.0 (fifth edition) NameChar. */
+    /** A character an element name may hold after its first, by the readers' rules. */
     static boolean isXmlNameChar(int c) {
-        return isXmlNameStartChar(c) || c == '-' || c == '.' || (c >= '0' && c <= '9') || c == 0xB7
-              || (c >= 0x300 && c <= 0x36F) || (c >= 0x203F && c <= 0x2040);
+        if (c < 0x80) return isXmlNameStartChar(c) || c == '-' || c == '.' || (c >= '0' && c <= '9');
+        return c <= 0xFFFF && com.ctc.wstx.util.XmlChars.is10NameChar((char) c);
     }
 
     /** Suffixes a counter when a sanitized element name is already used by a sibling. */

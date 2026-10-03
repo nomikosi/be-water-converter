@@ -553,24 +553,53 @@ class JsonXmlConverterTest {
             assertThat(json.readTree(converter.xmlToJson(utf16)).get("name").asText()).isEqualTo("日本");
         }
 
-        @Test @DisplayName("element names follow XML's name rules, so the output reads back")
+        @Test @DisplayName("element names follow the readers' name rules, so the output reads back")
         void elementNamesFollowXmlRules() throws Exception {
             // Letters to Java, not name characters to XML.
             assertThat(JsonXmlConverter.xmlElementName("latency_µs")).isEqualTo("latency__s");
             assertThat(JsonXmlConverter.xmlElementName("ªº")).isEqualTo("__");
-            // Middle dot may follow a name but not start one; a supplementary letter is a name.
+            // Middle dot may follow a name but not start one.
             assertThat(JsonXmlConverter.xmlElementName("a·b")).isEqualTo("a·b");
             assertThat(JsonXmlConverter.xmlElementName("·x")).isEqualTo("_·x");
-            assertThat(JsonXmlConverter.xmlElementName("𝒳")).isEqualTo("𝒳");
             assertThat(JsonXmlConverter.xmlElementName("größe")).isEqualTo("größe");
+            assertThat(JsonXmlConverter.xmlElementName("日本")).isEqualTo("日本");
             assertThat(JsonXmlConverter.xmlElementName("ns:key")).isEqualTo("ns_key");
+            // XML 1.0's fifth edition names these, but neither reader takes them,
+            // and the plugin wrote XML it could not read back: Ethiopic, Cherokee
+            // and Sinhala letters, a letter beyond the BMP, the long s, and U+FEFF.
+            String ethiopic = "ሰላም";
+            String beyondBmp = new String(Character.toChars(0x1D4B3));
+            for (String key : new String[]{ethiopic, "ᎠᎡ", "අල", beyondBmp, "ſ", "﻿"})
+                assertThat(JsonXmlConverter.xmlElementName(key)).as(key).matches("_+");
 
-            String input = "{\"latency_µs\":12,\"ª\":1,\"𝒳\":2,\"a·b\":3,"
-                  + "\"·x\":4,\"日本\":5,\"é\":6}";
-            JsonNode back = json.readTree(converter.xmlToJson(converter.jsonToXml(input), true));
-            assertThat(back.size()).isEqualTo(7);
+            String input = "{\"latency_µs\":12,\"ª\":1,\"" + beyondBmp + "\":2,\"a·b\":3,"
+                  + "\"·x\":4,\"日本\":5,\"é\":6,\"" + ethiopic + "\":7}";
+            String xml = converter.jsonToXml(input);
+            // Both readers: Woodstox behind conversion, the JDK's parser behind XML Format.
+            javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                  .parse(new org.xml.sax.InputSource(new java.io.StringReader(xml)));
+            JsonNode back = json.readTree(converter.xmlToJson(xml, true));
+            assertThat(back.size()).isEqualTo(8);
             assertThat(back.get("latency__s").asInt()).isEqualTo(12);
-            assertThat(back.get("𝒳").asInt()).isEqualTo(2);
+            assertThat(back.get("___").asInt()).isEqualTo(7);
+        }
+
+        @Test @DisplayName("a value holding a character XML cannot hold is refused, naming it and its key")
+        void charactersXmlCannotHold() throws Exception {
+            // U+FFFE was written as &#xfffe;, which every parser refuses, and half a
+            // surrogate pair as it was; control characters failed in the writer.
+            String[][] cases = {{"\\u001b[31mERROR\\u001b[0m", "U+001B"}, {"x\\ufffe", "U+FFFE"},
+                  {"x\\uffff", "U+FFFF"}, {"x\\ud800y", "U+D800"}, {"\\u0000", "U+0000"}};
+            for (String[] c : cases)
+                assertThatThrownBy(() -> converter.jsonToXml("{\"log\":[\"ok\",\"" + c[0] + "\"]}"))
+                      .as(c[1]).isInstanceOf(IllegalArgumentException.class)
+                      .hasMessageContaining(c[1]).hasMessageContaining("\"log\"");
+            // Tab, the line breaks and a whole surrogate pair are characters like any other.
+            String rocket = new String(Character.toChars(0x1F680));
+            String xml = converter.jsonToXml("{\"t\":\"a\\tb\\r\\nc " + rocket + "\"}");
+            javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                  .parse(new org.xml.sax.InputSource(new java.io.StringReader(xml)));
+            assertThat(json.readTree(converter.xmlToJson(xml)).get("t").asText()).isEqualTo("a\tb\r\nc " + rocket);
         }
 
         @Test @DisplayName("null comes back as null, not as an empty string")
