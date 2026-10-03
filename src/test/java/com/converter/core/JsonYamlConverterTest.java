@@ -679,6 +679,76 @@ class JsonYamlConverterTest {
         private final ConversionPipeline pipeline = new ConversionPipeline();
         private final ConversionOptions opts = ConversionOptions.DEFAULTS;
 
+        @Test @DisplayName("a tag on the wrong kind of node, or a mapping merging itself, is a YAML error with a position")
+        void malformedConstruction() throws Exception {
+            // SnakeYAML failed with "MappingNode cannot be cast to ScalarNode" and a
+            // bare ConcurrentModificationException, which the user saw as they were.
+            assertThatThrownBy(() -> pipeline.normalizeToJson("!!binary\na: 1\n", Formats.FMT_YAML, opts))
+                  .hasMessageContaining("the tag !!binary cannot be applied to a mapping")
+                  .satisfies(failure -> assertThat(SourcePosition.of(failure)).isNotNull());
+            assertThatThrownBy(() -> pipeline.normalizeToJson("a: !!int [1]\n", Formats.FMT_YAML, opts))
+                  .hasMessageContaining("the tag !!int cannot be applied to a sequence");
+            String selfMerge = "base: &b\n  x: 1\n  y:ild:\n  <<: *b\n  z:child:\n  <<: *b\n  z: 0o17\n";
+            assertThatThrownBy(() -> pipeline.normalizeToJson(selfMerge, Formats.FMT_YAML, opts))
+                  .hasMessageContaining("this mapping merges itself")
+                  .satisfies(failure -> assertThat(SourcePosition.of(failure).line()).isEqualTo(4));
+            assertThatThrownBy(() -> pipeline.normalizeToJson("base: &b\n  x: 1\n  <<: [*b]\n", Formats.FMT_YAML, opts))
+                  .hasMessageContaining("this mapping merges itself");
+            // Merging another mapping is what merge keys are for.
+            assertThat(pipeline.normalizeToJson("base: &b\n  x: 1\nchild:\n  <<: *b\n  y: 2\n", Formats.FMT_YAML, opts))
+                  .isEqualTo("{\"base\":{\"x\":1},\"child\":{\"x\":1,\"y\":2}}");
+        }
+
+        @Test @DisplayName("a string holding a NEL is written double-quoted and reads back as it was")
+        void nel() throws Exception {
+            // YAML 1.1 reads NEL as a line break: written plain or single-quoted,
+            // it came back folded into a space, in keys and values alike.
+            String nel = String.valueOf((char) 0x85);
+            String json = "{\"a" + nel + "b\":\"x" + nel + "y\",\"list\":[\"" + nel + "lead\",\"trail" + nel + "\"]}";
+            String yaml = pipeline.renderFromJson(json, Formats.FMT_YAML, opts);
+            assertThat(yaml).contains("\"a\\Nb\"").contains("\"x\\Ny\"").doesNotContain(nel);
+            assertThat(pipeline.normalizeToJson(yaml, Formats.FMT_YAML, opts))
+                  .isEqualTo(pipeline.normalizeToJson(json, Formats.FMT_JSON, opts));
+            // A string with a line feed was written as a literal block, where the
+            // NEL read back as one more line break.
+            String multiLine = "{\"k\":\"a" + nel + "b\\nc\",\"plain\":\"one\\ntwo\"}";
+            String block = pipeline.renderFromJson(multiLine, Formats.FMT_YAML, opts);
+            assertThat(block).contains("k: \"a\\Nb\\nc\"").contains("plain: |-");
+            assertThat(pipeline.normalizeToJson(block, Formats.FMT_YAML, opts))
+                  .isEqualTo(pipeline.normalizeToJson(multiLine, Formats.FMT_JSON, opts));
+        }
+
+        @Test @DisplayName("half a surrogate pair is refused, not written as another character")
+        void unpairedSurrogate() throws Exception {
+            // The emitter paired it with the character after it, and the key read back changed.
+            String high = String.valueOf((char) 0xD800);
+            assertThatThrownBy(() -> pipeline.renderFromJson("{\"n" + high + "ame\":1}", Formats.FMT_YAML, opts))
+                  .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("U+D800");
+            assertThatThrownBy(() -> pipeline.renderFromJson("[\"x\\uDC00\"]", Formats.FMT_YAML, opts))
+                  .hasMessageContaining("U+DC00");
+            // A whole pair is a character like any other.
+            String wave = new String(Character.toChars(0x1F30A));
+            assertThat(pipeline.normalizeToJson(pipeline.renderFromJson("{\"w\":\"" + wave + "\"}", Formats.FMT_YAML, opts),
+                  Formats.FMT_YAML, opts)).isEqualTo("{\"w\":\"" + wave + "\"}");
+        }
+
+        @Test @DisplayName("a string opening the document with U+FEFF keeps it, written and formatted")
+        void leadingByteOrderMark() throws Exception {
+            // At the very start of the text, U+FEFF reads as a byte-order mark and
+            // was dropped: {"<FEFF>id": 1} came back as {"id": 1}.
+            String bom = String.valueOf((char) 0xFEFF);
+            for (String json : new String[]{"{\"" + bom + "id\":1}", "\"" + bom + "text\""}) {
+                String yaml = pipeline.renderFromJson(json, Formats.FMT_YAML, opts);
+                assertThat(yaml).doesNotStartWith(bom);
+                assertThat(pipeline.normalizeToJson(yaml, Formats.FMT_YAML, opts))
+                      .isEqualTo(pipeline.normalizeToJson(json, Formats.FMT_JSON, opts));
+            }
+            // Format wrote the value first once the comment above it was gone.
+            String formatted = pipeline.formatInput("# comment\n" + bom + "text\n", Formats.FMT_YAML, opts);
+            assertThat(pipeline.normalizeToJson(formatted, Formats.FMT_YAML, opts)).isEqualTo("\"" + bom + "text\"");
+            assertThat(pipeline.formatInput(formatted, Formats.FMT_YAML, opts)).isEqualTo(formatted);
+        }
+
         @Test @DisplayName("0o17 is YAML 1.2 octal, and Format will not rewrite it")
         void octal() throws Exception {
             assertThat(pipeline.normalizeToJson("a: 0o17\nb: -0o10\nc: 0o7777777777777777777777\n",

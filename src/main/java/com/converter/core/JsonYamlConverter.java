@@ -143,7 +143,7 @@ public class JsonYamlConverter {
                   }
               });
 
-        yamlMapper = YAMLMapper.builder(
+        yamlMapper = YAMLMapper.builder(new NelSafeYamlFactory(
               YAMLFactory.builder()
                     .disable(YAMLGenerator.Feature.WRITE_DOC_START_MARKER)  // suppress "---"
                     .enable(YAMLGenerator.Feature.MINIMIZE_QUOTES)           // bare strings, no 'quoting'
@@ -158,23 +158,79 @@ public class JsonYamlConverter {
                     // "0x1F", "1e3" and "1_000" were emitted bare and came back
                     // as numbers. Deciding quotes by the reader's own rules
                     // closes the gap without quoting every string.
-                    .stringQuotingChecker(new ResolverAwareQuoting())
-                    .build()
+                    .stringQuotingChecker(new ResolverAwareQuoting()))
         ).build();
     }
 
     /**
+     * Writes a multi-line string holding a NEL double-quoted. With
+     * MINIMIZE_QUOTES, Jackson writes every string with a line feed in it as a
+     * literal block without asking the quoting checker, and SnakeYAML takes a
+     * NEL inside one for another line break: "a", NEL, "b\nc" read back as
+     * "a\nb\nc". In double quotes it is the escape {@code \N}, read back as
+     * itself. Everything else is written exactly as YAMLFactory writes it.
+     */
+    private static final class NelSafeYamlFactory extends YAMLFactory {
+        NelSafeYamlFactory(com.fasterxml.jackson.dataformat.yaml.YAMLFactoryBuilder builder) {
+            super(builder);
+        }
+
+        private NelSafeYamlFactory(NelSafeYamlFactory source) {
+            super(source, null);
+        }
+
+        @Override public YAMLFactory copy() {
+            _checkInvalidCopy(NelSafeYamlFactory.class);
+            return new NelSafeYamlFactory(this);
+        }
+
+        @Override protected YAMLGenerator _createGenerator(java.io.Writer out, com.fasterxml.jackson.core.io.IOContext context)
+              throws java.io.IOException {
+            return new YAMLGenerator(context, _generatorFeatures, _yamlGeneratorFeatures, _quotingChecker,
+                  _objectCodec, out, _version) {
+                @Override public void writeString(String text) throws java.io.IOException {
+                    if (text != null && text.indexOf('\n') >= 0 && text.indexOf((char) 0x85) >= 0) {
+                        _verifyValueWrite("write String value");
+                        _writeScalar(text, "string", org.yaml.snakeyaml.DumperOptions.ScalarStyle.DOUBLE_QUOTED);
+                        return;
+                    }
+                    super.writeString(text);
+                }
+            };
+        }
+    }
+
+    /**
      * Quotes what Jackson's default checker quotes, every string that
-     * {@link CoreScalarResolver} would read back as a non-string, and every
-     * string a YAML 1.1 reader would.
+     * {@link CoreScalarResolver} would read back as a non-string, every string
+     * a YAML 1.1 reader would, and every string a reader would read back
+     * changed.
+     *
+     * <p>YAML 1.1 reads NEL (U+0085) as a line break. Left unquoted, or in
+     * single quotes where the emitter falls back to, it was written as a
+     * break and read back folded into a space: "a", NEL, "b" returned as "a b".
+     * Double-quoted, it is the escape {@code \N}, which every reader keeps.
+     *
+     * <p>A U+FEFF that opens the document is read as a byte-order mark and
+     * dropped, so a root string, or the first key of a root mapping, that
+     * began with one lost it. Inside quotes it no longer opens the document.
      */
     private static final class ResolverAwareQuoting extends StringQuotingChecker.Default {
+        private static final char NEL = 0x85;
+        private static final char BYTE_ORDER_MARK = 0xFEFF;
+
         @Override public boolean needToQuoteName(String name) {
-            return super.needToQuoteName(name) || resolvesToNonString(name) || retypedByYaml11(name);
+            return super.needToQuoteName(name) || resolvesToNonString(name) || retypedByYaml11(name)
+                  || changedOnReading(name);
         }
 
         @Override public boolean needToQuoteValue(String value) {
-            return super.needToQuoteValue(value) || resolvesToNonString(value) || retypedByYaml11(value);
+            return super.needToQuoteValue(value) || resolvesToNonString(value) || retypedByYaml11(value)
+                  || changedOnReading(value);
+        }
+
+        private static boolean changedOnReading(String text) {
+            return text.indexOf(NEL) >= 0 || !text.isEmpty() && text.charAt(0) == BYTE_ORDER_MARK;
         }
     }
 
@@ -197,7 +253,46 @@ public class JsonYamlConverter {
         if (json == null || json.isBlank())
             throw new IllegalArgumentException("Input JSON must not be empty");
         JsonNode node = jsonMapper.readTree(json);
+        rejectUnpairedSurrogates(node);
         return yamlMapper.writeValueAsString(node);
+    }
+
+    /**
+     * Refuses a string holding half of a UTF-16 surrogate pair. A JSON escape
+     * can spell one, U+D800 alone say, but it is no character, and YAML
+     * holds only characters: the emitter paired it with whatever followed, so
+     * the text read back as another character entirely.
+     */
+    private static void rejectUnpairedSurrogates(JsonNode root) {
+        java.util.ArrayDeque<JsonNode> pending = new java.util.ArrayDeque<>();
+        pending.push(root);
+        while (!pending.isEmpty()) {
+            JsonNode node = pending.pop();
+            if (node.isTextual()) {
+                rejectUnpairedSurrogate(node.textValue());
+            } else if (node.isObject()) {
+                for (java.util.Map.Entry<String, JsonNode> property : node.properties()) {
+                    rejectUnpairedSurrogate(property.getKey());
+                    pending.push(property.getValue());
+                }
+            } else if (node.isArray()) {
+                node.forEach(pending::push);
+            }
+        }
+    }
+
+    private static void rejectUnpairedSurrogate(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (Character.isHighSurrogate(c) && i + 1 < text.length() && Character.isLowSurrogate(text.charAt(i + 1))) {
+                i++;
+            } else if (Character.isSurrogate(c)) {
+                throw new IllegalArgumentException(String.format(Locale.ROOT,
+                      "A string holds U+%04X, half of a UTF-16 surrogate pair without the other half. "
+                      + "That is no character, so YAML cannot hold it. Remove it, or convert to another format.",
+                      (int) c));
+            }
+        }
     }
 
     /**
@@ -406,7 +501,44 @@ public class JsonYamlConverter {
                 throw new IllegalArgumentException(
                       "Format cannot preserve the YAML type " + node.getTag().getValue()
                       + " through JSON. The document is left as it is.");
-            return super.constructObject(node);
+            try {
+                return super.constructObject(node);
+            } catch (ClassCastException wrongKind) {
+                // SnakeYAML builds each standard type by casting the node to the
+                // kind it expects, so !!binary or !!int on a mapping failed with
+                // "MappingNode cannot be cast to ScalarNode".
+                throw new UnconstructableNode("the tag " + shortTag(node.getTag()) + " cannot be applied to a "
+                      + node.getNodeId().name().toLowerCase(Locale.ROOT), node.getStartMark());
+            }
+        }
+
+        /**
+         * Refuses a mapping that merges itself. SnakeYAML went through its own
+         * entries while merging them in, and with another key beside the merge
+         * it failed with a bare ConcurrentModificationException. A mapping
+         * merged into itself is a cycle, which conversion refuses anyway.
+         */
+        @Override protected void flattenMapping(org.yaml.snakeyaml.nodes.MappingNode node, boolean forceStringKeys) {
+            for (org.yaml.snakeyaml.nodes.NodeTuple entry : node.getValue()) {
+                if (!Tag.MERGE.equals(entry.getKeyNode().getTag())) continue;
+                Node merged = entry.getValueNode();
+                if (merged == node || merged instanceof org.yaml.snakeyaml.nodes.SequenceNode list
+                      && list.getValue().stream().anyMatch(item -> item == node))
+                    throw new UnconstructableNode("this mapping merges itself through <<, which is a cycle "
+                          + "JSON cannot write", entry.getKeyNode().getStartMark());
+            }
+            super.flattenMapping(node, forceStringKeys);
+        }
+
+        private static String shortTag(Tag tag) {
+            return tag.startsWith(Tag.PREFIX) ? "!!" + tag.getValue().substring(Tag.PREFIX.length()) : tag.getValue();
+        }
+
+        /** A construction failure reported the way SnakeYAML reports its own: what, and where. */
+        private static final class UnconstructableNode extends org.yaml.snakeyaml.constructor.ConstructorException {
+            UnconstructableNode(String problem, org.yaml.snakeyaml.error.Mark mark) {
+                super(null, null, problem, mark);
+            }
         }
 
         private final class ConstructExactFloat extends AbstractConstruct {
