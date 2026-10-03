@@ -63,7 +63,7 @@ dependencies {
     // isolated class loader: a class that compiles can still fail to read its JSON.
     kotlinJackson platform(jacksonBom)
     kotlinJackson 'com.fasterxml.jackson.module:jackson-module-kotlin'
-    testImplementation platform('org.junit:junit-bom:5.14.4')
+    testImplementation platform('org.junit:junit-bom:6.1.3')
     testImplementation 'org.junit.jupiter:junit-jupiter-api'
     // Parameterised tests: routing tables are covered per-format rather than by
     // one test per arm, which is what let several arms go untested.
@@ -73,7 +73,7 @@ dependencies {
     // to bind; the tests read them the way a user of that output has to.
     testImplementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
     // JUnit 4 is required at runtime by the IntelliJ platform test executor,
-    // even though all tests are JUnit 5.
+    // even though every test is a JUnit Jupiter test.
     testRuntimeOnly 'junit:junit:4.13.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
