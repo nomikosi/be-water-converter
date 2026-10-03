@@ -54,7 +54,12 @@ fails until the version in `build.gradle` has a section here.
   where anything past 50 was refused, including YAML the plugin had just written. Strings that
   YAML 1.1 readers such as PyYAML and docker-compose take for numbers or dates, like `22:22`
   and `2024-01-01`, are written quoted, so Format no longer strips the quotes a docker-compose
-  file put around its ports.
+  file put around its ports. A string holding a NEL (U+0085), which YAML 1.1 reads as a line
+  break, or opening the document with U+FEFF, which reads as a byte-order mark, is written
+  quoted, where it came back changed; half of a surrogate pair is refused rather than written
+  as another character. A standard tag on the wrong kind of node, such as `!!binary` on a
+  mapping, and a mapping that merges itself are YAML errors at their line, not internal
+  exceptions.
 - **Type inference leaves hash-like text alone** — a digit run with an `e` in it, such as the
   short git hash `1234e56`, stays text; `1e3` and `1.5e3` are still numbers.
 - **The subtree filter reads `$` as the root only before `.`, `[` or the end** — keys such as
@@ -124,6 +129,11 @@ fails until the version in `build.gradle` has a section here.
   IDE's own dialogs, context-menu error balloons keep XML tag names and line breaks, *Convert
   with Be Water* greys out the file's own format, and an XML Format error moves the caret to
   the problem like other parse errors do. The editors are RSyntaxTextArea 4.0.1.
+- **Syntax errors read as one line** — a JSON, XML, TOML or CSV syntax error says what is wrong
+  and ends with its line and column, where the caret goes, instead of opening a balloon of the
+  parser's own location text ("at [Source: REDACTED …]"). TOML Format of a number too large to
+  read reports the parser's error, which names it, rather than "Too many nonzero exponent
+  digits."
 - **Keyboard and screen-reader use** — opening the tool window puts the caret in the input
   editor, toolbar buttons show a focus ring when Tab reaches them, and screen readers name the
   editors, format selectors, option controls and the find field.

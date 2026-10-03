@@ -71,7 +71,10 @@ Actions `on:` key stays `on`), `12:30:00` and `0777` are text, `0o17` is the oct
 in place. A document may nest 500 levels deep. A document whose aliases would expand to more
 than two million values, or whose anchors form a cycle, is refused rather than converted.
 YAML output quotes a string that a YAML 1.1 reader such as PyYAML or docker-compose would
-take for a number or a date (`22:22`, `2024-01-01`), as it quotes `yes` and `no`.
+take for a number or a date (`22:22`, `2024-01-01`), as it quotes `yes` and `no`. It also
+quotes a string holding a NEL (U+0085), which YAML 1.1 reads as a line break, and one
+opening the document with U+FEFF, which a reader drops as a byte-order mark; half of a
+surrogate pair, which is no character, is refused.
 
 JSON keys that are not valid XML element names or Protobuf identifiers (spaces, kebab-case,
 leading digits, or characters such as `µ` that XML names cannot hold) are sanitized when
@@ -87,14 +90,15 @@ uses LF line breaks.
 ### Interactive tool window
 
 The plugin is registered through `ConverterToolWindowFactory`, which mounts a
-`ConverterPanel` as tool-window content. The panel contains split editors, format
-selectors, a swap button between the From/To selectors, status feedback, and one-click
-actions for conversion, formatting, file open/save, and more. The output editor's syntax
-mode and format badge update automatically after each successful conversion. Conversions
-run in the background and can be cancelled — the Convert button turns into **Cancel**
-while one is running. Multi-line validation errors are delivered as IDE notification
-balloons (the status bar shows the first line). Very large outputs are rendered with
-syntax highlighting disabled to keep the editor responsive.
+`ConverterPanel` as tool-window content. The panel contains split editors, format selectors,
+a swap button between the From/To selectors, status feedback, and one-click actions for
+conversion, formatting, file open/save, and more. The output editor's syntax mode and format
+badge update automatically after each successful conversion. Conversions run in the
+background and can be cancelled — the Convert button turns into **Cancel** while one is
+running. A syntax error is one line in the status bar, ending with the line and column the
+caret moves to; longer messages, such as Protobuf validation errors with an example, also
+open an IDE notification balloon, and the status bar shows their first line. Very large
+outputs are rendered with syntax highlighting disabled to keep the editor responsive.
 
 A **history** toolbar button lists the last 20 successful conversions of the session
 (time, formats, output size); selecting an entry restores both editors, format
@@ -605,7 +609,7 @@ integration built on it.
 | `PivotJson` | Shared JSON mapper builder preserving numeric values and decimal scale; callers configure input syntax. |
 | `JsonTrees` | Shared recursive key ordering, with numeric normalization reserved for comparison. |
 | `JsonPathFilter` | JSON Pointer and dotted/bracket subtree selection, including escaped and empty quoted keys. |
-| `SourcePosition` | Where a parse failure points, from Jackson, SnakeYAML and XML parser errors alike. |
+| `SourcePosition` | Where a parse failure points, from Jackson, SnakeYAML and XML parser errors alike, and the failure in one line with that position. |
 | `TextDecoder` | File bytes to text: by byte-order mark, the IDE's encoding for the file, UTF-8, then Windows-1252. |
 | `TextEncoder` | Saved text to bytes in the style of the file it replaces: its line breaks and, for CSV, Java and Kotlin, its encoding and byte-order mark. |
 | `LineBreaks` | A document's line separator, and converting between LF and CRLF. |
