@@ -17,21 +17,31 @@
 <idea-plugin>
     <!-- NOTE: the id is permanent once the plugin is published — it can never change. -->
     <id>com.converter.be-water-converter</id>
-    <name>Be Water Converter</name>
+    <name>Be Water JSON YAML Converter</name>
     <vendor email="hello@nomikosi.dev" url="https://github.com/nomikosi/be-water-converter">Nomikosi Consulting</vendor>
     <category>Code Tools</category>
+    <!-- The first paragraph is the summary on the Marketplace's search cards
+         (170 characters at most): it names what the plugin converts. -->
     <description><![CDATA[
-        <p><b>Be water, my friend.</b> Let your data flow between formats.</p>
-        <p>A visually pleasing data format converter with syntax-highlighted editors,
-        living in a tool window on the right side of your IDE.</p>
+        <p>Convert between JSON, YAML, XML, CSV, TOML and Protobuf, generate Java POJOs, Kotlin data
+        classes and JSON Schema, and decode Protobuf payloads.</p>
+        <p>It works in a tool window with syntax-highlighted editors on the right side of your IDE, and
+        it runs locally, so your data never goes to a website. <b>Be water, my friend</b>: let your
+        data flow between formats.</p>
 
-        <h3>Supported formats</h3>
+        <h3>Conversions</h3>
         <ul>
-            <li>Bidirectional conversion between <b>JSON, XML, YAML, CSV, TOML and Protobuf</b></li>
-            <li><b>Java POJO generation</b> from any supported input, with optional Lombok annotations
+            <li><b>JSON to YAML</b> and YAML to JSON, <b>XML to JSON</b> and JSON to XML,
+                <b>CSV to JSON</b> and JSON to CSV, <b>TOML to JSON</b> and JSON to TOML: each format
+                converts to every other</li>
+            <li><b>JSON to Java POJO</b> from any supported input, with optional Lombok annotations
                 and ISO-8601 date detection (<code>LocalDate</code> / <code>OffsetDateTime</code>)</li>
-            <li><b>Kotlin data class generation</b> from any supported input</li>
-            <li><b>JSON Schema generation</b> (draft 2020-12) from any supported input</li>
+            <li><b>JSON to Kotlin data class</b> from any supported input</li>
+            <li><b>JSON to JSON Schema</b> (draft 2020-12) from any supported input</li>
+            <li><b>Protobuf schema to JSON</b>, and JSON to a <code>.proto</code> schema</li>
+            <li><b>Decode Protobuf payloads</b>: paste a binary message as hex or base64 and read it as
+                JSON, by field number as <code>protoc --decode_raw</code> does, or by name against its
+                <code>.proto</code> file</li>
         </ul>
 
         <h3>Works where you already are</h3>
@@ -48,10 +58,9 @@
         <ul>
             <li>Full structural parsing of nested <code>message</code>, <code>oneof</code>, and <code>enum</code> blocks</li>
             <li>Field types that reference known messages are resolved to nested JSON objects</li>
-            <li>JSON-to-Proto generates idiomatic inline nested messages</li>
-            <li><b>Payload decoding</b>: paste a binary message as hex or base64 and read it as JSON,
-                by field number as <code>protoc --decode_raw</code> does, or by name against its
-                <code>.proto</code> file</li>
+            <li>JSON to Protobuf generates inline nested messages</li>
+            <li>Payloads decode as protobuf parses them: proto2, proto3 and editions schemas, maps,
+                oneofs, groups, and fields the schema does not declare</li>
         </ul>
 
         <h3>CSV &amp; XML</h3>
@@ -72,6 +81,10 @@
                 one-click swap, copy to clipboard, file import/export</li>
             <li>Options persist across IDE restarts</li>
         </ul>
+
+        <p><a href="https://github.com/nomikosi/be-water-converter#readme">Documentation</a> ·
+        <a href="https://github.com/nomikosi/be-water-converter/issues">Report an issue</a> ·
+        <a href="https://github.com/nomikosi/be-water-converter">Source code</a></p>
     ]]></description>
     <depends>com.intellij.modules.platform</depends>
     <extensions defaultExtensionNs="com.intellij">

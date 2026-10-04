@@ -115,7 +115,9 @@ changelog {
 intellijPlatform {
     pluginConfiguration {
         version = project.version
-        name = 'Be Water Converter'
+        // Searches rank a plugin by the words in its name first, so the name
+        // says what it converts. JetBrains allows 30 characters.
+        name = 'Be Water JSON YAML Converter'
         // Every release's notes from CHANGELOG.md, newest first. get() fails the
         // build while this version has no section there, so a release cannot go
         // out with the previous release's notes.
@@ -251,7 +253,7 @@ tasks.register('releaseFiles') {
         if (!notes.find()) throw new GradleException("${zip.name}'s plugin.xml has no notes for ${version}")
         notesFile.get().asFile.setText(
               '<!doctype html>\n<html lang="en"><meta charset="utf-8">'
-                    + "<title>Be Water Converter ${version}</title><body>\n${notes.group().trim()}\n</body></html>\n",
+                    + "<title>Be Water JSON YAML Converter ${version}</title><body>\n${notes.group().trim()}\n</body></html>\n",
               'UTF-8')
         logger.lifecycle("${zip.name}: ${String.format(Locale.ROOT, '%,d', data.length)} bytes, SHA-256 ${sha}")
     }

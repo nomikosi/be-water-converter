@@ -5,7 +5,7 @@
 
 <h2>1. Install the plugin</h2>
 <p>Open your JetBrains IDE, go to <b>Settings → Plugins → Marketplace</b>, search for
-    <b>Be Water Converter</b>, and click <b>Install</b>. Restart the IDE when prompted.</p>
+    <b>Be Water JSON YAML Converter</b>, and click <b>Install</b>. Restart the IDE when prompted.</p>
 
 <h2>2. Open the tool window</h2>
 <p>Click the <b>Be Water</b> tab on the right side bar, or go to <b>Tools → Be Water Converter</b>.</p>
@@ -23,6 +23,12 @@
 <h2>4. Convert</h2>
 <p>Select the source format in the <b>From</b> dropdown and the target format in the
     <b>To</b> dropdown, then click <b>Convert</b> or press <b>Ctrl+Enter</b>.</p>
+
+<h2>5. Decode a Protobuf payload</h2>
+<p>Choose <b>Protobuf payload</b> as the source format and paste the binary message as hex
+    (<code>08 96 01</code>) or base64 (<code>CJYB</code>). Without a schema it is decoded by field
+    number, as <code>protoc --decode_raw</code> does. To decode it by name, click
+    <b>Choose .proto…</b> in the options bar and pick the message type under <b>Message</b>.</p>
 
 <h2>Keyboard shortcuts</h2>
 <p>These shortcuts are active while focus is inside the Be Water tool window, including inside
@@ -72,7 +78,8 @@
 <h2>Swap behavior</h2>
 <p>The swap button exchanges input and output when the output format can also be parsed as
     an input format. Generated <b>Java POJO</b>, <b>Kotlin</b> and <b>JSON Schema</b> output is
-    output-only, so it cannot be swapped back into the input editor as a source format.</p>
+    output-only, so it cannot be swapped back into the input editor as a source format. A
+    <b>Protobuf payload</b> is input-only: it is decoded, never written.</p>
 
 <h2>Format</h2>
 <p>The <b>Format</b> button re-lays-out the input in its own format without changing what it

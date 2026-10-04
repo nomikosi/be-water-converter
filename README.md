@@ -33,7 +33,7 @@ The toolbar wraps responsively onto multiple rows when the tool window is narrow
 ## Installation
 
 1. In IntelliJ IDEA, go to **Settings → Plugins → Marketplace**.
-2. Search for **Be Water Converter**.
+2. Search for **Be Water JSON YAML Converter**, the name it is listed under.
 3. Click **Install** and restart the IDE.
 
 Or install from disk: download the ZIP of a version from the plugin's
@@ -42,6 +42,9 @@ Or install from disk: download the ZIP of a version from the plugin's
 
 Once installed, open the **Be Water** tool window from the right side bar, or via
 **Tools → Be Water Converter**.
+
+If the plugin is useful to you, a [rating on the Marketplace](https://plugins.jetbrains.com/plugin/32279/reviews)
+helps other people decide to try it.
 
 ## Supported conversions
 

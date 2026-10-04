@@ -20,6 +20,9 @@ fails until the version in `build.gradle` has a section here.
 - **Groups keep what they declare** — a oneof, message or enum declared inside a proto2 group
   is the group's own. Protobuf to JSON took a oneof there for the enclosing message's fields,
   and refused the schema when one of their numbers met another of that message's.
+- **Listed as Be Water JSON YAML Converter** — the plugin's name in the Marketplace and in the
+  plugin manager now says what it converts, and its description opens with the conversions it
+  offers. The tool window and its menu items keep their names.
 
 ## [1.5.3]
 
