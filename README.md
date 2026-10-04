@@ -16,6 +16,8 @@
   [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
 </div>
 
+![The Be Water tool window in IntelliJ IDEA, converting a JSON service configuration to YAML](docs/screenshots/1-json-to-yaml.png)
+
 ---
 
 ## Overview
@@ -788,7 +790,8 @@ token](https://plugins.jetbrains.com/author/me/tokens).
 Releases uploaded to the Marketplace by hand are tagged with the bare version (`1.5.2`), so
 the commit that shipped is recorded without starting the workflow, which would publish it a
 second time. `./gradlew releaseFiles` writes what goes with such an upload beside the ZIP:
-its SHA-256, and this version's notes as built into it, as an HTML page.
+its SHA-256, and this version's notes as built into it, as an HTML page. The screenshots on
+the Marketplace page are in [docs/screenshots](docs/screenshots), at 2528×1584.
 
 ## Compatibility
 
