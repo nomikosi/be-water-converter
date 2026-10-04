@@ -1,88 +1,103 @@
-<h2>General</h2>
-<p>This is a fun-made project. I always wanted to create an IntelliJ plugin. If you find any issues, feel free to create a PR at https://github.com/nomikosi/be-water-converter or message me directly.</p>
-<p>If you have any other ideas about improvements, feel free to share those at hello@nomikosi.dev.</p>
+<h3>About</h3>
+<p>This is a project made for fun: I always wanted to create an IntelliJ plugin. If you find an issue,
+    feel free to <a href="https://github.com/nomikosi/be-water-converter/issues">report it</a> or send a
+    pull request on <a href="https://github.com/nomikosi/be-water-converter">GitHub</a>, or message me
+    directly.</p>
+<p>If you have any other ideas for improvements, feel free to share them at
+    <a href="mailto:hello@nomikosi.dev">hello@nomikosi.dev</a>.</p>
 
-
-<h2>1. Install the plugin</h2>
+<h3>1. Install the plugin</h3>
 <p>Open your JetBrains IDE, go to <b>Settings → Plugins → Marketplace</b>, search for
     <b>Be Water JSON YAML Converter</b>, and click <b>Install</b>. Restart the IDE when prompted.</p>
 
-<h2>2. Open the tool window</h2>
+<h3>2. Open the tool window</h3>
 <p>Click the <b>Be Water</b> tab on the right side bar, or go to <b>Tools → Be Water Converter</b>.</p>
 
-<h2>3. Load your data</h2>
-<p>Paste text into the input editor, or load a file using one of these methods:</p>
+<h3>3. Load your data</h3>
 <ul>
-    <li><b>Drag and drop</b> a file onto the input editor</li>
-    <li><b>Open</b> a file from the toolbar button</li>
+    <li><b>Paste</b> text into the input editor.</li>
+    <li><b>Drag and drop</b> a file onto the input editor.</li>
+    <li><b>Open</b> a file with the folder button on the toolbar.</li>
+    <li><b>Right-click</b> a file in the Project view, or a selection in any editor, and choose
+        <b>Open in Be Water Converter</b>.</li>
 </ul>
+<p>The source format is detected from the file extension, or from the content itself for pasted
+    text; for CSV the delimiter (comma, semicolon or tab) is detected as well.</p>
 
-<p>The source format is auto-detected from the file extension, or from the content itself for
-    pasted text; for CSV the delimiter (comma, semicolon or tab) is detected as well.</p>
+<h3>4. Convert</h3>
+<p>Choose the source format under <b>From</b> and the target format under <b>To</b>, then click
+    <b>Convert</b> or press <code>Ctrl+Enter</code>.</p>
+<p>To skip the tool window, right-click a file or a selection and choose
+    <b>Convert with Be Water</b>: the result opens as a scratch file, in a real IDE editor.</p>
 
-<h2>4. Convert</h2>
-<p>Select the source format in the <b>From</b> dropdown and the target format in the
-    <b>To</b> dropdown, then click <b>Convert</b> or press <b>Ctrl+Enter</b>.</p>
-
-<h2>5. Decode a Protobuf payload</h2>
-<p>Choose <b>Protobuf payload</b> as the source format and paste the binary message as hex
+<h3>5. Decode a Protobuf payload</h3>
+<p>Choose <b>Protobuf payload</b> under <b>From</b> and paste the binary message as hex
     (<code>08 96 01</code>) or base64 (<code>CJYB</code>). Without a schema it is decoded by field
     number, as <code>protoc --decode_raw</code> does. To decode it by name, click
     <b>Choose .proto…</b> in the options bar and pick the message type under <b>Message</b>.</p>
 
-<h2>Keyboard shortcuts</h2>
-<p>These shortcuts are active while focus is inside the Be Water tool window, including inside
-    the input and output editors. Other actions are available from the toolbar buttons.</p>
+<h3>Keyboard shortcuts</h3>
+<p>These work while the focus is inside the Be Water tool window, its editors included:</p>
 <ul>
-    <li><b>Ctrl+Enter</b> converts input to the selected output format</li>
-    <li><b>Ctrl+F</b> opens a find bar that searches the focused editor
-        (Enter = next match, Shift+Enter = previous, Esc = close)</li>
+    <li><code>Ctrl+Enter</code> converts the input to the selected output format.</li>
+    <li><code>Ctrl+Shift+S</code> saves the output to a file.</li>
+    <li><code>Ctrl+F</code> opens a find bar for the focused editor: <code>Enter</code> finds the next
+        match, <code>Shift+Enter</code> the previous one, and <code>Esc</code> closes it.</li>
 </ul>
-<p>The main operations (Convert, Format Input, Copy Output, Open File, Save Output) are also
-    registered as IDE actions — search for "Be Water" in <b>Find Action</b> or assign your own
-    shortcuts in <b>Settings → Keymap</b>.</p>
+<p>Convert, Format Input, Copy Output, Open File and Save Output are also IDE actions: search for
+    <b>Be Water</b> in <b>Find Action</b>, or give them shortcuts of your own in
+    <b>Settings → Keymap</b>.</p>
 
-<h2>Toolbar extras</h2>
+<h3>Toolbar</h3>
 <ul>
-    <li><b>Cancel</b> — while a conversion runs, the Convert button becomes Cancel.</li>
-    <li><b>History</b> — the clock button lists the last 20 conversions; selecting one restores
-        both editors. Restoring saves the current state first, so it can be undone.</li>
-    <li><b>Soft-wrap</b> — toggles line wrapping in both editors.</li>
-    <li><b>Split toggle</b> — switches between side-by-side and stacked editors.</li>
-</ul>
-
-<h2>Conversion-specific options</h2>
-<p>Some formats show an options bar below the toolbar. All options are remembered across IDE
-    restarts:</p>
-<ul>
-    <li><b>CSV output</b> choose between <code>FLAT_FIRST</code> (expands the first array only) and
-        <code>CROSS_JOIN</code> (full Cartesian product). The <b>Row warning</b> threshold controls
-        when the confirmation dialog appears; it applies to both modes.</li>
-    <li><b>CSV on either side</b> choose the <b>Delimiter</b>: comma, semicolon or tab.</li>
-    <li><b>CSV / XML input</b> toggle <b>Infer types</b> to convert values that look like numbers,
-        booleans, or <code>null</code> into typed JSON values (leading-zero values like
-        <code>007</code> always stay strings).</li>
-    <li><b>Java POJO and Kotlin</b> toggle <b>Detect dates</b> to type ISO-8601 values as
-        <code>LocalDate</code> / <code>LocalDateTime</code> / <code>OffsetDateTime</code>; Java POJO
-        output can also add <b>Lombok annotations</b> (<code>@Data</code>,
-        <code>@NoArgsConstructor</code>, and <code>@AllArgsConstructor</code>).</li>
-    <li><b>Every conversion</b> can <b>Sort keys</b>, and a <b>Filter</b> path such as
-        <code>users[0].name</code> converts only part of the document.</li>
+    <li><b>Swap</b>, between From and To, exchanges input and output when the output can be read back
+        as input. Generated Java POJO, Kotlin and JSON Schema output cannot, and a Protobuf payload is
+        decoded, never written.</li>
+    <li><b>Format</b> tidies the input in its own format (see below).</li>
+    <li><b>Copy</b> copies the output; <b>Clear</b> empties both editors and resets the formats.</li>
+    <li><b>Open</b> loads a file into the input; <b>Save</b> writes the output to a file.</li>
+    <li><b>Split</b> switches between side-by-side and stacked editors; <b>Soft-wrap</b> wraps long
+        lines in both.</li>
+    <li><b>Open in editor</b> opens the output as a scratch file, in a real IDE editor.</li>
+    <li><b>Compare</b> opens the IDE's diff viewer on the input and the output, both as canonical JSON:
+        the same data in YAML and JSON compares as equal, so only real differences show.</li>
+    <li><b>History</b> lists the last 20 conversions; choosing one restores both editors, their formats
+        and the options. The current state is saved first, so a restore can be undone.</li>
+    <li>While a conversion runs, <b>Convert</b> becomes <b>Cancel</b>.</li>
 </ul>
 
-<h2>Input leniency</h2>
-<p>JSON input tolerates comments, trailing commas, single quotes, and unquoted field names, and
-    truncated JSON is auto-repaired (unclosed brackets and strings are closed). Multi-document
-    YAML ("---"-separated, e.g. Kubernetes manifests) converts to a JSON array.</p>
+<h3>Options</h3>
+<p>The options bar below the toolbar always shows <b>Sort keys</b> and <b>Filter</b>; the other
+    options appear when the selected formats use them. All of them except the filter and a
+    payload's schema are remembered across IDE restarts.</p>
+<ul>
+    <li><b>Sort keys</b> orders object keys alphabetically. <b>Filter</b> converts only part of a
+        document, chosen by a path such as <code>users[0].name</code>.</li>
+    <li><b>CSV output:</b> <code>FLAT_FIRST</code> expands the first array only, and
+        <code>CROSS_JOIN</code> gives the full Cartesian product. Above the <b>Row warning</b>
+        threshold, a conversion asks before running, in either mode.</li>
+    <li><b>CSV on either side:</b> the <b>Delimiter</b>, comma, semicolon or tab.</li>
+    <li><b>CSV or XML input:</b> <b>Infer types</b> turns values that look like numbers, booleans or
+        <code>null</code> into typed JSON values; a leading-zero value such as <code>007</code> stays
+        a string.</li>
+    <li><b>Java POJO and Kotlin output:</b> <b>Detect dates</b> types ISO-8601 values as
+        <code>LocalDate</code>, <code>LocalDateTime</code> or <code>OffsetDateTime</code>, and Java
+        POJO output can add <b>Lombok annotations</b> (<code>@Data</code>,
+        <code>@NoArgsConstructor</code> and <code>@AllArgsConstructor</code>).</li>
+    <li><b>Protobuf payload input:</b> the <b>Schema</b>, chosen with <b>Choose .proto…</b>, and the
+        <b>Message</b> type the payload holds.</li>
+</ul>
 
-<h2>Swap behavior</h2>
-<p>The swap button exchanges input and output when the output format can also be parsed as
-    an input format. Generated <b>Java POJO</b>, <b>Kotlin</b> and <b>JSON Schema</b> output is
-    output-only, so it cannot be swapped back into the input editor as a source format. A
-    <b>Protobuf payload</b> is input-only: it is decoded, never written.</p>
+<h3>Input leniency</h3>
+<p>JSON input may hold comments, trailing commas, single quotes and unquoted field names, and
+    truncated JSON is repaired: unclosed brackets and strings are closed. Multi-document YAML,
+    separated by <code>---</code> as Kubernetes manifests are, converts to a JSON array.</p>
 
-<h2>Format</h2>
-<p>The <b>Format</b> button re-lays-out the input in its own format without changing what it
-    says. Where that is impossible — a TOML date or hex literal, YAML <code>.inf</code>, XML text
-    mixed with child elements — Format refuses and leaves the editor alone, and before it drops
-    the comments of a YAML, TOML or JSON document it says how many and asks first.</p>
+<h3>Format</h3>
+<p>The <b>Format</b> button lays the input out again in its own format without changing what it
+    says. XML is re-indented only where an element holds nothing but other elements, so text mixed
+    with elements is kept as written.</p>
+<p>Where a new layout would change the data, Format refuses and leaves the editor alone: a TOML
+    date or hex number, YAML <code>.inf</code>, or a number that would be written back differently,
+    such as <code>1.5e1</code> as <code>15</code>. Before it drops the comments of a YAML, TOML or
+    JSON document, it says how many and asks first.</p>
