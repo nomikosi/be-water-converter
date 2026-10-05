@@ -57,7 +57,7 @@ dependencies {
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-toml'
     // The YAML reader is built on SnakeYAML's own classes, not only Jackson's,
     // so it is a direct dependency: the version jackson-dataformat-yaml uses.
-    implementation 'org.yaml:snakeyaml:2.5'
+    implementation 'org.yaml:snakeyaml:2.7'
     implementation 'com.fifesoft:rsyntaxtextarea:4.0.1'
     // Isolated from both the plugin and the IDE test class loader. Tests invoke
     // this compiler in a separate JVM and load the resulting classes.
