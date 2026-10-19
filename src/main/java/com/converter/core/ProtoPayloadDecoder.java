@@ -71,6 +71,7 @@ public final class ProtoPayloadDecoder {
 
     private final ProtoConverter proto;
     private String cachedSchemaText;
+    private Map<String, String> cachedImports;
     private ProtoSchema cachedSchema;
 
     public ProtoPayloadDecoder(ProtoConverter proto) {
@@ -84,12 +85,21 @@ public final class ProtoPayloadDecoder {
      * @return the payload as compact JSON
      */
     public String decode(String payloadText, String schemaText, String messageType) throws Exception {
+        return decode(payloadText, schemaText, messageType, Map.of());
+    }
+
+    /**
+     * @param imports the files the schema imports, by import path; the
+     *                well-known types' need not be among them
+     */
+    public String decode(String payloadText, String schemaText, String messageType, Map<String, String> imports)
+          throws Exception {
         byte[] bytes = ProtoPayloadText.bytes(payloadText);
         JsonNode decoded;
         if (schemaText == null || schemaText.isBlank() || messageType == null || messageType.isBlank()) {
             decoded = raw(new Wire(bytes, 0, bytes.length), 0, -1);
         } else {
-            ProtoSchema schema = schema(schemaText);
+            ProtoSchema schema = schema(schemaText, imports);
             ProtoSchema.Message message = schema.messages().get(messageType);
             if (message == null)
                 throw new IllegalArgumentException("The schema declares no message " + messageType
@@ -99,11 +109,12 @@ public final class ProtoPayloadDecoder {
         return LenientJson.COMPACT.writeValueAsString(decoded);
     }
 
-    /** The schema for this text, read once while the text stays the same. */
-    private synchronized ProtoSchema schema(String schemaText) {
-        if (!schemaText.equals(cachedSchemaText)) {
-            cachedSchema = proto.readSchema(schemaText);
+    /** The schema for this text and these imports, read once while they stay the same. */
+    private synchronized ProtoSchema schema(String schemaText, Map<String, String> imports) {
+        if (!schemaText.equals(cachedSchemaText) || !imports.equals(cachedImports)) {
+            cachedSchema = proto.readSchema(schemaText, imports);
             cachedSchemaText = schemaText;
+            cachedImports = imports;
         }
         return cachedSchema;
     }
@@ -306,7 +317,7 @@ public final class ProtoPayloadDecoder {
      * A message read against its type, up to the end of {@code wire} or, for a
      * group ({@code group} its field number, else -1), up to its end tag.
      */
-    private ObjectNode typed(Wire wire, ProtoSchema.Message message, ProtoSchema schema, int depth, int group) {
+    private JsonNode typed(Wire wire, ProtoSchema.Message message, ProtoSchema schema, int depth, int group) {
         checkDepth(depth, wire);
         Map<Integer, List<JsonNode>> values = new LinkedHashMap<>();
         Map<Integer, List<Range>> singularMessages = new LinkedHashMap<>();
@@ -396,7 +407,33 @@ public final class ProtoPayloadDecoder {
         }
         unknown.forEach((number, list) -> node.set(String.valueOf(number),
               list.size() == 1 ? list.getFirst() : NODES.arrayNode().addAll(list)));
-        return node;
+        JsonNode wellKnown = WellKnownTypes.ANY.equals(message.fullName()) ? any(node, schema, depth)
+              : WellKnownTypes.json(message.fullName(), node);
+        return wellKnown != null ? wellKnown : node;
+    }
+
+    /**
+     * An Any as protobuf's printer writes it: {@code @type} beside the fields
+     * of the message it holds, or beside {@code value} when that message has a
+     * JSON form of its own. One of a type the schema does not declare keeps
+     * its bytes, in base64, where protobuf's printer refuses it.
+     */
+    private JsonNode any(ObjectNode decoded, ProtoSchema schema, int depth) {
+        String typeUrl = decoded.has("type_url") ? decoded.get("type_url").asText() : "";
+        String value = decoded.has("value") ? decoded.get("value").asText() : "";
+        if (typeUrl.isEmpty() && value.isEmpty()) return NODES.objectNode();
+        ObjectNode out = NODES.objectNode().put("@type", typeUrl);
+        ProtoSchema.Message type = schema.messages().get(typeUrl.substring(typeUrl.lastIndexOf('/') + 1));
+        if (type == null) return out.put("value", value);
+        byte[] bytes = Base64.getDecoder().decode(value);
+        JsonNode held = typed(new Wire(bytes, 0, bytes.length), type, schema, depth + 1, -1);
+        if (held instanceof ObjectNode fields && !hasOwnForm(type.fullName())) out.setAll(fields);
+        else out.set("value", held);
+        return out;
+    }
+
+    private static boolean hasOwnForm(String type) {
+        return WellKnownTypes.ANY.equals(type) || WellKnownTypes.json(type, NODES.objectNode()) != null;
     }
 
     /**
@@ -404,7 +441,7 @@ public final class ProtoPayloadDecoder {
      * merges them: by reading them as one, each byte keeping its place in the
      * payload.
      */
-    private ObjectNode mergedMessage(Wire source, List<Range> ranges, ProtoSchema.Message type, ProtoSchema schema,
+    private JsonNode mergedMessage(Wire source, List<Range> ranges, ProtoSchema.Message type, ProtoSchema schema,
           int depth) {
         if (ranges.size() == 1)
             return typed(source.slice(ranges.getFirst().start(), ranges.getFirst().end()), type, schema, depth + 1, -1);
@@ -454,7 +491,7 @@ public final class ProtoPayloadDecoder {
      */
     private static boolean isDefault(JsonNode value, ProtoSchema.Field field, ProtoSchema schema) {
         if (field.kind() == ProtoSchema.Kind.ENUM)
-            return value.isNumber() ? value.intValue() == 0
+            return value.isNull() || value.isNumber() ? value.isNull() || value.intValue() == 0
                   : value.asText().equals(schema.enums().get(field.type()).names().get(0));
         return switch (field.type()) {
             case "string", "bytes" -> value.asText().isEmpty();
@@ -532,6 +569,8 @@ public final class ProtoPayloadDecoder {
             case "bool" -> NODES.booleanNode(wire.varint() != 0);
             case "enum" -> {
                 int number = (int) wire.varint();
+                // NullValue, whichever number it holds, is JSON's null, as protobuf prints it.
+                if (WellKnownTypes.NULL_VALUE.equals(field.type())) yield NODES.nullNode();
                 String name = schema.enums().get(field.type()).names().get(number);
                 yield name != null ? NODES.textNode(name) : NODES.numberNode(number);
             }
@@ -615,8 +654,14 @@ public final class ProtoPayloadDecoder {
 
     private static JsonNode defaultValue(ProtoSchema.Field field, ProtoSchema schema) {
         return switch (field.kind()) {
-            case MESSAGE, UNRESOLVED, GROUP, MAP -> NODES.objectNode();
+            // An empty message: a Timestamp's is the epoch, a Value's null.
+            case MESSAGE -> {
+                JsonNode wellKnown = WellKnownTypes.json(field.type(), NODES.objectNode());
+                yield wellKnown != null ? wellKnown : NODES.objectNode();
+            }
+            case UNRESOLVED, GROUP, MAP -> NODES.objectNode();
             case ENUM -> {
+                if (WellKnownTypes.NULL_VALUE.equals(field.type())) yield NODES.nullNode();
                 String zero = schema.enums().get(field.type()).names().get(0);
                 yield zero != null ? NODES.textNode(zero) : NODES.numberNode(0);
             }

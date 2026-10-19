@@ -83,7 +83,12 @@ final class ConverterFileOps {
     }
 
     /** A .proto file read to decode payloads against: its name, its text and the message types it declares. */
-    record ProtoSchemaFile(String name, String text, List<String> messages) {}
+    /**
+     * @param imports the files it imports that were found beside it, by import path
+     * @param missing the imports no directory above it holds
+     */
+    record ProtoSchemaFile(String name, String text, List<String> messages, java.util.Map<String, String> imports,
+                           List<String> missing) {}
 
     /**
      * Lets the user pick the .proto file a payload was written with, then reads
@@ -106,8 +111,10 @@ final class ConverterFileOps {
             try {
                 String text = unsaved != null ? unsaved
                       : com.converter.core.TextDecoder.decode(Files.readAllBytes(file.toPath()), ideCharset).text();
+                var proto = new com.converter.core.ProtoConverter();
+                var found = com.converter.core.ProtoImports.collect(file.toPath(), text, proto);
                 return new ProtoSchemaFile(file.getName(), text,
-                      new com.converter.core.ProtoConverter().readSchema(text).messageNames());
+                      proto.readSchema(text, found.files()).messageNames(), found.files(), found.missing());
             } catch (IOException ex) {
                 throw new java.util.concurrent.CompletionException(ex);
             }

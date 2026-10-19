@@ -50,6 +50,7 @@ public class ConversionPipeline {
     private final ProtoConverter    proto    = new ProtoConverter();
     private final PropertiesConverter properties = new PropertiesConverter();
     private final ProtoPayloadDecoder payload = new ProtoPayloadDecoder(proto);
+    private final ProtoPayloadEncoder payloadWriter = new ProtoPayloadEncoder(proto);
     private final JavaPojoGenerator pojo     = new JavaPojoGenerator();
     private final JsonSchemaGenerator schema = new JsonSchemaGenerator();
     private final KotlinDataClassGenerator kotlin = new KotlinDataClassGenerator();
@@ -80,7 +81,8 @@ public class ConversionPipeline {
             case FMT_TOML  -> toml.tomlToJson(input);
             case FMT_PROTO -> proto.protoToJson(input);
             case FMT_PROPERTIES -> properties.propertiesToJson(input, inferTypes);
-            case FMT_PROTO_PAYLOAD -> payload.decode(input, opts.protoSchema(), opts.protoMessage());
+            case FMT_PROTO_PAYLOAD -> payload.decode(input, opts.protoSchema(), opts.protoMessage(),
+                  opts.protoImports());
             default -> throw new UnsupportedOperationException("Unknown input: " + inFmt);
         };
         // One parse and one serialise however many options are on: applying them
@@ -126,6 +128,8 @@ public class ConversionPipeline {
             case FMT_CSV    -> csv.jsonToCsv(parseJson(asJson), opts.csvMode(), opts.csvFormat());
             case FMT_TOML   -> toml.jsonToToml(asJson);
             case FMT_PROTO  -> proto.jsonToProto(asJson);
+            case FMT_PROTO_PAYLOAD -> payloadWriter.encode(asJson, opts.protoSchema(), opts.protoMessage(),
+                  opts.protoImports(), opts.protoBase64());
             case FMT_PROPERTIES -> properties.jsonToProperties(asJson);
             case FMT_JAVA   -> pojo.fromJson(asJson, opts.useLombok(), opts.detectDates());
             case FMT_SCHEMA -> schema.fromJson(asJson);

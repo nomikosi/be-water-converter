@@ -54,9 +54,12 @@ class ConverterEditorStateTest {
     }
 
     @Test void everyFormatHasAnEditorStyle() {
-        for (String format : com.converter.core.Formats.outputNames())
+        for (String format : com.converter.core.Formats.outputNames()) {
+            // Hex and base64 have no syntax to highlight.
+            if (format.equals(com.converter.core.Formats.FMT_PROTO_PAYLOAD)) continue;
             assertThat(ConverterEditorState.syntaxStyle(format)).as(format)
                   .isNotEqualTo(SyntaxConstants.SYNTAX_STYLE_NONE);
+        }
         assertThat(ConverterEditorState.syntaxStyle("no such format"))
               .isEqualTo(SyntaxConstants.SYNTAX_STYLE_NONE);
     }

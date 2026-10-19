@@ -415,7 +415,7 @@ class ProtoPayloadDecoderTest {
                   + "\"b\":9223372036854775807,\"\":9},\"by_id\":{\"-1\":{\"v\":8}},\"flags\":{\"true\":\"on\"}}"));
         }
 
-        @Test @DisplayName("the oneof member that is set, and a message from an imported file decoded raw")
+        @Test @DisplayName("the oneof member that is set, and an imported Timestamp written as protobuf writes one")
         void oneofAndImported() throws Exception {
             String payload = hex(out -> {
                 out.writeInt32(10, 42);
@@ -425,7 +425,7 @@ class ProtoPayloadDecoderTest {
                 });
             });
             assertThat(typed(payload, SCHEMA, "demo.v1.Outer"))
-                  .isEqualTo(json("{\"number\":42,\"when\":{\"1\":1700000000,\"2\":5}}"));
+                  .isEqualTo(json("{\"number\":42,\"when\":\"2023-11-14T22:13:20.000000005Z\"}"));
         }
 
         @Test @DisplayName("fields the schema does not declare are kept under their numbers, after the rest")

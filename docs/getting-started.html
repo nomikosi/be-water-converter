@@ -29,12 +29,25 @@
     <b>Convert</b> or press <code>Ctrl+Enter</code>.</p>
 <p>To skip the tool window, right-click a file or a selection and choose
     <b>Convert with Be Water</b>: the result opens as a scratch file, in a real IDE editor.</p>
+<p>Select several files in the Project view first to convert them all at once: each result is
+    written beside its source, <code>config.json</code> to <code>config.yaml</code>, and files it
+    would replace are listed and asked about once.</p>
+<p>Besides data formats, <b>To</b> offers code: Java POJOs, Kotlin data classes, TypeScript
+    interfaces, Dart classes with <code>fromJson</code> and <code>toJson</code>, Go structs, Python
+    Pydantic models, Rust serde structs and JSON Schema.</p>
+<p>Java <code>.properties</code> files convert to YAML, JSON and the rest, keys nested as Spring
+    Boot binds them: <code>server.port</code> is <code>server</code> holding <code>port</code>, and
+    <code>servers[0].host</code> the first element of a list.</p>
 
-<h3>5. Decode a Protobuf payload</h3>
+<h3>5. Decode or write a Protobuf payload</h3>
 <p>Choose <b>Protobuf payload</b> under <b>From</b> and paste the binary message as hex
     (<code>08 96 01</code>) or base64 (<code>CJYB</code>). Without a schema it is decoded by field
     number, as <code>protoc --decode_raw</code> does. To decode it by name, click
-    <b>Choose .proto…</b> in the options bar and pick the message type under <b>Message</b>.</p>
+    <b>Choose .proto…</b> in the options bar and pick the message type under <b>Message</b>. The
+    files the schema imports are read from beside it, and the well-known types, such as
+    <code>google.protobuf.Timestamp</code>, come with the plugin.</p>
+<p>To write one, choose <b>Protobuf payload</b> under <b>To</b> instead, with the schema and
+    message type, and <b>Write as</b> hex or base64.</p>
 
 <h3>Keyboard shortcuts</h3>
 <p>These work while the focus is inside the Be Water tool window, its editors included:</p>
@@ -51,8 +64,7 @@
 <h3>Toolbar</h3>
 <ul>
     <li><b>Swap</b>, between From and To, exchanges input and output when the output can be read back
-        as input. Generated Java POJO, Kotlin and JSON Schema output cannot, and a Protobuf payload is
-        decoded, never written.</li>
+        as input. Generated code and JSON Schema cannot.</li>
     <li><b>Format</b> tidies the input in its own format (see below).</li>
     <li><b>Copy</b> copies the output; <b>Clear</b> empties both editors and resets the formats.</li>
     <li><b>Open</b> loads a file into the input; <b>Save</b> writes the output to a file.</li>
@@ -77,15 +89,17 @@
         <code>CROSS_JOIN</code> gives the full Cartesian product. Above the <b>Row warning</b>
         threshold, a conversion asks before running, in either mode.</li>
     <li><b>CSV on either side:</b> the <b>Delimiter</b>, comma, semicolon or tab.</li>
-    <li><b>CSV or XML input:</b> <b>Infer types</b> turns values that look like numbers, booleans or
-        <code>null</code> into typed JSON values; a leading-zero value such as <code>007</code> stays
-        a string.</li>
-    <li><b>Java POJO and Kotlin output:</b> <b>Detect dates</b> types ISO-8601 values as
-        <code>LocalDate</code>, <code>LocalDateTime</code> or <code>OffsetDateTime</code>, and Java
-        POJO output can add <b>Lombok annotations</b> (<code>@Data</code>,
-        <code>@NoArgsConstructor</code> and <code>@AllArgsConstructor</code>).</li>
-    <li><b>Protobuf payload input:</b> the <b>Schema</b>, chosen with <b>Choose .proto…</b>, and the
-        <b>Message</b> type the payload holds.</li>
+    <li><b>CSV, XML or Properties input:</b> <b>Infer types</b> turns values that look like numbers,
+        booleans or <code>null</code> into typed JSON values; a leading-zero value such as
+        <code>007</code> stays a string.</li>
+    <li><b>Java POJO, Kotlin and Python output:</b> <b>Detect dates</b> types ISO-8601 values as
+        <code>LocalDate</code>, <code>LocalDateTime</code> or <code>OffsetDateTime</code>, or in
+        Python as <code>date</code> or <code>datetime</code>, and Java POJO output can add
+        <b>Lombok annotations</b> (<code>@Data</code>, <code>@NoArgsConstructor</code> and
+        <code>@AllArgsConstructor</code>).</li>
+    <li><b>Protobuf payload on either side:</b> the <b>Schema</b>, chosen with
+        <b>Choose .proto…</b>, and the <b>Message</b> type the payload holds; as the output,
+        <b>Write as</b> hex or base64.</li>
 </ul>
 
 <h3>Input leniency</h3>
@@ -96,7 +110,8 @@
 <h3>Format</h3>
 <p>The <b>Format</b> button lays the input out again in its own format without changing what it
     says. XML is re-indented only where an element holds nothing but other elements, so text mixed
-    with elements is kept as written.</p>
+    with elements is kept as written. Properties become one <code>key=value</code> per line, with
+    their comments kept.</p>
 <p>Where a new layout would change the data, Format refuses and leaves the editor alone: a TOML
     date or hex number, YAML <code>.inf</code>, or a number that would be written back differently,
     such as <code>1.5e1</code> as <code>15</code>. Before it drops the comments of a YAML, TOML or

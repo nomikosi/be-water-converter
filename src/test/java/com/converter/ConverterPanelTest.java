@@ -118,7 +118,7 @@ class ConverterPanelTest {
     }
 
     @Test
-    void swapRefusesAPayloadInputBecauseAPayloadIsNeverWritten() throws Exception {
+    void swapMovesAPayloadInputToTheOutputSide() throws Exception {
         runOnEdt(() -> {
             ConverterPanel panel = track(new ConverterPanel());
             RSyntaxTextArea inputArea = field(panel, "inputArea", RSyntaxTextArea.class);
@@ -133,11 +133,11 @@ class ConverterPanelTest {
 
             invoke(panel, "doSwap");
 
-            assertThat(inputArea.getText()).isEqualTo("08 96 01");
-            assertThat(outputArea.getText()).isEqualTo("{\"1\": 150}");
-            assertThat(inputFormatLabel.getText()).isEqualTo("Protobuf payload");
-            assertThat(field(panel, "statusLabel", JLabel.class).getText())
-                  .contains("Protobuf payload input cannot be used as output");
+            // A payload is written against a schema too, so it swaps to the output side.
+            assertThat(inputArea.getText()).isEqualTo("{\"1\": 150}");
+            assertThat(outputArea.getText()).isEqualTo("08 96 01");
+            assertThat(inputFormatLabel.getText()).isEqualTo("JSON");
+            assertThat(outputFormatLabel.getText()).isEqualTo("Protobuf payload");
         });
     }
 
@@ -152,7 +152,7 @@ class ConverterPanelTest {
 
             inputCombo.setSelectedItem("Protobuf payload");
             assertThat(payloadOptions.isVisible()).isTrue();
-            // A payload is decoded, never written: it is no output to choose.
+            // A payload is no output for a payload: no format is.
             JComboBox<?> outputCombo = field(panel, "outputCombo", JComboBox.class);
             for (int i = 0; i < outputCombo.getItemCount(); i++)
                 assertThat(outputCombo.getItemAt(i)).isNotEqualTo("Protobuf payload");

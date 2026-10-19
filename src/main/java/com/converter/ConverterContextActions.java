@@ -263,7 +263,10 @@ public final class ConverterContextActions {
 
         public ConvertToGroup() {
             setPopup(true);
-            for (String target : Formats.outputNames()) add(new ConvertTo(target));
+            // A payload is written against the schema chosen in the tool window,
+            // which a file in the Project view does not come with.
+            for (String target : Formats.outputNames())
+                if (!Formats.FMT_PROTO_PAYLOAD.equals(target)) add(new ConvertTo(target));
         }
 
         @Override public @NotNull ActionUpdateThread getActionUpdateThread() {

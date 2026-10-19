@@ -56,6 +56,8 @@ helps other people decide to try it.
 | JSON, XML, YAML, CSV, TOML, Protobuf, Properties | Each other, and every code output |
 | Protobuf payload | Every format above, and every code output |
 
+A Protobuf payload is written from any of them too, against the schema chosen for it.
+
 | Code output | What it generates |
 |---|---|
 | Java POJO | Classes with Jackson annotations, optionally Lombok |
@@ -68,9 +70,9 @@ helps other people decide to try it.
 | JSON Schema | A draft 2020-12 schema |
 
 The code outputs are output-only: none is accepted as an input format, so **Swap** refuses to
-move them to the input side. `Protobuf payload`, a binary
-Protobuf message pasted as hex or base64, is input-only: it is decoded, never written, so
-**Swap** refuses to move it to the output side.
+move them to the input side. `Protobuf payload`, a binary Protobuf message as hex or base64,
+is read and written, so it swaps like the other formats; the context menu does not offer it
+as an output, since only the tool window holds the schema one is written against.
 
 Most conversions follow a two-step flow: input is first normalized to JSON, then JSON is
 rendered to the requested target format. JSON input is parsed leniently — comments, trailing
@@ -230,15 +232,16 @@ dropped and asks first.
 ### Conversion-specific options bar
 
 An options bar sits below the toolbar. **Sort keys** applies to every conversion and is
-always shown; the format-specific groups appear only when they are relevant. CSV output
-shows a mode selector with a live hint; CSV on either side shows a **Delimiter** selector;
-CSV, XML or Properties input shows an **Infer types** toggle; Java POJO output shows Lombok and date
-toggles; Protobuf payload input shows the payload's **Schema** and **Message** type. The
+always shown; the format-specific groups appear only when they are relevant. CSV output shows
+a mode selector with a live hint; CSV on either side shows a **Delimiter** selector; CSV, XML
+or Properties input shows an **Infer types** toggle; Java POJO output shows Lombok and date
+toggles, and Kotlin and Python output the date toggle; a Protobuf payload on either side
+shows its **Schema** and **Message** type, and as the output **Write as** hex or base64. The
 row-warning threshold applies to both CSV modes. All option values (CSV mode, delimiter,
-row-warning threshold, Lombok, type inference, date detection, sort keys, split orientation)
-are persisted across IDE restarts. Each open project has its own panel, and an option changed
-in one shows in the others at once; the split orientation and soft wrap stay each panel's
-own, as do the subtree filter and a payload's schema.
+row-warning threshold, Lombok, type inference, date detection, sort keys, payload encoding,
+split orientation) are persisted across IDE restarts. Each open project has its own panel,
+and an option changed in one shows in the others at once; the split orientation and soft wrap
+stay each panel's own, as do the subtree filter and a payload's schema.
 
 ### CSV delimiter
 
@@ -587,7 +590,7 @@ and write them back unchanged: `tsc --strict` checks each sample as a value of i
 interface, and the Dart, Go, Python and Rust code round-trips them. A test whose toolchain
 is not installed is skipped; CI has all but Dart.
 
-### Protobuf payload decoding
+### Protobuf payloads
 
 **Protobuf payload** reads a binary Protobuf message pasted as text: hex, however it is
 spaced, prefixed or separated (`08 96 01`, `089601`, `0x08 0x96 0x01`, `\x08\x96\x01`,
@@ -627,10 +630,35 @@ to `{"a": 150, "b": "testing"}`.
 
 The payload is read as protobuf parses it: a field set twice keeps its last value, a message
 or proto2 group set twice is merged, and of a `oneof`'s members only the one set last is
-kept. A field the schema does not declare is kept under its number, decoded raw, and so is a
-field whose type comes from a file the schema imports, such as `google.protobuf.Timestamp`.
-The schema is read as an editor holding unsaved changes has it, else in the IDE's encoding
-for the file, and **History** restores the schema and message type a decode used.
+kept. A field the schema does not declare is kept under its number, decoded raw. The
+schema is read as an editor holding unsaved changes has it, else in the IDE's encoding for
+the file, and **History** restores the schema, the files it imports, and the message type a
+decode used.
+
+The well-known types are written as protobuf's printer writes them: a `Timestamp` as RFC 3339
+text (`2023-11-14T22:13:20.5Z`), a `Duration` as `1.5s`, a wrapper such as `Int64Value` as
+the value it wraps, a `Struct`, `Value` or `ListValue` as the JSON it holds, a `FieldMask`
+as its paths in lowerCamelCase joined by commas, and an `Any` as the message it holds, with
+`@type` beside its fields. Their files, `google/protobuf/timestamp.proto` and the rest, come
+with the plugin, so a schema only needs to import them. Other files the schema imports are
+read from beside it: its own directory and each one above it are tried as the root an
+import is relative to, which finds `import "shop/v1/money.proto";` from a schema under
+`proto/shop/v1/` when `proto/` is the root, and the imports of those files are followed in
+turn. An import found nowhere is named in the status bar, and fields of its types are
+decoded raw.
+
+**Writing a payload** works the other way: with **Protobuf payload** as the output, the
+schema and message chosen in the options bar, and **Write as** hex or base64, any input is
+written as a binary message of that type. The JSON is read as protobuf's own JSON parser
+reads it: a field under its name or JSON name, 64-bit integers as numbers or strings, a
+whole number written as a decimal (`1.0`) as the integer it is, enums by name, alias or
+number, bytes in standard or URL-safe base64, and the well-known types in their forms. The
+message is written as protobuf writes one: fields in number order, a field without presence
+left out when it holds its default, and repeated numbers packed. A key the message has no
+field for, a value out of its type's range, and two members of one `oneof` are refused with
+the path to them (`$.items[2].units is 1.5, where an int64 is a whole number.`). The test
+suite has protobuf-java print random messages of random proto2, proto3 and editions schemas
+as JSON, writes them, and has protobuf-java read the bytes back as the same messages.
 
 A payload that does not follow the wire format is refused with the byte it breaks at (`The
 payload ends inside a varint at byte 1.`), and a field whose wire type contradicts the
@@ -942,6 +970,10 @@ the Marketplace page are in [docs/screenshots](docs/screenshots), at 2528×1584.
   the entities it declares could not be carried through. An entity from the external DTD is
   kept in text, but one inside an attribute value makes Format refuse the document, as the
   parser drops it there.
+- A written Protobuf payload packs repeated numbers, proto2 fields too, where protoc writes
+  those unpacked: every protobuf parser reads both, but the bytes differ. An `Any` is written
+  only when the schema declares the type it holds, and fields the decoder kept under their
+  numbers, which no schema names, cannot be written back.
 - Properties hold only text: numbers and booleans are written as their text, JSON `null` as
   an empty value, and an empty object or list, which has no key to write, as a comment
   saying so. The JSON root must be an object.

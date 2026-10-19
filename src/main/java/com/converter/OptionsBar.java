@@ -61,8 +61,13 @@ final class OptionsBar {
     private final JPanel payloadOptions;
     private final JLabel schemaLabel;
     private final JComboBox<String> messageCombo;
+    /** How a payload is written: hex, or base64. */
+    private final JComboBox<String> payloadEncodingCombo;
+    private final JPanel payloadOutputOptions;
     /** The .proto text a payload is decoded against; empty until one is chosen. */
     private String protoSchema = "";
+    /** The files the schema imports, by import path, read when it was chosen. */
+    private java.util.Map<String, String> protoImports = java.util.Map.of();
     /**
      * True while the controls are set from, or saved to, the remembered
      * settings: the panel then neither saves a change it is following nor
@@ -149,6 +154,10 @@ final class OptionsBar {
               + "(raw) decodes field numbers and wire types, as protoc --decode_raw does.</html>");
         messageCombo.getAccessibleContext().setAccessibleName("Payload message type");
         payloadOptions = group("Schema:", schemaLabel, chooseSchema, ConverterWidgets.toolbarLabel("Message:"), messageCombo);
+        payloadEncodingCombo = ConverterWidgets.combo(new String[]{"hex", "base64"});
+        payloadEncodingCombo.setToolTipText("How the payload is written: as hex, or in base64");
+        payloadEncodingCombo.getAccessibleContext().setAccessibleName("Payload encoding");
+        payloadOutputOptions = group("Write as:", payloadEncodingCombo);
 
         // Sort keys and the filter apply to every conversion, so they always show.
         JPanel generalOptions = group(null, sortKeysCheck, ConverterWidgets.toolbarLabel("Filter:"), filterField);
@@ -163,6 +172,7 @@ final class OptionsBar {
         bar.add(csvOptions);
         bar.add(javaOptions);
         bar.add(payloadOptions);
+        bar.add(payloadOutputOptions);
     }
 
     private static JPanel group(String caption, JComponent... controls) {
@@ -200,6 +210,7 @@ final class OptionsBar {
         inferTypesCheck.addActionListener(e ->
               remember(() -> ConverterSettings.saveInferTypes(inferTypesCheck.isSelected())));
         sortKeysCheck.addActionListener(e -> remember(() -> ConverterSettings.saveSortKeys(sortKeysCheck.isSelected())));
+        payloadEncodingCombo.addActionListener(e -> remember(() -> ConverterSettings.saveProtoBase64(base64())));
         rowThresholdSpinner.addChangeListener(e ->
               remember(() -> ConverterSettings.saveRowWarningThreshold(rowWarningThreshold())));
         ConverterSettings.addListener(follow);
@@ -237,6 +248,7 @@ final class OptionsBar {
             detectDatesCheck.setSelected(stored.detectDates());
             inferTypesCheck.setSelected(stored.inferTypes());
             sortKeysCheck.setSelected(stored.sortKeys());
+            payloadEncodingCombo.setSelectedItem(stored.protoBase64() ? "base64" : "hex");
             rowThresholdSpinner.setValue(ConverterSettings.rowWarningThreshold());
         } finally {
             following = false;
@@ -254,7 +266,10 @@ final class OptionsBar {
         // Detect dates reaches the generators whose types read a date back as written.
         javaOptions.setVisible(Formats.FMT_JAVA.equals(outputFormat) || Formats.FMT_KOTLIN.equals(outputFormat)
               || Formats.FMT_PYTHON.equals(outputFormat));
-        payloadOptions.setVisible(Formats.FMT_PROTO_PAYLOAD.equals(inputFormat));
+        // The schema is what a payload is read with and written against alike.
+        payloadOptions.setVisible(Formats.FMT_PROTO_PAYLOAD.equals(inputFormat)
+              || Formats.FMT_PROTO_PAYLOAD.equals(outputFormat));
+        payloadOutputOptions.setVisible(Formats.FMT_PROTO_PAYLOAD.equals(outputFormat));
         // Lombok is a Java-only concept; offering it for Kotlin output would be
         // a toggle that silently does nothing.
         lombokCheck.setVisible(Formats.FMT_JAVA.equals(outputFormat));
@@ -275,7 +290,13 @@ final class OptionsBar {
               sortKeysCheck.isSelected(),
               filterField.getText(),
               protoSchema,
-              selectedMessage());
+              selectedMessage(),
+              protoImports,
+              base64());
+    }
+
+    private boolean base64() {
+        return "base64".equals(payloadEncodingCombo.getSelectedItem());
     }
 
     /** The message type chosen for a payload, or "" to decode it raw. */
@@ -290,7 +311,14 @@ final class OptionsBar {
      * top-level message; (raw) stays on offer.
      */
     void useProtoSchema(String fileName, String text, java.util.List<String> messages) {
+        useProtoSchema(fileName, text, messages, java.util.Map.of());
+    }
+
+    /** As {@link #useProtoSchema(String, String, java.util.List)}, with the files the schema imports. */
+    void useProtoSchema(String fileName, String text, java.util.List<String> messages,
+          java.util.Map<String, String> imports) {
         protoSchema = text;
+        protoImports = imports;
         schemaLabel.setText(fileName);
         messageCombo.removeAllItems();
         messageCombo.addItem(RAW_MESSAGE);
@@ -302,17 +330,17 @@ final class OptionsBar {
      * The schema and message a history entry was decoded with. The file it
      * came from is not part of the entry, so the label says where it is from.
      */
-    private void restoreProtoSchema(String text, String message) {
-        if (!text.equals(protoSchema)) {
+    private void restoreProtoSchema(String text, String message, java.util.Map<String, String> imports) {
+        if (!text.equals(protoSchema) || !imports.equals(protoImports)) {
             java.util.List<String> messages = java.util.List.of();
             if (!text.isBlank()) {
                 try {
-                    messages = new com.converter.core.ProtoConverter().readSchema(text).messageNames();
+                    messages = new com.converter.core.ProtoConverter().readSchema(text, imports).messageNames();
                 } catch (RuntimeException unreadable) {
                     // It was read when the entry was made; keep (raw) on offer regardless.
                 }
             }
-            useProtoSchema(text.isBlank() ? "none" : "from history", text, messages);
+            useProtoSchema(text.isBlank() ? "none" : "from history", text, messages, imports);
         }
         messageCombo.setSelectedItem(message.isBlank() ? RAW_MESSAGE : message);
     }
@@ -328,8 +356,9 @@ final class OptionsBar {
             detectDatesCheck.setSelected(options.detectDates());
             inferTypesCheck.setSelected(options.inferTypes());
             sortKeysCheck.setSelected(options.sortKeys());
+            payloadEncodingCombo.setSelectedItem(options.protoBase64() ? "base64" : "hex");
             filterField.setText(options.filterPath());
-            restoreProtoSchema(options.protoSchema(), options.protoMessage());
+            restoreProtoSchema(options.protoSchema(), options.protoMessage(), options.protoImports());
             // setSelected fires no ActionListener either: remember the restored
             // choices explicitly, so context-menu conversions and the next IDE
             // session agree.

@@ -41,7 +41,7 @@ public final class Formats {
     public static final String FMT_GO = "Go";
     public static final String FMT_PYTHON = "Python";
     public static final String FMT_RUST = "Rust";
-    /** A binary Protobuf message, pasted as hex or base64: decoded, never written. */
+    /** A binary Protobuf message, as hex or base64: decoded, and written against a schema. */
     public static final String FMT_PROTO_PAYLOAD = "Protobuf payload";
 
     /**
@@ -65,7 +65,7 @@ public final class Formats {
           new Format(FMT_PROTO, List.of("proto"), true, true, null, false),
           new Format(FMT_PROPERTIES, List.of("properties"), true, true, null, false),
           // Pasted as text; a payload has no file extension of its own.
-          new Format(FMT_PROTO_PAYLOAD, List.of(), true, false, null, false),
+          new Format(FMT_PROTO_PAYLOAD, List.of(), true, true, null, false),
           new Format(FMT_JAVA, List.of("java"), false, true,
                 JavaPojoGenerator.ROOT_CLASS_NAME, true),
           new Format(FMT_KOTLIN, List.of("kt"), false, true,

@@ -122,6 +122,48 @@ class ProtoPayloadCrossCheckTest {
         assertThat(decoded).isGreaterThan(3_000);
     }
 
+    /**
+     * The other way: what JsonFormat prints for a random message, under the
+     * fields' names or their JSON names, is encoded and parsed back by
+     * protobuf-java as the message it was.
+     */
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(Syntax.class)
+    @DisplayName("JsonFormat's JSON of random messages encodes to payloads protobuf-java reads back as them")
+    void encodedAgreesWithProtobuf(Syntax syntax) throws Exception {
+        Random random = new Random(260 + syntax.ordinal());
+        ProtoPayloadEncoder encoder = new ProtoPayloadEncoder(new ProtoConverter());
+        int encoded = 0;
+        for (int round = 0; round < 300; round++) {
+            Schema schema = Schema.random(syntax, random);
+            String text = schema.protoText();
+            FileDescriptor file = FileDescriptor.buildFrom(schema.descriptor(), new FileDescriptor[0]);
+            List<Descriptor> types = new ArrayList<>();
+            collect(file.getMessageTypes(), types);
+            for (int sample = 0; sample < 10; sample++) {
+                Descriptor type = types.get(random.nextInt(types.size()));
+                DynamicMessage message = randomMessage(type, random, 0);
+                JsonFormat.Printer printer = random.nextBoolean() ? JsonFormat.printer().preservingProtoFieldNames()
+                      : JsonFormat.printer();
+                // A DynamicMessage keeps a map entry per key written, and JsonFormat
+                // prints each: read as protobuf reads a map, the last of a key wins.
+                JsonNode json = JSON.readTree(printer.print(message));
+                boolean base64 = random.nextBoolean();
+                String payload = encoder.encode(json.toString(), text, type.getFullName(), Map.of(), base64);
+                byte[] wire = base64 ? java.util.Base64.getDecoder().decode(payload) : HEX.parseHex(payload);
+                // By number: an alias reads back as the first name of its number. And
+                // against the message read back from its own bytes: a DynamicMessage
+                // holding an alias of 0 in a field without presence takes it for set.
+                JsonFormat.Printer numbers = printer.printingEnumsAsInts();
+                assertThat(JSON.readTree(numbers.print(DynamicMessage.parseFrom(type, wire))))
+                      .as("%s as %s from%n%s", json, type.getFullName(), text)
+                      .isEqualTo(JSON.readTree(numbers.print(DynamicMessage.parseFrom(type, message.toByteArray()))));
+                encoded++;
+            }
+        }
+        assertThat(encoded).isEqualTo(3_000);
+    }
+
     /** Every message type, groups' included, but the entries protobuf-java makes for maps. */
     private static void collect(List<Descriptor> declared, List<Descriptor> into) {
         for (Descriptor type : declared) {

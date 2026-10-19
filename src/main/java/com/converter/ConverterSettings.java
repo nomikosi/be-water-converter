@@ -41,6 +41,7 @@ final class ConverterSettings {
     static final String WRAP_LINES     = "beWater.wrapLines";
     static final String SORT_KEYS      = "beWater.sortKeys";
     static final String CSV_DELIMITER  = "beWater.csvDelimiter";
+    static final String PROTO_BASE64   = "beWater.protoBase64";
 
     static final long MIN_ROW_WARNING = 10L;
     static final long MAX_ROW_WARNING = 10_000_000L;
@@ -58,7 +59,7 @@ final class ConverterSettings {
               enumOr(CsvConverter.CsvMode.class, load(CSV_MODE), CsvConverter.CsvMode.FLAT_FIRST);
         return new ConversionOptions(mode, delimiter.format,
               flag(LOMBOK, false), flag(DETECT_DATES, true), flag(INFER_TYPES, true),
-              flag(SORT_KEYS, false), "", "", "");
+              flag(SORT_KEYS, false), "", "", "", java.util.Map.of(), flag(PROTO_BASE64, false));
     }
 
     /** Every option at once, as restoring a history entry sets them. */
@@ -70,6 +71,7 @@ final class ConverterSettings {
         store(DETECT_DATES, String.valueOf(options.detectDates()));
         store(INFER_TYPES, String.valueOf(options.inferTypes()));
         store(SORT_KEYS, String.valueOf(options.sortKeys()));
+        store(PROTO_BASE64, String.valueOf(options.protoBase64()));
         changed();
     }
 
@@ -87,6 +89,8 @@ final class ConverterSettings {
     static void saveInferTypes(boolean infer) { save(INFER_TYPES, String.valueOf(infer)); }
 
     static void saveSortKeys(boolean sort) { save(SORT_KEYS, String.valueOf(sort)); }
+
+    static void saveProtoBase64(boolean base64) { save(PROTO_BASE64, String.valueOf(base64)); }
 
     /**
      * Runs after any option changes, on the EDT where every change is made:

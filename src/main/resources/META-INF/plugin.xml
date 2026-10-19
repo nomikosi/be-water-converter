@@ -48,7 +48,9 @@
             <li><b>Protobuf schema to JSON</b>, and JSON to a <code>.proto</code> schema</li>
             <li><b>Decode Protobuf payloads</b>: paste a binary message as hex or base64 and read it as
                 JSON, by field number as <code>protoc --decode_raw</code> does, or by name against its
-                <code>.proto</code> file</li>
+                <code>.proto</code> file and the files it imports</li>
+            <li><b>Encode Protobuf payloads</b>: write JSON, YAML or any input as a binary message of
+                a schema's type, in hex or base64</li>
         </ul>
 
         <h3>Works where you already are</h3>

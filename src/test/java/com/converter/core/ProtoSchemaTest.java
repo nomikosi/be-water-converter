@@ -93,10 +93,11 @@ class ProtoSchemaTest {
         assertThat(states.mapValue().kind()).isEqualTo(ProtoSchema.Kind.ENUM);
         assertThat(states.mapValue().type()).isEqualTo("shop.v1.Status");
 
-        // From a file this one imports: decoded raw.
+        // From a file this one imports: a well-known type, which the plugin supplies.
         ProtoSchema.Field placed = field("shop.v1.Order", 7);
-        assertThat(placed.kind()).isEqualTo(ProtoSchema.Kind.UNRESOLVED);
+        assertThat(placed.kind()).isEqualTo(ProtoSchema.Kind.MESSAGE);
         assertThat(placed.type()).isEqualTo("google.protobuf.Timestamp");
+        assertThat(schema.messageNames()).doesNotContain("google.protobuf.Timestamp");
 
         assertThat(field("shop.v1.Order", 8).type()).isEqualTo("shop.v1.Status");
         assertThat(field("shop.v1.Order", 5).type()).isEqualTo("shop.v1.Card");

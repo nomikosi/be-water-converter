@@ -107,6 +107,7 @@ test {
     // protobuf 3 shadows on this JVM; unitTest runs them, with 4 first.
     exclude 'com/converter/core/ProtoPayloadDecoderTest*'
     exclude 'com/converter/core/ProtoPayloadCrossCheckTest*'
+    exclude 'com/converter/core/ProtoWellKnownTypesTest*'
     // No coverage agent on the IntelliJ-platform test JVM; coverage comes
     // from the plain-JVM unitTest task instead.
     jacoco { enabled = false }

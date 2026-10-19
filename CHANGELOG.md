@@ -28,6 +28,17 @@ fails until the version in `build.gradle` has a section here.
   number past 64 bits where its language can (`json.Number` in Go, `u64` in Rust, `int` in
   Python). The tests compile every output with its own toolchain and have it read sample
   documents and write them back unchanged.
+- **Protobuf payloads: well-known types, imports, and writing** — a payload decoded against a
+  schema writes the well-known types as protobuf's printer does: a Timestamp as RFC 3339
+  text, a Duration as `1.5s`, wrappers as the value they hold, Struct, Value and ListValue as
+  JSON, a FieldMask as its paths, and an Any as its message with `@type`. Their files come with
+  the plugin, so a schema only needs to import them. Other files a schema imports are read from
+  beside it, its directory and each one above it tried as the import root, and followed in
+  turn; one found nowhere is named, and its types decode raw. Protobuf payload is an output now
+  too: any input is written as a binary message of the chosen type, in hex or base64, read as
+  protobuf's JSON parser reads JSON and refused with the path to what does not fit. Random
+  messages written this way are read back by protobuf-java as the messages they were. Enum
+  aliases are read by every name, where only the first was known.
 - **Convert several files at once** — with more than one file selected in the Project view,
   Convert with Be Water converts them all to the chosen format and writes each result beside
   its source, `config.json` to `config.yaml`. Files it would replace are listed and asked about

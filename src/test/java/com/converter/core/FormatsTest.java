@@ -52,9 +52,13 @@ class FormatsTest {
 
     @Test void everyAdvertisedTargetCanRenderAndHasAnExportName() throws Exception {
         var pipeline = new ConversionPipeline();
+        // A payload is written against a schema, which the defaults do not hold.
+        ConversionOptions withSchema = ConversionOptions.DEFAULTS.withProtoSchema(
+              "syntax = \"proto3\";\nmessage P { string name = 1; int32 age = 2; }", "P");
         for (String target : Formats.outputNames()) {
             assertThat(pipeline.renderFromJson("{\"name\":\"Ada\",\"age\":36}", target,
-                  ConversionOptions.DEFAULTS)).as(target).isNotBlank();
+                  target.equals(Formats.FMT_PROTO_PAYLOAD) ? withSchema : ConversionOptions.DEFAULTS))
+                  .as(target).isNotBlank();
             assertThat(ConversionFileNames.nameFor("example.json", target))
                   .endsWith("." + Formats.named(target).extension());
         }
@@ -65,13 +69,13 @@ class FormatsTest {
         }
     }
 
-    @Test void aProtobufPayloadIsReadButNeverWritten() {
+    @Test void aProtobufPayloadIsReadAndWrittenButNeverAFile() {
         String payload = Formats.FMT_PROTO_PAYLOAD;
         assertThat(Formats.isInput(payload)).isTrue();
-        assertThat(Formats.isOutput(payload)).isFalse();
+        assertThat(Formats.isOutput(payload)).isTrue();
         assertThat(Formats.inputNames()).contains(payload);
-        assertThat(Formats.outputNames()).doesNotContain(payload);
-        assertThat(Formats.outputsFor(payload)).containsExactly(Formats.outputNames());
+        assertThat(Formats.outputNames()).contains(payload);
+        assertThat(Formats.outputsFor(payload)).doesNotContain(payload).hasSize(Formats.outputNames().length - 1);
         // Pasted as text, never opened as a file: no extension leads to it.
         assertThat(Formats.named(payload).extensions()).isEmpty();
         assertThat(Formats.named(payload).extension()).isEqualTo("txt");

@@ -26,19 +26,29 @@ import java.util.Map;
  * number. Built by {@link ProtoConverter#readSchema}.
  *
  * @param messages every message type, groups included, by fully qualified
- *                 name in declaration order
+ *                 name in declaration order: the schema's own, then those of
+ *                 the files it imports
  * @param enums    every enum, by fully qualified name
+ * @param builtIn  the well-known types the plugin supplies for an import of
+ *                 {@code google/protobuf/*.proto}, which no one chooses as the
+ *                 message a payload holds
  */
-public record ProtoSchema(Map<String, Message> messages, Map<String, EnumType> enums) {
+public record ProtoSchema(Map<String, Message> messages, Map<String, EnumType> enums,
+                          java.util.Set<String> builtIn) {
 
     public ProtoSchema {
         messages = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(messages));
         enums = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(enums));
+        builtIn = java.util.Set.copyOf(builtIn);
+    }
+
+    public ProtoSchema(Map<String, Message> messages, Map<String, EnumType> enums) {
+        this(messages, enums, java.util.Set.of());
     }
 
     /** The message types a payload can hold, fully qualified, in declaration order. */
     public List<String> messageNames() {
-        return List.copyOf(messages.keySet());
+        return messages.keySet().stream().filter(name -> !builtIn.contains(name)).toList();
     }
 
     /**
@@ -85,11 +95,26 @@ public record ProtoSchema(Map<String, Message> messages, Map<String, EnumType> e
                         String mapKey, Field mapValue, String oneof, boolean implicitPresence) {}
 
     /**
-     * @param names by number; with {@code allow_alias}, the first name declared
+     * @param names   by number; with {@code allow_alias}, the first name declared,
+     *                which protobuf's JSON printer writes
+     * @param numbers every name declared, aliases too, which protobuf's JSON
+     *                parser reads alike
      */
-    public record EnumType(String fullName, Map<Integer, String> names) {
+    public record EnumType(String fullName, Map<Integer, String> names, Map<String, Integer> numbers) {
         public EnumType {
             names = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(names));
+            numbers = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(numbers));
+        }
+
+        /** An enum without aliases: each name for its own number. */
+        public EnumType(String fullName, Map<Integer, String> names) {
+            this(fullName, names, inverse(names));
+        }
+
+        private static Map<String, Integer> inverse(Map<Integer, String> names) {
+            Map<String, Integer> numbers = new java.util.LinkedHashMap<>();
+            names.forEach((number, name) -> numbers.put(name, number));
+            return numbers;
         }
     }
 }

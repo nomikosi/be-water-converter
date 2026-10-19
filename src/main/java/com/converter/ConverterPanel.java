@@ -981,7 +981,7 @@ public class ConverterPanel implements Disposable {
             setStatusWarn(newInputFmt + " output cannot be used as input");
             return;
         }
-        // A payload is decoded, never written.
+        // Every input is an output too today; the check stays for one that is not.
         if (!Formats.isOutput(newOutputFmt)) {
             setStatusWarn(newOutputFmt + " input cannot be used as output");
             return;
@@ -996,9 +996,14 @@ public class ConverterPanel implements Disposable {
     /** Lets the user pick the .proto file payloads are decoded against. */
     private void chooseProtoSchema() {
         fileOps.chooseProtoSchema(schema -> {
-            options.useProtoSchema(schema.name(), schema.text(), schema.messages());
-            setStatus(String.format(java.util.Locale.ROOT, "Schema %s: %d message types",
-                  schema.name(), schema.messages().size()), true);
+            options.useProtoSchema(schema.name(), schema.text(), schema.messages(), schema.imports());
+            String imported = schema.imports().isEmpty() ? "" : String.format(java.util.Locale.ROOT,
+                  ", %d imported %s", schema.imports().size(), schema.imports().size() == 1 ? "file" : "files");
+            // An import not found leaves its types to be decoded raw: said, not hidden.
+            String missing = schema.missing().isEmpty() ? ""
+                  : "; not found beside it, so decoded raw: " + String.join(", ", schema.missing());
+            setStatus(String.format(java.util.Locale.ROOT, "Schema %s: %d message types%s%s",
+                  schema.name(), schema.messages().size(), imported, missing), schema.missing().isEmpty());
         });
     }
 
