@@ -73,6 +73,7 @@ public class ConverterPanel implements Disposable {
         FORMAT_COLORS.put(FMT_CSV,   new JBColor(new Color(39, 174,  96), new Color(46, 204, 113)));
         FORMAT_COLORS.put(FMT_TOML,  new JBColor(new Color(44,  62,  80), new Color(149, 165, 166)));
         FORMAT_COLORS.put(FMT_PROTO, new JBColor(new Color(192, 57,  43), new Color(231, 76,  60)));
+        FORMAT_COLORS.put(FMT_PROPERTIES, new JBColor(new Color(121, 85, 72), new Color(188, 170, 164)));
         FORMAT_COLORS.put(FMT_JAVA,  new JBColor(new Color(142, 110, 45), new Color(243, 196, 66)));
         FORMAT_COLORS.put(FMT_SCHEMA, new JBColor(new Color(0, 121, 107), new Color(38, 166, 154)));
         FORMAT_COLORS.put(FMT_KOTLIN, new JBColor(new Color(103, 58, 183), new Color(149, 117, 205)));

@@ -36,6 +36,8 @@ class ContextDecisionsTest {
         assertThat(ContextDecisions.offer("a.json", Kind.OTHER, null, "not json at all")).isTrue();
         assertThat(ContextDecisions.offer("a.tsv", Kind.PLAIN, null, null)).isTrue();
         assertThat(ContextDecisions.offer("icon.svg", Kind.DATA, null, "<svg/>")).isTrue();
+        // Converted since 1.7.0: properties to YAML is what most people open one for.
+        assertThat(ContextDecisions.offer("gradle.properties", Kind.DATA, null, "org.gradle.caching=true\n")).isTrue();
     }
 
     @Test @DisplayName("a file in another language is offered only for a selection that reads as a format")
@@ -44,7 +46,6 @@ class ContextDecisionsTest {
         assertThat(ContextDecisions.offer("A.java", Kind.OTHER, null, JAVA)).isFalse();
         assertThat(ContextDecisions.offer("run.sh", Kind.OTHER, null, "#!/bin/sh\nVERSION=1.2\n")).isFalse();
         assertThat(ContextDecisions.offer("README.md", Kind.OTHER, null, "# Title\n\nNote: prose.\n")).isFalse();
-        assertThat(ContextDecisions.offer("gradle.properties", Kind.OTHER, null, "org.gradle.caching=true\n")).isFalse();
         assertThat(ContextDecisions.offer("A.java", Kind.OTHER, "{\"a\": 1}", JAVA)).isTrue();
         assertThat(ContextDecisions.offer("A.java", Kind.OTHER, "just words", JAVA)).isFalse();
     }
@@ -57,10 +58,10 @@ class ContextDecisionsTest {
 
     @Test @DisplayName("the IDE's file types are sorted by name into data, plain text and other languages")
     void kinds() {
-        for (String data : new String[]{"JSON", "JSON5", "XML", "YAML", "TOML", "CSV", "TSV", "protobuf", "SVG", "XHTML"})
+        for (String data : new String[]{"JSON", "JSON5", "XML", "YAML", "TOML", "CSV", "TSV", "protobuf", "SVG", "XHTML", "Properties"})
             assertThat(ContextDecisions.kindOf(data, false)).as(data).isEqualTo(Kind.DATA);
         // HTML is rarely well-formed XML: it gets the actions only for a selection that reads as a format.
-        for (String other : new String[]{"JAVA", "Python", "Markdown", "Properties", "Shell Script", "HTML"})
+        for (String other : new String[]{"JAVA", "Python", "Markdown", "Shell Script", "HTML"})
             assertThat(ContextDecisions.kindOf(other, false)).as(other).isEqualTo(Kind.OTHER);
         assertThat(ContextDecisions.kindOf("PLAIN_TEXT", true)).isEqualTo(Kind.PLAIN);
         assertThat(ContextDecisions.kindOf(null, false)).isEqualTo(Kind.PLAIN);

@@ -23,8 +23,8 @@
     <!-- The first paragraph is the summary on the Marketplace's search cards
          (170 characters at most): it names what the plugin converts. -->
     <description><![CDATA[
-        <p>Convert between JSON, YAML, XML, CSV, TOML and Protobuf, generate Java POJOs, Kotlin data
-        classes and JSON Schema, and decode Protobuf payloads.</p>
+        <p>Convert between JSON, YAML, XML, CSV, TOML, Properties and Protobuf, generate Java POJOs,
+        Kotlin data classes and JSON Schema, and decode Protobuf payloads.</p>
         <p>It works in a tool window with syntax-highlighted editors on the right side of your IDE, and
         it runs locally, so your data never goes to a website. <b>Be water, my friend</b>: let your
         data flow between formats.</p>
@@ -34,6 +34,9 @@
             <li><b>JSON to YAML</b> and YAML to JSON, <b>XML to JSON</b> and JSON to XML,
                 <b>CSV to JSON</b> and JSON to CSV, <b>TOML to JSON</b> and JSON to TOML: each format
                 converts to every other</li>
+            <li><b>Properties to YAML</b> and YAML to properties, and to every other format, with keys
+                nested as Spring Boot binds them: <code>server.port</code>,
+                <code>servers[0].host</code></li>
             <li><b>JSON to Java POJO</b> from any supported input, with optional Lombok annotations
                 and ISO-8601 date detection (<code>LocalDate</code> / <code>OffsetDateTime</code>)</li>
             <li><b>JSON to Kotlin data class</b> from any supported input</li>
@@ -68,7 +71,7 @@
             <li>Two CSV expansion modes: <code>FLAT_FIRST</code> (safe default) and <code>CROSS_JOIN</code> (full Cartesian product)</li>
             <li>Comma, semicolon or tab delimiters for reading and writing</li>
             <li>Configurable row-warning threshold: conversions above it ask before running, in either mode</li>
-            <li><b>Type inference</b> for CSV and XML input — numbers, booleans and null become typed JSON values</li>
+            <li><b>Type inference</b> for CSV, XML and properties input — numbers, booleans and null become typed JSON values</li>
         </ul>
 
         <h3>Editor &amp; UI</h3>

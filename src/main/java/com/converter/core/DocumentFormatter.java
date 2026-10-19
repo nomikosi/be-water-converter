@@ -18,6 +18,7 @@ package com.converter.core;
 
 import static com.converter.core.Formats.FMT_CSV;
 import static com.converter.core.Formats.FMT_JSON;
+import static com.converter.core.Formats.FMT_PROPERTIES;
 import static com.converter.core.Formats.FMT_PROTO;
 import static com.converter.core.Formats.FMT_TOML;
 import static com.converter.core.Formats.FMT_XML;
@@ -45,11 +46,14 @@ final class DocumentFormatter {
     private final JsonYamlConverter jsonYaml;
     private final TomlConverter toml;
     private final CsvConverter csv;
+    private final PropertiesConverter properties;
 
-    DocumentFormatter(JsonYamlConverter jsonYaml, TomlConverter toml, CsvConverter csv) {
+    DocumentFormatter(JsonYamlConverter jsonYaml, TomlConverter toml, CsvConverter csv,
+          PropertiesConverter properties) {
         this.jsonYaml = jsonYaml;
         this.toml = toml;
         this.csv = csv;
+        this.properties = properties;
     }
 
     /** Pretty-prints or canonicalizes input in its own format: the Format action. */
@@ -74,6 +78,9 @@ final class DocumentFormatter {
             // returned untouched, trailing blanks and all.
             case FMT_PROTO -> withoutTrailingBlanks(input)
                                    .replaceAll("(\r?\n)(?:\r?\n){2,}", "$1$1").trim();
+            // Line by line, never through the pivot: comments are kept, and
+            // every key and value reads back exactly as it did.
+            case FMT_PROPERTIES -> properties.format(input, opts.sortKeys());
             // Bytes have no layout of their own to tidy: what they hold reads as
             // a conversion.
             case Formats.FMT_PROTO_PAYLOAD -> throw new IllegalArgumentException(
@@ -82,7 +89,7 @@ final class DocumentFormatter {
         };
         // JSON, YAML and TOML sort inside their own formatters above, because
         // all three pass through the JSON tree there and the sort has to happen
-        // while the tree exists.
+        // while the tree exists. Properties sort their lines, comments and all.
         return formatted;
     }
 

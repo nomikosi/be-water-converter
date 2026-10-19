@@ -32,6 +32,7 @@ public final class Formats {
     public static final String FMT_CSV = "CSV";
     public static final String FMT_TOML = "TOML";
     public static final String FMT_PROTO = "Protobuf";
+    public static final String FMT_PROPERTIES = "Properties";
     public static final String FMT_JAVA = "Java POJO";
     public static final String FMT_KOTLIN = "Kotlin";
     public static final String FMT_SCHEMA = "JSON Schema";
@@ -57,6 +58,7 @@ public final class Formats {
           new Format(FMT_CSV, List.of("csv", "tsv"), true, true, null, false),
           new Format(FMT_TOML, List.of("toml"), true, true, null, false),
           new Format(FMT_PROTO, List.of("proto"), true, true, null, false),
+          new Format(FMT_PROPERTIES, List.of("properties"), true, true, null, false),
           // Pasted as text; a payload has no file extension of its own.
           new Format(FMT_PROTO_PAYLOAD, List.of(), true, false, null, false),
           new Format(FMT_JAVA, List.of("java"), false, true,

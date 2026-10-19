@@ -6,6 +6,20 @@ fails until the version in `build.gradle` has a section here.
 
 ## [1.7.0]
 
+- **Java properties** — a new input and output format, Properties, for `application.properties`,
+  `gradle.properties` and `.env` files. Keys nest the way Spring Boot binds them:
+  `server.port` becomes `server` holding `port`, `servers[0].host` the first element of a
+  list, and `level[org.hibernate.SQL]` a key that keeps its dots, so properties convert to and
+  from YAML, JSON and the rest. A file is read exactly as `java.util.Properties` reads it,
+  separators, continuations, escapes and comments included, which random texts are tested
+  against. Infer types reads numbers, booleans and null. A key that would need a value and
+  keys below it at once, as `a=1` beside `a.b=2`, is refused with both keys named, rather than
+  one dropped. Properties output escapes what is not ASCII as `\uXXXX`, since Spring Boot and
+  Gradle read the files as ISO-8859-1. Format writes each entry as `key=value` on one line,
+  keeping the comments and the text of every key and value, and Sort keys moves each entry with
+  the comments above it. Pasted properties are recognised, where they were taken for TOML and
+  failed on their first unquoted value, and the converter's menu items now appear on
+  `.properties` files.
 - **IntelliJ 2024.2 and later** — the plugin now installs on 2024.2 and 2024.3 as well, the
   first IDEs to run on Java 21, and is verified against every release from 2024.2 to 2026.2.
   It no longer uses an API those versions mark internal or later ones deprecate.

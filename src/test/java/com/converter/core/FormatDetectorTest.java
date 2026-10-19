@@ -56,6 +56,37 @@ class FormatDetectorTest {
         assertThat(detectFormat("title = \"demo\"\n")).isEqualTo(Formats.FMT_TOML);
     }
 
+    @Test @DisplayName("key=value lines with unquoted text are Properties; all-literal values stay TOML")
+    void properties() {
+        assertThat(detectFormat("""
+              # Spring
+              spring.application.name=demo
+              server.port=8080
+              spring.datasource.url=jdbc:postgresql://localhost/app
+              """)).isEqualTo(Formats.FMT_PROPERTIES);
+        assertThat(detectFormat("DATABASE_URL=postgres://localhost/app\nDEBUG=true\n"))
+              .isEqualTo(Formats.FMT_PROPERTIES);
+        assertThat(detectFormat("! a bang comment\nmsg = Hello \\\n  World, again\nlogging.level[org.x]=debug\n"))
+              .isEqualTo(Formats.FMT_PROPERTIES);
+        // TOML reads these to the same JSON, and quotes its text.
+        assertThat(detectFormat("server.port = 8080\ndebug = true\n")).isEqualTo(Formats.FMT_TOML);
+        assertThat(detectFormat("name = \"demo\" # the name\nwhen = 1979-05-27T07:32:00Z\n"))
+              .isEqualTo(Formats.FMT_TOML);
+        // A [table] line or a line that is no key=value makes it something else.
+        assertThat(detectFormat("[server]\nname = demo\n")).isNotEqualTo(Formats.FMT_PROPERTIES);
+        assertThat(detectFormat("export A=b\nA=b\n")).isNotEqualTo(Formats.FMT_PROPERTIES);
+        assertThat(detectFormat("name: demo\nport=8080\n")).isEqualTo(Formats.FMT_YAML);
+    }
+
+    @Test @DisplayName("Properties detection stays linear over long runs of blanks and backslashes")
+    void propertiesDetectionIsLinear() {
+        String text = "a=b" + " ".repeat(200_000) + "c\nd=" + "\\".repeat(200_001) + "x\n";
+        long started = System.nanoTime();
+        assertThat(FormatDetector.detectFormat(text)).isEqualTo(Formats.FMT_PROPERTIES);
+        long millis = (System.nanoTime() - started) / 1_000_000;
+        assertThat(millis).describedAs("detection took %d ms", millis).isLessThan(2_000);
+    }
+
     @Test @DisplayName("'[' stays JSON unless a TOML key = value line follows")
     void bracketAmbiguity() {
         // A TOML [table] header and a JSON array open identically; only the
@@ -103,6 +134,7 @@ class FormatDetectorTest {
               "[\n  {\"a\": 1}\n]",
               "syntax = \"proto3\";\nmessage M { string s = 1; }",
               "a,b\n1,2\n",
+              "spring.application.name=demo\nserver.port=8080\n",
         };
         for (String sample : samples) {
             String detected = detectFormat(sample);

@@ -18,6 +18,7 @@ package com.converter.core;
 
 import static com.converter.core.Formats.FMT_CSV;
 import static com.converter.core.Formats.FMT_JSON;
+import static com.converter.core.Formats.FMT_PROPERTIES;
 import static com.converter.core.Formats.FMT_PROTO;
 import static com.converter.core.Formats.FMT_TOML;
 import static com.converter.core.Formats.FMT_XML;
@@ -88,6 +89,11 @@ public final class FormatDetector {
 
         // Proto needs a keyword: 'syntax = "proto3";' or a message/enum block.
         if (PROTO_MARKER.matcher(s).find()) return FMT_PROTO;
+
+        // Properties before TOML: both write key = value, but only TOML quotes
+        // its text. A pasted application.properties or .env file was taken for
+        // TOML and failed on its first unquoted value.
+        if (looksLikeProperties(s)) return FMT_PROPERTIES;
 
         // TOML vs YAML is decided from the FIRST significant line, not a
         // document-wide search. Searching the whole document meant one indented
@@ -236,6 +242,56 @@ public final class FormatDetector {
         String firstLine = s.substring(0, newline).stripTrailing();
         return TOML_TABLE_HEADER.matcher(firstLine).matches()
               && TOML_KEY_VALUE.matcher(s.substring(newline)).find();
+    }
+
+    /** A {@code key=value} line, the key as Spring and dotenv files write them. */
+    private static final Pattern PROPERTIES_LINE =
+          Pattern.compile("[ \\t]*+[A-Za-z_][\\w.\\-\\[\\]]*+[ \\t]*+=[ \\t]*+(.*)");
+    /** A value TOML can read: quoted, an array or table, or a number, boolean or date. */
+    private static final Pattern TOML_LITERAL = Pattern.compile(
+          "[\"'\\[{].*|true|false|[+-]?(?:inf|nan)"
+          + "|[+-]?(?:0x[0-9A-Fa-f_]++|0o[0-7_]++|0b[01_]++|\\d[\\d_]*+(?:\\.\\d[\\d_]*+)?(?:[eE][+-]?\\d++)?)"
+          + "|\\d{4}-\\d{2}-\\d{2}(?:[Tt ]\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d++)?)?(?:[Zz]|[+-]\\d{2}:\\d{2})?)?"
+          + "|\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d++)?)?");
+
+    /**
+     * Every line a comment or {@code key=value}, and at least one value bare
+     * text, which TOML has no form for. All-literal values ({@code port = 8080})
+     * stay TOML, which reads them to the same JSON.
+     */
+    static boolean looksLikeProperties(String s) {
+        boolean bare = false;
+        boolean continued = false;
+        for (String line : s.split("\r\n|\r|\n")) {
+            // A line ending in an odd number of backslashes goes on to the next.
+            int backslashes = 0;
+            for (int k = line.length() - 1; k >= 0 && line.charAt(k) == '\\'; k--) backslashes++;
+            boolean continues = backslashes % 2 == 1;
+            if (continued) {
+                continued = continues;
+                continue;
+            }
+            String trimmed = line.strip();
+            if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("!")) continue;
+            java.util.regex.Matcher entry = PROPERTIES_LINE.matcher(line);
+            if (!entry.matches()) return false;
+            continued = continues;
+            String value = withoutTomlComment(entry.group(1)).strip();
+            if (!value.isEmpty() && !TOML_LITERAL.matcher(value).matches()) bare = true;
+        }
+        return bare;
+    }
+
+    /**
+     * The value before a {@code #} that follows whitespace. Found by scanning:
+     * a regex for it backtracks through a long run of blanks quadratically.
+     */
+    private static String withoutTomlComment(String value) {
+        for (int hash = value.indexOf('#'); hash > 0; hash = value.indexOf('#', hash + 1)) {
+            char before = value.charAt(hash - 1);
+            if (before == ' ' || before == '\t') return value.substring(0, hash);
+        }
+        return value;
     }
 
     /**

@@ -5,8 +5,8 @@
 
   *Be water, my friend — let your data flow between formats.*
 
-  An IntelliJ IDEA plugin that converts data between JSON, XML, YAML, CSV, TOML and
-  Protobuf, decodes binary Protobuf messages, and generates Java POJOs, Kotlin data classes
+  An IntelliJ IDEA plugin that converts data between JSON, XML, YAML, CSV, TOML, Java
+  properties and Protobuf, decodes binary Protobuf messages, and generates Java POJOs, Kotlin data classes
   and JSON Schema — all inside a syntax-highlighted tool window.
 
   [![Build](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml/badge.svg)](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml)
@@ -52,13 +52,14 @@ helps other people decide to try it.
 
 | Input | Supported outputs |
 |---|---|
-| JSON | XML, YAML, CSV, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
-| XML | JSON, YAML, CSV, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
-| YAML | JSON, XML, CSV, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
-| CSV | JSON, XML, YAML, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
-| TOML | JSON, XML, YAML, CSV, Protobuf, Java POJO, Kotlin, JSON Schema |
-| Protobuf | JSON, XML, YAML, CSV, TOML, Java POJO, Kotlin, JSON Schema |
-| Protobuf payload | JSON, XML, YAML, CSV, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
+| JSON | XML, YAML, CSV, TOML, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
+| XML | JSON, YAML, CSV, TOML, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
+| YAML | JSON, XML, CSV, TOML, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
+| CSV | JSON, XML, YAML, TOML, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
+| TOML | JSON, XML, YAML, CSV, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
+| Protobuf | JSON, XML, YAML, CSV, TOML, Properties, Java POJO, Kotlin, JSON Schema |
+| Properties | JSON, XML, YAML, CSV, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
+| Protobuf payload | JSON, XML, YAML, CSV, TOML, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
 
 `Java POJO`, `Kotlin` and `JSON Schema` are output-only: none is accepted as an input
 format, so **Swap** refuses to move them to the input side. `Protobuf payload`, a binary
@@ -173,7 +174,11 @@ and the source format is auto-detected from the extension, just like the Open ac
 ### Format-aware formatting
 
 The **Format** action pretty-prints or canonicalizes the current input for JSON, XML, YAML,
-TOML and CSV, and removes trailing blanks and extra blank lines from Protobuf. JSON
+TOML, CSV and Properties, and removes trailing blanks and extra blank lines from Protobuf.
+Properties are re-laid-out line by line, never through the JSON step: each entry becomes
+`key=value` on one line, its continuations joined, with the comments in place and one blank
+line wherever the file had any. Keys and values keep the text they were written with, so
+UTF-8 text stays as it is and `\uXXXX` escapes stay escapes. JSON
 formatting also applies the lenient auto-close logic, which helps recover truncated input
 during interactive editing. Format keeps the document's line breaks: a CRLF document stays
 CRLF, and line breaks inside quoted CSV cells, which are data, stay as written.
@@ -221,7 +226,7 @@ dropped and asks first.
 An options bar sits below the toolbar. **Sort keys** applies to every conversion and is
 always shown; the format-specific groups appear only when they are relevant. CSV output
 shows a mode selector with a live hint; CSV on either side shows a **Delimiter** selector;
-CSV or XML input shows an **Infer types** toggle; Java POJO output shows Lombok and date
+CSV, XML or Properties input shows an **Infer types** toggle; Java POJO output shows Lombok and date
 toggles; Protobuf payload input shows the payload's **Schema** and **Message** type. The
 row-warning threshold applies to both CSV modes. All option values (CSV mode, delimiter,
 row-warning threshold, Lombok, type inference, date detection, sort keys, split orientation)
@@ -240,7 +245,7 @@ tabs.
 ### Automatic format detection
 
 Pasting or dropping content into the input editor sets the input format automatically:
-JSON, XML, YAML, TOML, Protobuf, and CSV are recognized from the content itself. A leading
+JSON, XML, YAML, TOML, Properties, Protobuf, and CSV are recognized from the content itself. A leading
 `[` is genuinely ambiguous — it opens both a JSON array and a TOML `[table]` header — so
 detection looks for a following `key = value` line before deciding. Detection only ever
 fires on a paste-sized insertion, never on typing, and stays silent when it cannot tell,
@@ -250,7 +255,10 @@ Detection checks JSON and XML first, then CSV, then the formats that can only be
 by line, TOML and YAML, so a CSV whose cells hold `Re:` stays CSV. A Protobuf file is
 recognised by `syntax`, `edition`, `message` or `enum` at the start of a line, so YAML that
 carries a `.proto` in a block scalar stays YAML, and a TOML table header may be followed by
-a comment.
+a comment. Lines that are all `key=value`, with at least one value of unquoted text, are
+Properties — `application.properties` and `.env` files — since a TOML string is always
+quoted; with only numbers, booleans and dates as values they stay TOML, which reads them
+the same way.
 
 For CSV the delimiter is detected as well — comma, semicolon or tab, whichever splits the
 header and the first rows into the most columns alike, reading a quoted cell that spans
@@ -271,8 +279,9 @@ to the same output, which makes conversions diffable across runs and across sour
 applied to the internal JSON pivot, so every *conversion* target inherits the ordering.
 
 The **Format** action sorts JSON, YAML and TOML, each of which already passes through the
-JSON tree, and leaves XML and CSV in document order rather than round-tripping them through
-JSON to reorder them.
+JSON tree, and Properties, whose entries it sorts by key with the comments directly above
+each one; a header comment set off by a blank line stays at the top. It leaves XML and CSV in
+document order rather than round-tripping them through JSON to reorder them.
 
 ### Using it from the editor and Project view
 
@@ -285,9 +294,9 @@ Right-click a file in the Project view, or a selection in any editor:
   result as a scratch file, so it lands in a real IDE editor rather than the plugin's pane.
 
 The entries appear on files of the formats the plugin reads — by the IDE's file type or by
-extension, `.tsv`, SVG and XHTML included — on plain-text and unknown files whose start
-reads as one of them, and on a selection in any file that does. Files in other languages
-(Java, Python, shell scripts, Markdown, `.properties`) get them only for such a selection:
+extension, `.tsv`, `.properties`, SVG and XHTML included — on plain-text and unknown files
+whose start reads as one of them, and on a selection in any file that does. Files in other
+languages (Java, Python, shell scripts, Markdown) get them only for such a selection:
 nearly all of them hold a line that looks like TOML's `key = value` or YAML's `key: value`.
 The menu reads at most the first 4,096 characters of a selection, so it opens at once, and a
 conversion tells the format from the first 64 KB.
@@ -324,10 +333,10 @@ two sides are equivalent. Numeric spellings such as `1`, `1.0`, and `1e0` compar
 by exact value, and the diff writes whole numbers out (`12000`, not `1.2E+4`) up to 64
 digits; Format and conversion still preserve decimal scale.
 
-### CSV / XML type inference
+### CSV / XML / Properties type inference
 
-When CSV or XML is the input format, values that look like integers, decimals, booleans,
-or `null` are converted into typed JSON values by default, so `age,30` (or
+When CSV, XML or Properties is the input format, values that look like integers, decimals,
+booleans, or `null` are converted into typed JSON values by default, so `age,30` (or
 `<age>30</age>`) becomes `"age": 30` instead of `"age": "30"`. Values with leading zeros
 (`007`, `01234`) and integers too large for 64 bits stay strings, so identifiers are
 never mangled. Exponent notation is read as a number only with a single digit or a decimal
@@ -390,6 +399,47 @@ prod,db1,beta
 prod,db2,alpha
 prod,db2,beta
 ```
+
+### Java properties
+
+Properties is an input and an output format, for `application.properties`,
+`gradle.properties`, message bundles and `.env` files. Keys nest the way Spring Boot binds
+them, so properties convert to YAML and back without losing their structure:
+
+```properties
+server.port=8080
+app.servers[0].host=a.example.com
+app.servers[1].host=b.example.com
+logging.level[org.hibernate.SQL]=debug
+```
+
+```yaml
+server:
+  port: 8080
+app:
+  servers:
+    - host: a.example.com
+    - host: b.example.com
+logging:
+  level:
+    org.hibernate.SQL: debug
+```
+
+A dot opens a level, `[n]` is an element of a list, and any other bracketed part is a key
+that keeps its dots. A file is read exactly as `java.util.Properties` reads it — `=`, `:` or
+whitespace between key and value, `#` and `!` comments, a backslash at the end of a line
+continuing it, and the `\t`, `\n` and `\uXXXX` escapes — which the tests hold it to on random
+texts. A key written twice keeps its last value, as Properties does. A key that would need a
+value and keys below it at once, as `a=1` beside `a.b=2`, has no JSON or YAML form, and is
+refused with both keys and their lines named rather than one of them dropped. A list index
+above 10,000 is refused too, since every index below it would have to be filled.
+
+Writing properties flattens the document the same way back, escaping keys and values as
+`Properties.store` does for a file: anything outside printable ASCII becomes `\uXXXX`, since
+Spring Boot and Gradle read properties files as ISO-8859-1 and a `é` saved as UTF-8 would
+reach them as two other characters. A key that holds a dot or a bracket is written in
+brackets (`level[org.hibernate.SQL]`), and one holding a `]`, which brackets cannot hold, is
+refused.
 
 ### Java POJO generation
 
@@ -688,6 +738,7 @@ integration built on it.
 | `JsonYamlConverter` | JSON ↔ YAML conversion, multi-document support, exact floats, resolver-aware quoting. |
 | `CsvConverter` | CSV ↔ JSON conversion, positional re-layout, flattening logic, row estimation. |
 | `TomlConverter` | TOML ↔ JSON conversion and shared value-token scanning for conversion and formatting guards. |
+| `PropertiesConverter` | Java properties ↔ JSON: a port of `java.util.Properties`' line reader, Spring Boot key nesting, `Properties.store` escaping, and the line-by-line Format. |
 | `ProtoConverter` | Protobuf schema ↔ JSON structural conversion with scoped type resolution and identifier sanitization, and the schema payloads are decoded against. |
 | `ProtoSchema` | A schema as payloads are decoded against it: each message's fields by number, their resolved types, oneofs and presence, and each enum's names. |
 | `ProtoPayloadText` | A pasted payload's bytes, from hex in its common spellings or from base64. |
@@ -830,6 +881,9 @@ the Marketplace page are in [docs/screenshots](docs/screenshots), at 2528×1584.
   the entities it declares could not be carried through. An entity from the external DTD is
   kept in text, but one inside an attribute value makes Format refuse the document, as the
   parser drops it there.
+- Properties hold only text: numbers and booleans are written as their text, JSON `null` as
+  an empty value, and an empty object or list, which has no key to write, as a comment
+  saying so. The JSON root must be an object.
 - XML has no way to write an empty list: an empty JSON array produces no element at all, so
   `{"a": [], "b": 1}` becomes `<root><b>1</b></root>` and the key `a` is not in the output.
 

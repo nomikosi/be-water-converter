@@ -55,7 +55,7 @@ final class ContextDecisions {
      * actions when the content stopped being sniffed for every file.
      */
     private static final Set<String> DATA_TYPE_WORDS =
-          Set.of("json", "xml", "yaml", "toml", "csv", "tsv", "proto", "svg", "xhtml");
+          Set.of("json", "xml", "yaml", "toml", "csv", "tsv", "proto", "svg", "xhtml", "properties");
 
     /**
      * The kind of an IDE file type, by its name.
@@ -73,9 +73,9 @@ final class ContextDecisions {
      * Whether the actions offer themselves.
      *
      * <p>Sniffing alone put them on almost every file: a Java class, a Python
-     * or shell script, a README and gradle.properties all hold a line that
-     * looks like TOML's {@code key = value} or YAML's {@code key: value}, and
-     * converting any of them could only fail. A file in another language is
+     * or shell script and a README all hold a line that looks like TOML's
+     * {@code key = value} or YAML's {@code key: value}, and converting any of
+     * them could only fail. A file in another language is
      * therefore offered only for a selection that reads as a format.
      *
      * @param selection the selected text, at most {@link #MENU_SNIFF_CHARS} of

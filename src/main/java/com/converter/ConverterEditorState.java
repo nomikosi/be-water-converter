@@ -39,6 +39,7 @@ final class ConverterEditorState {
           // No TOML mode exists; INI shares its [table] headers and key = value lines.
           Formats.FMT_TOML, SyntaxConstants.SYNTAX_STYLE_INI,
           Formats.FMT_PROTO, SyntaxConstants.SYNTAX_STYLE_PROTO,
+          Formats.FMT_PROPERTIES, SyntaxConstants.SYNTAX_STYLE_PROPERTIES_FILE,
           Formats.FMT_JAVA, SyntaxConstants.SYNTAX_STYLE_JAVA,
           Formats.FMT_KOTLIN, SyntaxConstants.SYNTAX_STYLE_KOTLIN,
           Formats.FMT_SCHEMA, SyntaxConstants.SYNTAX_STYLE_JSON);

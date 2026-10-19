@@ -104,10 +104,10 @@ final class OptionsBar {
         detectDatesCheck = ConverterWidgets.checkBox("Detect dates", true,
               "Type ISO-8601 values as LocalDate / LocalDateTime / OffsetDateTime instead of String");
         inferTypesCheck = ConverterWidgets.checkBox("Infer types", true,
-              "Convert CSV/XML values that look like numbers, booleans or null into typed JSON values");
+              "Convert CSV, XML and Properties values that look like numbers, booleans or null into typed JSON values");
         sortKeysCheck = ConverterWidgets.checkBox("Sort keys", false,
               "<html>Sort object keys alphabetically so output is stable and diffable (array order is kept).<br>"
-              + "Applies to conversions, and to Format for JSON, YAML and TOML.</html>");
+              + "Applies to conversions, and to Format for JSON, YAML, TOML and Properties.</html>");
 
         csvDelimiterCombo = ConverterWidgets.combo(CsvDelimiter.values());
         csvDelimiterCombo.setToolTipText(
@@ -247,7 +247,8 @@ final class OptionsBar {
         boolean csvOut = Formats.FMT_CSV.equals(outputFormat);
         boolean csvIn = Formats.FMT_CSV.equals(inputFormat);
         csvOptions.setVisible(csvOut);
-        csvInputOptions.setVisible(csvIn || Formats.FMT_XML.equals(inputFormat));
+        csvInputOptions.setVisible(csvIn || Formats.FMT_XML.equals(inputFormat)
+              || Formats.FMT_PROPERTIES.equals(inputFormat));
         csvDelimiterOptions.setVisible(csvIn || csvOut);
         javaOptions.setVisible(Formats.FMT_JAVA.equals(outputFormat) || Formats.FMT_KOTLIN.equals(outputFormat));
         payloadOptions.setVisible(Formats.FMT_PROTO_PAYLOAD.equals(inputFormat));
