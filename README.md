@@ -6,8 +6,9 @@
   *Be water, my friend — let your data flow between formats.*
 
   An IntelliJ IDEA plugin that converts data between JSON, XML, YAML, CSV, TOML, Java
-  properties and Protobuf, decodes binary Protobuf messages, and generates Java POJOs, Kotlin data classes
-  and JSON Schema — all inside a syntax-highlighted tool window.
+  properties and Protobuf, decodes binary Protobuf messages, and generates Java, Kotlin,
+  TypeScript, Dart, Go, Python and Rust types and JSON Schema — all inside a
+  syntax-highlighted tool window.
 
   [![Build](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml/badge.svg)](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml)
   [![JetBrains Marketplace](https://img.shields.io/jetbrains/plugin/v/com.converter.be-water-converter)](https://plugins.jetbrains.com/plugin/32279-be-water-converter)
@@ -52,17 +53,22 @@ helps other people decide to try it.
 
 | Input | Supported outputs |
 |---|---|
-| JSON | XML, YAML, CSV, TOML, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
-| XML | JSON, YAML, CSV, TOML, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
-| YAML | JSON, XML, CSV, TOML, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
-| CSV | JSON, XML, YAML, TOML, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
-| TOML | JSON, XML, YAML, CSV, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
-| Protobuf | JSON, XML, YAML, CSV, TOML, Properties, Java POJO, Kotlin, JSON Schema |
-| Properties | JSON, XML, YAML, CSV, TOML, Protobuf, Java POJO, Kotlin, JSON Schema |
-| Protobuf payload | JSON, XML, YAML, CSV, TOML, Protobuf, Properties, Java POJO, Kotlin, JSON Schema |
+| JSON, XML, YAML, CSV, TOML, Protobuf, Properties | Each other, and every code output |
+| Protobuf payload | Every format above, and every code output |
 
-`Java POJO`, `Kotlin` and `JSON Schema` are output-only: none is accepted as an input
-format, so **Swap** refuses to move them to the input side. `Protobuf payload`, a binary
+| Code output | What it generates |
+|---|---|
+| Java POJO | Classes with Jackson annotations, optionally Lombok |
+| Kotlin | `data class` declarations for Jackson's Kotlin module |
+| TypeScript | `export interface` declarations |
+| Dart | Classes with `fromJson` and `toJson`, no build step |
+| Go | Structs with `encoding/json` tags |
+| Python | Pydantic v2 models |
+| Rust | Structs that derive serde's `Serialize` and `Deserialize` |
+| JSON Schema | A draft 2020-12 schema |
+
+The code outputs are output-only: none is accepted as an input format, so **Swap** refuses to
+move them to the input side. `Protobuf payload`, a binary
 Protobuf message pasted as hex or base64, is input-only: it is decoded, never written, so
 **Swap** refuses to move it to the output side.
 
@@ -533,6 +539,45 @@ with a property whose accessor Jackson would read as another name (`xAxis`, or b
 generated classes with the Kotlin compiler and reads each sample through them with that
 module.
 
+### TypeScript, Dart, Go, Python and Rust generation
+
+These five outputs share the Java and Kotlin generators' structure discovery: each object
+becomes a type, arrays are typed from every element merged, and two differently-shaped
+objects that would take one name get `Item` and `Item2`. A key that some element of an array
+lacked, or held as `null`, is optional, and a value seen only as `null`, or elements of
+different kinds, takes the language's type for any value. Names follow each language's own
+conventions, built from the key's words (`userID` is `user_id` in Python and Rust,
+`userId` in Dart, `UserID` in Go), and the key itself is kept wherever the name differs:
+
+- **TypeScript** — `export interface` declarations that describe the JSON as it is: a
+  property keeps its key, quoted when it is no identifier, an optional key is
+  `key?: T | null`, and a value seen only as null is `unknown`.
+- **Dart** — classes with final fields, a `const` constructor with named parameters, and
+  `fromJson` and `toJson` written out, so they need no `json_serializable` and no build step.
+  They read what `jsonDecode` returns, a whole number where a `double` goes included, and
+  leave an optional field that is null out of `toJson`.
+- **Go** — exported fields, initialisms upper-case as Go writes them (`UserID`, `ImageURLs`),
+  each with a `json:"key"` tag; an optional key is a pointer, or a slice or map, tagged
+  `omitempty`. A whole number past 64 bits and a decimal no `float64` holds exactly are
+  `json.Number`, which keeps their digits. A key that no struct tag can name (empty, or
+  holding a quote, a backslash or a comma) is left out, with a comment saying to read it
+  from a map.
+- **Python** — Pydantic v2 models, each after the models it uses, with snake_case fields
+  and `Field(alias=...)` for a renamed key; an optional key is `X | None = None`. A field
+  that would hide a type its class names, or shadow what `BaseModel` defines (`json`,
+  `model_dump`), takes an underscore after it. **Detect dates** types ISO-8601 values as
+  `date` and `datetime`. Write a model back as its JSON with
+  `model_dump_json(by_alias=True, exclude_unset=True)`; the annotations need Python 3.10.
+- **Rust** — structs that derive `Serialize` and `Deserialize`, snake_case fields with
+  `#[serde(rename)]`, and `Option` for an optional key, left out when it is `None`. Numbers
+  are `i64`, `u64` past that, and `f64`; serde_json reads a number neither holds exactly as
+  an `f64` unless its `arbitrary_precision` feature is on.
+
+The test suite compiles every output with its own toolchain and has it read sample documents
+and write them back unchanged: `tsc --strict` checks each sample as a value of its
+interface, and the Dart, Go, Python and Rust code round-trips them. A test whose toolchain
+is not installed is skipped; CI has all but Dart.
+
 ### Protobuf payload decoding
 
 **Protobuf payload** reads a binary Protobuf message pasted as text: hex, however it is
@@ -738,6 +783,7 @@ integration built on it.
 | `JsonYamlConverter` | JSON ↔ YAML conversion, multi-document support, exact floats, resolver-aware quoting. |
 | `CsvConverter` | CSV ↔ JSON conversion, positional re-layout, flattening logic, row estimation. |
 | `TomlConverter` | TOML ↔ JSON conversion and shared value-token scanning for conversion and formatting guards. |
+| `TypeScriptGenerator`, `DartGenerator`, `GoStructGenerator`, `PydanticGenerator`, `RustSerdeGenerator` | Type generation for five more languages, on `StructureModel` and the word-based names of `SourceConventions`. |
 | `PropertiesConverter` | Java properties ↔ JSON: a port of `java.util.Properties`' line reader, Spring Boot key nesting, `Properties.store` escaping, and the line-by-line Format. |
 | `ProtoConverter` | Protobuf schema ↔ JSON structural conversion with scoped type resolution and identifier sanitization, and the schema payloads are decoded against. |
 | `ProtoSchema` | A schema as payloads are decoded against it: each message's fields by number, their resolved types, oneofs and presence, and each enum's names. |
@@ -789,6 +835,12 @@ type inference, Protobuf validation, scoping and sanitization, POJO generation v
 numeric and format fidelity, XXE hardening, and end-to-end cross-format pipeline tests. In
 the `test` task, `PluginDescriptorTest` resolves every class `plugin.xml` names, so a
 renamed action fails the build instead of the plugin.
+
+The generated TypeScript, Dart, Go, Python and Rust are compiled with node and the
+TypeScript compiler (a test dependency, from a jar), `dart`, `go`, `python` and `cargo`,
+each found on the `PATH`; a test whose toolchain is missing is skipped. Cargo builds offline
+from its cache except on CI, and the Python round trip needs Pydantic, which the CI build
+installs.
 
 The Protobuf payload decoder is checked against Google's protobuf-java, a test dependency
 that is never bundled. Random proto2, proto3 and editions schemas are built both as `.proto`

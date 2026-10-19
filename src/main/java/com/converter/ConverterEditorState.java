@@ -31,18 +31,23 @@ final class ConverterEditorState {
     static final int HIGHLIGHT_LIMIT_CHARS = 2_000_000;
 
     /** How each format is highlighted. The core names the formats; how they look belongs here. */
-    private static final Map<String, String> SYNTAX_STYLES = Map.of(
-          Formats.FMT_JSON, SyntaxConstants.SYNTAX_STYLE_JSON,
-          Formats.FMT_XML, SyntaxConstants.SYNTAX_STYLE_XML,
-          Formats.FMT_YAML, SyntaxConstants.SYNTAX_STYLE_YAML,
-          Formats.FMT_CSV, SyntaxConstants.SYNTAX_STYLE_CSV,
+    private static final Map<String, String> SYNTAX_STYLES = Map.ofEntries(
+          Map.entry(Formats.FMT_JSON, SyntaxConstants.SYNTAX_STYLE_JSON),
+          Map.entry(Formats.FMT_XML, SyntaxConstants.SYNTAX_STYLE_XML),
+          Map.entry(Formats.FMT_YAML, SyntaxConstants.SYNTAX_STYLE_YAML),
+          Map.entry(Formats.FMT_CSV, SyntaxConstants.SYNTAX_STYLE_CSV),
           // No TOML mode exists; INI shares its [table] headers and key = value lines.
-          Formats.FMT_TOML, SyntaxConstants.SYNTAX_STYLE_INI,
-          Formats.FMT_PROTO, SyntaxConstants.SYNTAX_STYLE_PROTO,
-          Formats.FMT_PROPERTIES, SyntaxConstants.SYNTAX_STYLE_PROPERTIES_FILE,
-          Formats.FMT_JAVA, SyntaxConstants.SYNTAX_STYLE_JAVA,
-          Formats.FMT_KOTLIN, SyntaxConstants.SYNTAX_STYLE_KOTLIN,
-          Formats.FMT_SCHEMA, SyntaxConstants.SYNTAX_STYLE_JSON);
+          Map.entry(Formats.FMT_TOML, SyntaxConstants.SYNTAX_STYLE_INI),
+          Map.entry(Formats.FMT_PROTO, SyntaxConstants.SYNTAX_STYLE_PROTO),
+          Map.entry(Formats.FMT_PROPERTIES, SyntaxConstants.SYNTAX_STYLE_PROPERTIES_FILE),
+          Map.entry(Formats.FMT_JAVA, SyntaxConstants.SYNTAX_STYLE_JAVA),
+          Map.entry(Formats.FMT_KOTLIN, SyntaxConstants.SYNTAX_STYLE_KOTLIN),
+          Map.entry(Formats.FMT_SCHEMA, SyntaxConstants.SYNTAX_STYLE_JSON),
+          Map.entry(Formats.FMT_TYPESCRIPT, SyntaxConstants.SYNTAX_STYLE_TYPESCRIPT),
+          Map.entry(Formats.FMT_DART, SyntaxConstants.SYNTAX_STYLE_DART),
+          Map.entry(Formats.FMT_GO, SyntaxConstants.SYNTAX_STYLE_GO),
+          Map.entry(Formats.FMT_PYTHON, SyntaxConstants.SYNTAX_STYLE_PYTHON),
+          Map.entry(Formats.FMT_RUST, SyntaxConstants.SYNTAX_STYLE_RUST));
 
     /** The editor style for a format, or plain text for one this editor does not know. */
     static String syntaxStyle(String format) {

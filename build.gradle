@@ -39,6 +39,9 @@ configurations {
     // on the test classpaths and would shadow the 4.x the payload tests check
     // the decoder against. These two jars go ahead of it: see compileTestJava.
     protobufOracle { transitive = false }
+    // The TypeScript compiler, as the npm package packed in a jar: the tests
+    // type-check the generated interfaces with it under node, without npm.
+    typescriptCompiler { transitive = false }
 }
 
 def jacksonBom = 'com.fasterxml.jackson:jackson-bom:2.22.3'
@@ -68,6 +71,7 @@ dependencies {
     // isolated class loader: a class that compiles can still fail to read its JSON.
     kotlinJackson platform(jacksonBom)
     kotlinJackson 'com.fasterxml.jackson.module:jackson-module-kotlin'
+    typescriptCompiler 'org.webjars.npm:typescript:5.9.3'
     testImplementation platform('org.junit:junit-bom:6.1.3')
     testImplementation 'org.junit.jupiter:junit-jupiter-api'
     // Parameterised tests: routing tables are covered per-format rather than by
@@ -280,6 +284,7 @@ tasks.withType(Test).configureEach {
     systemProperty 'bewater.kotlin.compiler.classpath', configurations.kotlinCompiler.asPath
     systemProperty 'bewater.lombok.classpath', configurations.lombokProcessor.asPath
     systemProperty 'bewater.kotlin.jackson.classpath', configurations.kotlinJackson.asPath
+    systemProperty 'bewater.typescript.jar', configurations.typescriptCompiler.asPath
     systemProperty 'bewater.test.classpath', sourceSets.test.runtimeClasspath.asPath
     systemProperty 'bewater.javac', javaToolchains.compilerFor {
         languageVersion = JavaLanguageVersion.of(21)

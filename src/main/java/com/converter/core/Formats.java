@@ -36,6 +36,11 @@ public final class Formats {
     public static final String FMT_JAVA = "Java POJO";
     public static final String FMT_KOTLIN = "Kotlin";
     public static final String FMT_SCHEMA = "JSON Schema";
+    public static final String FMT_TYPESCRIPT = "TypeScript";
+    public static final String FMT_DART = "Dart";
+    public static final String FMT_GO = "Go";
+    public static final String FMT_PYTHON = "Python";
+    public static final String FMT_RUST = "Rust";
     /** A binary Protobuf message, pasted as hex or base64: decoded, never written. */
     public static final String FMT_PROTO_PAYLOAD = "Protobuf payload";
 
@@ -65,7 +70,14 @@ public final class Formats {
                 JavaPojoGenerator.ROOT_CLASS_NAME, true),
           new Format(FMT_KOTLIN, List.of("kt"), false, true,
                 KotlinDataClassGenerator.ROOT_CLASS_NAME, false),
-          new Format(FMT_SCHEMA, List.of("json"), false, true, null, false));
+          new Format(FMT_SCHEMA, List.of("json"), false, true, null, false),
+          // Named after the source when there is one, else converted.ts and the
+          // like: none of these languages ties a file's name to a type in it.
+          new Format(FMT_TYPESCRIPT, List.of("ts"), false, true, null, false),
+          new Format(FMT_DART, List.of("dart"), false, true, null, false),
+          new Format(FMT_GO, List.of("go"), false, true, null, false),
+          new Format(FMT_PYTHON, List.of("py"), false, true, null, false),
+          new Format(FMT_RUST, List.of("rs"), false, true, null, false));
 
     public static Format named(String name) {
         return ALL.stream().filter(f -> f.name().equals(name)).findFirst().orElse(null);

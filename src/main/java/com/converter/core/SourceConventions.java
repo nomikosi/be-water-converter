@@ -131,6 +131,78 @@ public final class SourceConventions {
     }
 
     /**
+     * A key's words, lower-cased: its runs of ASCII letters and digits, split
+     * where the case turns as camelCase and PascalCase turn it. {@code userID}
+     * is {@code user id}, {@code HTTPServer} {@code http server}, and
+     * {@code first-name} {@code first name}. Other characters only separate
+     * words: the generators that build names from words keep the key itself
+     * in an annotation or a tag.
+     */
+    public static java.util.List<String> words(String key) {
+        java.util.List<String> words = new java.util.ArrayList<>();
+        if (key == null) return words;
+        StringBuilder word = new StringBuilder();
+        for (int i = 0; i < key.length(); i++) {
+            char c = key.charAt(i);
+            boolean letterOrDigit = c < 0x80 && Character.isLetterOrDigit(c);
+            if (letterOrDigit && !word.isEmpty()) {
+                char previous = key.charAt(i - 1);
+                boolean upper = Character.isUpperCase(c);
+                boolean turn = upper && (Character.isLowerCase(previous) || Character.isDigit(previous))
+                      // The last capital of an acronym starts the next word,
+                      // HTTPServer, unless an s makes the acronym plural: userIDs.
+                      || upper && Character.isUpperCase(previous) && i + 1 < key.length()
+                            && Character.isLowerCase(key.charAt(i + 1)) && !pluralS(key, i + 1);
+                if (turn) {
+                    words.add(word.toString());
+                    word.setLength(0);
+                }
+            }
+            if (letterOrDigit) {
+                word.append(Character.toLowerCase(c));
+            } else if (!word.isEmpty()) {
+                words.add(word.toString());
+                word.setLength(0);
+            }
+        }
+        if (!word.isEmpty()) words.add(word.toString());
+        return words;
+    }
+
+    /** An {@code s} at {@code i} that ends its word: what follows is no lower-case letter. */
+    private static boolean pluralS(String key, int i) {
+        return key.charAt(i) == 's' && (i + 1 == key.length() || !Character.isLowerCase(key.charAt(i + 1)));
+    }
+
+    /** {@code first_name}: the words joined by underscores; empty when the key has none. */
+    public static String snakeCase(String key) {
+        return String.join("_", words(key));
+    }
+
+    /** {@code FirstName}: every word capitalized; empty when the key has none. */
+    public static String pascalCase(String key) {
+        StringBuilder out = new StringBuilder();
+        for (String word : words(key)) out.append(Character.toUpperCase(word.charAt(0))).append(word, 1, word.length());
+        return out.toString();
+    }
+
+    /** {@code firstName}: the first word lower-case, the rest capitalized; empty when the key has none. */
+    public static String lowerCamelCase(String key) {
+        String pascal = pascalCase(key);
+        return pascal.isEmpty() ? pascal : Character.toLowerCase(pascal.charAt(0)) + pascal.substring(1);
+    }
+
+    /**
+     * A type name built from a key's words, for the generators that name
+     * types that way: {@code Type} for a key without any, and {@code Type}
+     * before one that starts with a digit.
+     */
+    public static String typeNameFromWords(String key) {
+        String name = pascalCase(key);
+        return name.isEmpty() ? "Type" : Character.isDigit(name.charAt(0)) ? "Type" + name : name;
+    }
+
+    /**
      * Upper-cases the first letter, for turning a field name into a type name.
      * Leading underscores are skipped rather than given up on, so the names
      * this class invents still read as types: {@code _value} -> {@code _Value}.

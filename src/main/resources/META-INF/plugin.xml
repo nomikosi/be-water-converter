@@ -23,8 +23,8 @@
     <!-- The first paragraph is the summary on the Marketplace's search cards
          (170 characters at most): it names what the plugin converts. -->
     <description><![CDATA[
-        <p>Convert between JSON, YAML, XML, CSV, TOML, Properties and Protobuf, generate Java POJOs,
-        Kotlin data classes and JSON Schema, and decode Protobuf payloads.</p>
+        <p>Convert JSON, YAML, XML, CSV, TOML, Properties and Protobuf, generate Java, Kotlin,
+        TypeScript, Dart, Go, Python and Rust types, and decode Protobuf payloads.</p>
         <p>It works in a tool window with syntax-highlighted editors on the right side of your IDE, and
         it runs locally, so your data never goes to a website. <b>Be water, my friend</b>: let your
         data flow between formats.</p>
@@ -40,6 +40,10 @@
             <li><b>JSON to Java POJO</b> from any supported input, with optional Lombok annotations
                 and ISO-8601 date detection (<code>LocalDate</code> / <code>OffsetDateTime</code>)</li>
             <li><b>JSON to Kotlin data class</b> from any supported input</li>
+            <li><b>JSON to TypeScript</b> interfaces, <b>JSON to Dart</b> classes with
+                <code>fromJson</code> and <code>toJson</code>, <b>JSON to Go</b> structs,
+                <b>JSON to Python</b> Pydantic models and <b>JSON to Rust</b> serde structs, from any
+                supported input</li>
             <li><b>JSON to JSON Schema</b> (draft 2020-12) from any supported input</li>
             <li><b>Protobuf schema to JSON</b>, and JSON to a <code>.proto</code> schema</li>
             <li><b>Decode Protobuf payloads</b>: paste a binary message as hex or base64 and read it as

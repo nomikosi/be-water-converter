@@ -102,7 +102,8 @@ final class OptionsBar {
         lombokCheck = ConverterWidgets.checkBox("Lombok annotations", false,
               "Annotate generated classes with @Data, @NoArgsConstructor and @AllArgsConstructor");
         detectDatesCheck = ConverterWidgets.checkBox("Detect dates", true,
-              "Type ISO-8601 values as LocalDate / LocalDateTime / OffsetDateTime instead of String");
+              "Type ISO-8601 values as LocalDate / LocalDateTime / OffsetDateTime in Java and Kotlin, "
+              + "and as date / datetime in Python, instead of strings");
         inferTypesCheck = ConverterWidgets.checkBox("Infer types", true,
               "Convert CSV, XML and Properties values that look like numbers, booleans or null into typed JSON values");
         sortKeysCheck = ConverterWidgets.checkBox("Sort keys", false,
@@ -250,7 +251,9 @@ final class OptionsBar {
         csvInputOptions.setVisible(csvIn || Formats.FMT_XML.equals(inputFormat)
               || Formats.FMT_PROPERTIES.equals(inputFormat));
         csvDelimiterOptions.setVisible(csvIn || csvOut);
-        javaOptions.setVisible(Formats.FMT_JAVA.equals(outputFormat) || Formats.FMT_KOTLIN.equals(outputFormat));
+        // Detect dates reaches the generators whose types read a date back as written.
+        javaOptions.setVisible(Formats.FMT_JAVA.equals(outputFormat) || Formats.FMT_KOTLIN.equals(outputFormat)
+              || Formats.FMT_PYTHON.equals(outputFormat));
         payloadOptions.setVisible(Formats.FMT_PROTO_PAYLOAD.equals(inputFormat));
         // Lombok is a Java-only concept; offering it for Kotlin output would be
         // a toggle that silently does nothing.

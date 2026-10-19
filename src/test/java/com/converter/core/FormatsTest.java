@@ -37,6 +37,17 @@ class FormatsTest {
         assertThat(Formats.inputForFileName("schema.json")).isEqualTo("JSON");
         assertThat(Formats.outputsFor("Kotlin")).isEmpty();
         assertThat(Formats.outputsFor("unknown")).isEmpty();
+        assertThat(Formats.inputNames()).doesNotContain("TypeScript", "Dart", "Go", "Python", "Rust");
+        for (String file : new String[]{"root.ts", "root.dart", "root.go", "root.py", "root.rs"})
+            assertThat(Formats.inputForFileName(file)).as(file).isNull();
+    }
+
+    @Test void generatedSourcesAreNamedAfterTheirSource() {
+        assertThat(ConversionFileNames.nameFor("config.json", "TypeScript")).isEqualTo("config.ts");
+        assertThat(ConversionFileNames.nameFor("config.yaml", "Go")).isEqualTo("config.go");
+        assertThat(ConversionFileNames.nameFor(null, "Rust")).isEqualTo("converted.rs");
+        assertThat(ConversionFileNames.nameFor(null, "Python")).isEqualTo("converted.py");
+        assertThat(ConversionFileNames.nameFor("a.json", "Dart")).isEqualTo("a.dart");
     }
 
     @Test void everyAdvertisedTargetCanRenderAndHasAnExportName() throws Exception {

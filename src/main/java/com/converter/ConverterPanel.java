@@ -77,6 +77,11 @@ public class ConverterPanel implements Disposable {
         FORMAT_COLORS.put(FMT_JAVA,  new JBColor(new Color(142, 110, 45), new Color(243, 196, 66)));
         FORMAT_COLORS.put(FMT_SCHEMA, new JBColor(new Color(0, 121, 107), new Color(38, 166, 154)));
         FORMAT_COLORS.put(FMT_KOTLIN, new JBColor(new Color(103, 58, 183), new Color(149, 117, 205)));
+        FORMAT_COLORS.put(FMT_TYPESCRIPT, new JBColor(new Color(49, 120, 198), new Color(86, 156, 214)));
+        FORMAT_COLORS.put(FMT_DART, new JBColor(new Color(1, 117, 194), new Color(64, 196, 255)));
+        FORMAT_COLORS.put(FMT_GO, new JBColor(new Color(0, 125, 156), new Color(0, 173, 216)));
+        FORMAT_COLORS.put(FMT_PYTHON, new JBColor(new Color(55, 118, 171), new Color(255, 212, 59)));
+        FORMAT_COLORS.put(FMT_RUST, new JBColor(new Color(183, 65, 14), new Color(222, 165, 132)));
     }
 
     private static final String[] ALL_INPUTS = Formats.inputNames();

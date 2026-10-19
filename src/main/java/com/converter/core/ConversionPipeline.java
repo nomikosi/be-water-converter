@@ -17,14 +17,19 @@
 package com.converter.core;
 
 import static com.converter.core.Formats.FMT_CSV;
+import static com.converter.core.Formats.FMT_DART;
+import static com.converter.core.Formats.FMT_GO;
 import static com.converter.core.Formats.FMT_JAVA;
 import static com.converter.core.Formats.FMT_JSON;
 import static com.converter.core.Formats.FMT_KOTLIN;
 import static com.converter.core.Formats.FMT_PROPERTIES;
 import static com.converter.core.Formats.FMT_PROTO;
 import static com.converter.core.Formats.FMT_PROTO_PAYLOAD;
+import static com.converter.core.Formats.FMT_PYTHON;
+import static com.converter.core.Formats.FMT_RUST;
 import static com.converter.core.Formats.FMT_SCHEMA;
 import static com.converter.core.Formats.FMT_TOML;
+import static com.converter.core.Formats.FMT_TYPESCRIPT;
 import static com.converter.core.Formats.FMT_XML;
 import static com.converter.core.Formats.FMT_YAML;
 
@@ -48,6 +53,11 @@ public class ConversionPipeline {
     private final JavaPojoGenerator pojo     = new JavaPojoGenerator();
     private final JsonSchemaGenerator schema = new JsonSchemaGenerator();
     private final KotlinDataClassGenerator kotlin = new KotlinDataClassGenerator();
+    private final TypeScriptGenerator typescript = new TypeScriptGenerator();
+    private final DartGenerator dart = new DartGenerator();
+    private final GoStructGenerator go = new GoStructGenerator();
+    private final PydanticGenerator python = new PydanticGenerator();
+    private final RustSerdeGenerator rust = new RustSerdeGenerator();
     private final DocumentFormatter formatter = new DocumentFormatter(jsonYaml, toml, csv, properties);
 
     /**
@@ -120,6 +130,11 @@ public class ConversionPipeline {
             case FMT_JAVA   -> pojo.fromJson(asJson, opts.useLombok(), opts.detectDates());
             case FMT_SCHEMA -> schema.fromJson(asJson);
             case FMT_KOTLIN -> kotlin.fromJson(asJson, opts.detectDates());
+            case FMT_TYPESCRIPT -> typescript.fromJson(asJson);
+            case FMT_DART   -> dart.fromJson(asJson);
+            case FMT_GO     -> go.fromJson(asJson);
+            case FMT_PYTHON -> python.fromJson(asJson, opts.detectDates());
+            case FMT_RUST   -> rust.fromJson(asJson);
             default -> throw new UnsupportedOperationException("Unknown output: " + outFmt);
         };
     }

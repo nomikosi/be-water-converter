@@ -38,6 +38,17 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
+      # The generated-source tests compile with what the runner has: node,
+      # cargo, go and python. Pydantic is the one library they need that it
+      # lacks, so it goes into a virtualenv, since Ubuntu's own Python refuses
+      # pip installs, and that python comes first on the PATH. Pinned, as the
+      # actions are.
+      - name: Install Pydantic for the generated-model tests
+        run: |
+          python3 -m venv "$RUNNER_TEMP/python"
+          "$RUNNER_TEMP/python/bin/pip" install --quiet pydantic==2.13.5
+          echo "$RUNNER_TEMP/python/bin" >> "$GITHUB_PATH"
+
       - name: Run tests and build plugin
         run: ./gradlew unitTest check buildPlugin --console=plain
 

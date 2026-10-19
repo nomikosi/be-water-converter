@@ -20,6 +20,14 @@ fails until the version in `build.gradle` has a section here.
   the comments above it. Pasted properties are recognised, where they were taken for TOML and
   failed on their first unquoted value, and the converter's menu items now appear on
   `.properties` files.
+- **TypeScript, Dart, Go, Python and Rust** — five new code outputs, from any input:
+  TypeScript interfaces, Dart classes with `fromJson` and `toJson` that need no build step, Go
+  structs with `encoding/json` tags, Pydantic v2 models, and Rust structs that derive serde's
+  `Serialize` and `Deserialize`. Each names fields the way its language does, keeping the key
+  wherever the name differs from it, types a key some elements lacked as optional, and keeps a
+  number past 64 bits where its language can (`json.Number` in Go, `u64` in Rust, `int` in
+  Python). The tests compile every output with its own toolchain and have it read sample
+  documents and write them back unchanged.
 - **IntelliJ 2024.2 and later** — the plugin now installs on 2024.2 and 2024.3 as well, the
   first IDEs to run on Java 21, and is verified against every release from 2024.2 to 2026.2.
   It no longer uses an API those versions mark internal or later ones deprecate.
