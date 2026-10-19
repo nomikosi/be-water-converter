@@ -4,6 +4,12 @@ What changed in each release of Be Water Converter, newest first. The change not
 JetBrains Marketplace and in the IDE's plugin manager are built from this file, so the build
 fails until the version in `build.gradle` has a section here.
 
+## [1.7.0]
+
+- **IntelliJ 2024.2 and later** — the plugin now installs on 2024.2 and 2024.3 as well, the
+  first IDEs to run on Java 21, and is verified against every release from 2024.2 to 2026.2.
+  It no longer uses an API those versions mark internal or later ones deprecate.
+
 ## [1.6.0]
 
 - **Protobuf payload decoding** — a new input format, Protobuf payload, reads a binary

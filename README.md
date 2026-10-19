@@ -12,7 +12,7 @@
   [![Build](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml/badge.svg)](https://github.com/nomikosi/be-water-converter/actions/workflows/build.yml)
   [![JetBrains Marketplace](https://img.shields.io/jetbrains/plugin/v/com.converter.be-water-converter)](https://plugins.jetbrains.com/plugin/32279-be-water-converter)
   [![Java 21](https://img.shields.io/badge/Java-21-blue)](https://openjdk.org/projects/jdk/21/)
-  [![IntelliJ 2025.1+](https://img.shields.io/badge/IntelliJ-2025.1%2B-purple)](https://plugins.jetbrains.com/plugin/32279-be-water-converter)
+  [![IntelliJ 2024.2+](https://img.shields.io/badge/IntelliJ-2024.2%2B-purple)](https://plugins.jetbrains.com/plugin/32279-be-water-converter)
   [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
 </div>
 
@@ -714,7 +714,7 @@ sparse array-shape merging under a 96 MiB heap.
 ### Requirements
 
 - Java 21
-- IntelliJ Platform Gradle Plugin 2.x (targets IntelliJ IDEA Community 2025.1)
+- IntelliJ Platform Gradle Plugin 2.x (compiles against IntelliJ IDEA Community 2024.2, the oldest IDE supported)
 
 ### Running locally
 
@@ -782,7 +782,7 @@ Pushing a `v*` tag (e.g. `git tag v1.5.3 && git push origin v1.5.3`) triggers
 [release.yml](.github/workflows/release.yml). A first job, which can only read the
 repository, checks the tag against the version in `build.gradle`, runs the tests and
 verifies IDE compatibility, after freeing the disk space the unpacked IDEs need, about
-30 GB. Only then does a second job publish the plugin to JetBrains Marketplace and create a
+40 GB. Only then does a second job publish the plugin to JetBrains Marketplace and create a
 GitHub release with the ZIP and this version's section of CHANGELOG.md as its notes.
 Publishing requires a `PUBLISH_TOKEN` repository secret containing a [JetBrains Marketplace
 token](https://plugins.jetbrains.com/author/me/tokens).
@@ -797,7 +797,7 @@ the Marketplace page are in [docs/screenshots](docs/screenshots), at 2528×1584.
 
 | Property | Value |
 |---|---|
-| Minimum IDE build | 251 (IntelliJ IDEA 2025.1) |
+| Minimum IDE build | 242 (IntelliJ IDEA 2024.2, the first on Java 21) |
 | Maximum IDE build | Open-ended |
 | Java | 21 |
 

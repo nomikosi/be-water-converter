@@ -46,14 +46,15 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
-      # verifyPlugin unpacks every IDE it checks against: about 30 GB for the
-      # five pinned in build.gradle, more than a runner has free.
+      # verifyPlugin unpacks every IDE it checks against: about 40 GB with
+      # their downloads for the seven in build.gradle's range, more than a
+      # runner has free. The swap file goes too: 4 GB, and nothing here swaps.
       - name: Free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           tool-cache: false
           large-packages: false
-          swap-storage: false
+          swap-storage: true
 
       - name: Test and build
         run: ./gradlew unitTest check buildPlugin --console=plain

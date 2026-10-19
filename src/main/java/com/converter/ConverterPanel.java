@@ -272,7 +272,7 @@ public class ConverterPanel implements Disposable {
             appearance.subscribe(com.intellij.ide.ui.LafManagerListener.TOPIC, source -> refreshAppearance());
             appearance.subscribe(com.intellij.openapi.editor.colors.EditorColorsManager.TOPIC,
                   scheme -> refreshAppearance());
-            appearance.subscribe(com.intellij.ide.ui.UISettingsListener.TOPIC, settings -> refreshAppearance());
+            appearance.subscribe(ConverterUiSettingsListener.CHANGED, this::refreshAppearance);
         }
     }
 

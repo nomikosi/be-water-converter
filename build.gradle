@@ -11,7 +11,7 @@ plugins {
 }
 
 group = 'com.converter'
-version = '1.6.0'
+version = '1.7.0'
 
 // Declared before anything else in the script: the IntelliJ Platform plugin
 // reads the toolchain while it configures tasks, and a value once read can
@@ -45,7 +45,7 @@ def jacksonBom = 'com.fasterxml.jackson:jackson-bom:2.22.3'
 
 dependencies {
     intellijPlatform {
-        intellijIdeaCommunity('2025.1.7.1')
+        intellijIdeaCommunity('2024.2.6')
     }
 
     // The BOM gives every Jackson module one version, so they cannot drift apart.
@@ -130,9 +130,10 @@ intellijPlatform {
             }.join('\n')
         }
         ideaVersion {
-            // 251 (2025.1) is the first build with the non-deprecated
-            // FileSaverDescriptor(title, description, extension) constructor.
-            sinceBuild = '251'
+            // 242 (2024.2) is the first IDE to run on Java 21, which the plugin is
+            // compiled for. It is also the platform it compiles against, so an API
+            // newer than the oldest IDE it claims cannot slip in.
+            sinceBuild = '242'
         }
     }
     pluginVerification {
@@ -148,7 +149,7 @@ intellijPlatform {
             select { filter ->
                 filter.types.set([IntelliJPlatformType.IntellijIdeaCommunity])
                 filter.channels.set([ProductRelease.Channel.RELEASE])
-                filter.sinceBuild.set('251')
+                filter.sinceBuild.set('242')
                 filter.untilBuild.set('252.*')
             }
             // From 2025.3 IntelliJ IDEA ships as one unified distribution,

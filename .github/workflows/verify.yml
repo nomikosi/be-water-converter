@@ -43,16 +43,22 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
-      # verifyPlugin unpacks every IDE it checks against: about 30 GB.
+      # verifyPlugin unpacks every IDE it checks against: about 40 GB with
+      # their downloads for the seven in range. The swap file goes too.
       - name: Free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           tool-cache: false
           large-packages: false
-          swap-storage: false
+          swap-storage: true
 
       - name: Verify plugin compatibility
         run: ./gradlew verifyPlugin --console=plain
+
+      # How close the IDEs came to filling the disk, for when the range grows.
+      - name: Disk left
+        if: always()
+        run: df -h /
 
       - name: Upload verifier reports
         if: always()

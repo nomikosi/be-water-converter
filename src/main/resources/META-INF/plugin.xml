@@ -95,6 +95,10 @@
                     factoryClass="com.converter.ConverterToolWindowFactory"/>
         <notificationGroup id="Be Water Converter" displayType="BALLOON"/>
     </extensions>
+    <applicationListeners>
+        <listener class="com.converter.ConverterUiSettingsListener"
+                  topic="com.intellij.ide.ui.UISettingsListener"/>
+    </applicationListeners>
     <actions>
         <action id="BeWaterConverter.Open"
                 class="com.converter.OpenConverterAction"

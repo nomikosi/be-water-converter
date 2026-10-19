@@ -130,14 +130,31 @@ final class ConverterFileOps {
         if (chosen != null) loadFile(new File(chosen.getPath()));
     }
 
+    /**
+     * The save dialog's descriptor for one extension. 2025.1 added a
+     * constructor for exactly that and deprecated the varargs one, the only
+     * one 2024.2 has, so the newer is used wherever the IDE has it. Both are
+     * looked up: a call compiled against 2024.2 binds to the varargs one,
+     * which the verifier reports as deprecated use on every newer IDE.
+     */
+    static FileSaverDescriptor saverFor(String title, String description, String extension) {
+        try {
+            return FileSaverDescriptor.class.getConstructor(String.class, String.class, String.class)
+                  .newInstance(title, description, extension);
+        } catch (ReflectiveOperationException olderIde) {
+            try {
+                return FileSaverDescriptor.class.getConstructor(String.class, String.class, String[].class)
+                      .newInstance(title, description, new String[]{extension});
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("No FileSaverDescriptor constructor for one extension", e);
+            }
+        }
+    }
+
     void saveOutput(String output, String outputFormat) {
         String ext = ConversionFileNames.extensionFor(outputFormat);
-        // Single-extension constructor; the varargs overload is deprecated
-        // since 2025.1. Requires sinceBuild >= 251.
         VirtualFileWrapper wrapper = FileChooserFactory.getInstance()
-              .createSaveFileDialog(
-                    new FileSaverDescriptor("Save Output", "Save the converter output", ext),
-                    project)
+              .createSaveFileDialog(saverFor("Save Output", "Save the converter output", ext), project)
               // The same name the scratch files use: for Java the file has to
               // be Root.java to match the public class it holds, and
               // "output.java" was flagged by the IDE the moment it was opened.
