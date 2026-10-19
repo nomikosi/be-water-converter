@@ -55,6 +55,8 @@
         <ul>
             <li>Right-click a file or an editor selection to open it in the converter, or convert it
                 straight to another format</li>
+            <li>Select several files to convert them all at once, each result written beside its
+                source</li>
             <li>Results open as scratch files, in a real IDE editor</li>
             <li><b>Compare</b> two documents as canonical JSON — the same data in YAML and JSON
                 compares as equal, so only real differences show</li>

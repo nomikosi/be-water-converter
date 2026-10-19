@@ -28,6 +28,13 @@ fails until the version in `build.gradle` has a section here.
   number past 64 bits where its language can (`json.Number` in Go, `u64` in Rust, `int` in
   Python). The tests compile every output with its own toolchain and have it read sample
   documents and write them back unchanged.
+- **Convert several files at once** — with more than one file selected in the Project view,
+  Convert with Be Water converts them all to the chosen format and writes each result beside
+  its source, `config.json` to `config.yaml`. Files it would replace are listed and asked about
+  once. A file is skipped, with the reason, when its format is
+  unknown or already the target, or when its result would replace another selected file or be
+  another file's result too, and one notification reports what was written, skipped and
+  refused.
 - **IntelliJ 2024.2 and later** — the plugin now installs on 2024.2 and 2024.3 as well, the
   first IDEs to run on Java 21, and is verified against every release from 2024.2 to 2026.2.
   It no longer uses an API those versions mark internal or later ones deprecate.

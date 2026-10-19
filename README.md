@@ -298,6 +298,15 @@ Right-click a file in the Project view, or a selection in any editor:
   the content otherwise.
 - **Convert with Be Water → <format>** converts straight to the chosen format and opens the
   result as a scratch file, so it lands in a real IDE editor rather than the plugin's pane.
+- With **several files selected** in the Project view, the same menu converts them all and
+  writes each result beside its source: `config.json` to YAML is `config.yaml`, and a JSON
+  Schema of it `config.schema.json`. Files that would be replaced are listed and asked about
+  once, and one open with unsaved changes is left alone. A file is skipped, with the reason,
+  when its format is unknown or already the target, when its result would replace another
+  selected file, or when two files would write the same result (`a.yaml` and `a.yml` to JSON,
+  or any two files to Java, whose class is always `Root`). One notification lists what was
+  written, skipped and refused; a CSV result past the row warning is refused rather than
+  asked about file by file.
 
 The entries appear on files of the formats the plugin reads — by the IDE's file type or by
 extension, `.tsv`, `.properties`, SVG and XHTML included — on plain-text and unknown files

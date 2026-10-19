@@ -55,7 +55,7 @@ public final class ConverterContextActions {
      * read — which is deliberately deferred, because reading a file on the EDT is
      * exactly what freezes the IDE on a large one.
      */
-    private record Source(String text, VirtualFile file, String name) {
+    record Source(String text, VirtualFile file, String name) {
 
         /** Size in characters if known without reading, else the file's byte length. */
         long approximateSize() {
@@ -142,6 +142,29 @@ public final class ConverterContextActions {
             return false;     // a file in the Project view: its name or type has to say
         }
         return ContextDecisions.offer(file == null ? null : file.getName(), kind, selection, prefix);
+    }
+
+    /**
+     * The files of a Project view selection of more than one, which convert as
+     * a batch; null for one file or for an editor, which convert as before.
+     * Directories in the selection are passed over, not walked.
+     */
+    static java.util.List<VirtualFile> selectedFiles(AnActionEvent e) {
+        if (e.getData(CommonDataKeys.EDITOR) != null) return null;
+        VirtualFile[] selection = e.getData(CommonDataKeys.VIRTUAL_FILE_ARRAY);
+        if (selection == null || selection.length < 2) return null;
+        java.util.List<VirtualFile> files = new java.util.ArrayList<>();
+        for (VirtualFile file : selection) if (file.isValid() && !file.isDirectory()) files.add(file);
+        return files;
+    }
+
+    /** Whether a batch holds a file the converter reads, by its name or the IDE's type for it. */
+    private static boolean anyConvertible(java.util.List<VirtualFile> files) {
+        for (VirtualFile file : files) {
+            if (Formats.inputForFileName(file.getName()) != null) return true;
+            if (ContextDecisions.kindOf(file.getFileType().getName(), false) == ContextDecisions.Kind.DATA) return true;
+        }
+        return false;
     }
 
     private static String formatFor(String fileName, String text) {
@@ -248,11 +271,17 @@ public final class ConverterContextActions {
         }
 
         @Override public void update(@NotNull AnActionEvent e) {
-            e.getPresentation().setEnabledAndVisible(e.getProject() != null && isConvertible(e));
+            java.util.List<VirtualFile> batch = selectedFiles(e);
+            e.getPresentation().setEnabledAndVisible(e.getProject() != null
+                  && (batch != null ? anyConvertible(batch) : isConvertible(e)));
         }
     }
 
-    /** Converts the context to one target format and opens the result as a scratch file. */
+    /**
+     * Converts the context to one target format and opens the result as a
+     * scratch file; several files selected at once are each converted and
+     * written beside their source, see {@link ConverterBatch}.
+     */
     public static class ConvertTo extends AnAction implements DumbAware {
 
         private final String target;
@@ -273,6 +302,14 @@ public final class ConverterContextActions {
          * read on every menu update.
          */
         @Override public void update(@NotNull AnActionEvent e) {
+            java.util.List<VirtualFile> batch = selectedFiles(e);
+            if (batch != null) {
+                // Greyed out only when every file already is the target.
+                boolean any = false;
+                for (VirtualFile file : batch) any |= !target.equals(Formats.inputForFileName(file.getName()));
+                e.getPresentation().setEnabled(any);
+                return;
+            }
             VirtualFile file = e.getData(CommonDataKeys.VIRTUAL_FILE);
             String own = file == null || file.isDirectory() ? null : Formats.inputForFileName(file.getName());
             e.getPresentation().setEnabled(!target.equals(own));
@@ -280,6 +317,11 @@ public final class ConverterContextActions {
 
         @Override public void actionPerformed(@NotNull AnActionEvent e) {
             Project project = e.getProject();
+            java.util.List<VirtualFile> batch = selectedFiles(e);
+            if (project != null && batch != null) {
+                if (!batch.isEmpty()) ConverterBatch.run(project, batch, target);
+                return;
+            }
             Source source = sourceFrom(e);
             if (project == null || source == null) return;
 
