@@ -65,7 +65,7 @@ dependencies {
     implementation 'com.fifesoft:rsyntaxtextarea:4.0.1'
     // Isolated from both the plugin and the IDE test class loader. Tests invoke
     // this compiler in a separate JVM and load the resulting classes.
-    kotlinCompiler 'org.jetbrains.kotlin:kotlin-compiler-embeddable:2.1.20'
+    kotlinCompiler 'org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.21'
     lombokProcessor 'org.projectlombok:lombok:1.18.48'
     // Binds the compiled Kotlin data classes the way their users will, in an
     // isolated class loader: a class that compiles can still fail to read its JSON.
